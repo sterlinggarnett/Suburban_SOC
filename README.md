@@ -73,7 +73,7 @@ This project encompasses the design, development, and testing of an advanced **n
 1.  **Group Project Presentation:**
     * A presentation showcasing the project's objectives, architecture, and outcomes.
 2.  **Group Project Report (GitHub Wiki):**
-    * For full project documentation, progress notes, and the final report, please visit our [Project Wiki](../../wiki).
+    * For full project documentation, progress notes, and the final report, please visit our [Project Wiki](../../wiki). (Wiki authored by Maria Frausto)
 3.  **GitHub Project with Agile Artifacts:**
     * A GitHub Project board utilized for Agile project management.
 4.  **GitHub Repository:**

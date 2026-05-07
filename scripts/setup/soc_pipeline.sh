@@ -2,8 +2,8 @@
 # =============================================================================
 # Suburban-SOC Pipeline Automation Script
 # SOP Reference: docs/SOP-001-pipeline-operations.md
-# Owner: Tommy Lammers (@voltron-1) — Security Analyst / Manager
-# Version: 1.0 | CIS 3353 Spring 2026
+# Owner: Tommy Lammers (@voltron-1) - Security Analyst / Manager
+# Version: 1.1 | CIS 3353 Spring 2026
 # =============================================================================
 
 # --- Colors ---
@@ -12,10 +12,10 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
+# SETUP_DIR = the directory containing this script (scripts/setup/)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SETUP_DIR="$SCRIPT_DIR/setup"
 LOG_DIR="/storage/PCAP/zeek_logs"
 ROUTER_IP="${ROUTER_IP:-10.18.81.1}"
 ROUTER_USER="${ROUTER_USER:-root}"
@@ -58,22 +58,22 @@ run_prereq_checks() {
     if docker ps &>/dev/null; then
         pass "Docker is running"
     else
-        fail "Docker is not running — start Docker Desktop or run: sudo service docker start"
+        fail "Docker is not running - start Docker Desktop or: sudo service docker start"
         all_pass=false
     fi
 
     # Check SSH to router
-    if ssh -o ConnectTimeout=5 -o BatchMode=yes "$ROUTER_USER@$ROUTER_IP" exit &>/dev/null; then
-        pass "SSH to router ($ROUTER_IP) is reachable"
+    if ssh -o ConnectTimeout=5 -o BatchMode=yes "${ROUTER_USER}@${ROUTER_IP}" exit &>/dev/null; then
+        pass "SSH to router (${ROUTER_IP}) is reachable"
     else
-        warn "SSH to router ($ROUTER_IP) unreachable — remote capture scripts will not work"
+        warn "SSH to router (${ROUTER_IP}) unreachable - remote capture scripts will not work"
     fi
 
     # Check log directory
     if [ -d "$LOG_DIR" ]; then
         pass "Log directory exists: $LOG_DIR"
     else
-        warn "Log directory missing — creating: $LOG_DIR"
+        warn "Log directory missing - creating: $LOG_DIR"
         sudo mkdir -p "$LOG_DIR"
         sudo chmod 777 "$LOG_DIR"
         info "Created $LOG_DIR"
@@ -83,21 +83,21 @@ run_prereq_checks() {
     if systemctl is-active --quiet filebeat 2>/dev/null; then
         pass "Filebeat is running"
     else
-        warn "Filebeat is not running — start with: sudo systemctl start filebeat"
+        warn "Filebeat is not running - start with: sudo systemctl start filebeat"
     fi
 
     # Check Elasticsearch
     if curl -s --connect-timeout 3 http://localhost:9200 &>/dev/null; then
         pass "Elasticsearch is reachable (port 9200)"
     else
-        warn "Elasticsearch not reachable — ensure ELK stack is running"
+        warn "Elasticsearch not reachable - ensure ELK stack is running"
     fi
 
     # Check Kibana
     if curl -s --connect-timeout 3 http://localhost:5601 &>/dev/null; then
         pass "Kibana is reachable (port 5601)"
     else
-        warn "Kibana not reachable — open http://localhost:5601 after starting ELK stack"
+        warn "Kibana not reachable - open http://localhost:5601 after starting ELK stack"
     fi
 
     echo ""
@@ -109,54 +109,54 @@ run_prereq_checks() {
 }
 
 # =============================================================================
-# SOP-001-A: Live Capture — bat0 (Mesh Interface)
+# SOP-001-A: Live Capture - bat0 (Mesh Interface)
 # =============================================================================
 
 run_sop_001a() {
-    print_section "SOP-001-A: Live Capture — bat0 (Mesh Interface)"
-    info "Router: $ROUTER_USER@$ROUTER_IP"
+    print_section "SOP-001-A: Live Capture - bat0 (Mesh Interface)"
+    info "Router: ${ROUTER_USER}@${ROUTER_IP}"
     info "Interface: bat0"
     info "Output: $LOG_DIR"
     info "Press Ctrl+C to stop capture"
     confirm || return
 
-    chmod +x "$SETUP_DIR/stream_bat0_data.sh"
+    chmod +x "${SCRIPT_DIR}/stream_bat0_data.sh"
     echo -e "\n${GREEN}Starting bat0 capture...${NC}\n"
-    "$SETUP_DIR/stream_bat0_data.sh"
+    "${SCRIPT_DIR}/stream_bat0_data.sh"
 }
 
 # =============================================================================
-# SOP-001-B: Live Capture — br-lan (Standard LAN Bridge)
+# SOP-001-B: Live Capture - br-lan (Standard LAN Bridge)
 # =============================================================================
 
 run_sop_001b() {
-    print_section "SOP-001-B: Live Capture — br-lan (LAN Bridge)"
-    info "Router: $ROUTER_USER@$ROUTER_IP"
+    print_section "SOP-001-B: Live Capture - br-lan (LAN Bridge)"
+    info "Router: ${ROUTER_USER}@${ROUTER_IP}"
     info "Interface: br-lan"
     info "Output: $LOG_DIR"
     info "Press Ctrl+C to stop capture"
     confirm || return
 
-    chmod +x "$SETUP_DIR/stream_br_lan_data.sh"
+    chmod +x "${SCRIPT_DIR}/stream_br_lan_data.sh"
     echo -e "\n${GREEN}Starting br-lan capture...${NC}\n"
-    "$SETUP_DIR/stream_br_lan_data.sh"
+    "${SCRIPT_DIR}/stream_br_lan_data.sh"
 }
 
 # =============================================================================
-# SOP-001-C: Live Capture — eth0 (Local Host)
+# SOP-001-C: Live Capture - eth0 (Local Host)
 # =============================================================================
 
 run_sop_001c() {
-    print_section "SOP-001-C: Live Capture — Local eth0"
+    print_section "SOP-001-C: Live Capture - Local eth0"
     info "Interface: eth0 (local WSL/host)"
     info "Output: $LOG_DIR"
     warn "Requires sudo"
     info "Press Ctrl+C to stop capture"
     confirm || return
 
-    chmod +x "$SETUP_DIR/stream_raw_data.sh"
+    chmod +x "${SCRIPT_DIR}/stream_raw_data.sh"
     echo -e "\n${GREEN}Starting eth0 capture...${NC}\n"
-    sudo "$SETUP_DIR/stream_raw_data.sh"
+    sudo "${SCRIPT_DIR}/stream_raw_data.sh"
 }
 
 # =============================================================================
@@ -180,9 +180,9 @@ run_sop_001d() {
     info "Output: $LOG_DIR"
     confirm || return
 
-    chmod +x "$SETUP_DIR/zeek_run_pcap.sh"
+    chmod +x "${SCRIPT_DIR}/zeek_run_pcap.sh"
     echo -e "\n${GREEN}Running Zeek on PCAP...${NC}\n"
-    PCAP_FILE="$PCAP_FILE" "$SETUP_DIR/zeek_run_pcap.sh"
+    PCAP_FILE="$PCAP_FILE" "${SCRIPT_DIR}/zeek_run_pcap.sh"
     echo -e "\n${GREEN}Analysis complete. Check $LOG_DIR for output files.${NC}"
 }
 
@@ -198,17 +198,17 @@ run_sop_001e() {
     info "Press Ctrl+C to stop"
     confirm || return
 
-    chmod +x "$SETUP_DIR/zeek_connect_host.sh"
+    chmod +x "${SCRIPT_DIR}/zeek_connect_host.sh"
     echo -e "\n${GREEN}Starting interactive Zeek...${NC}\n"
-    sudo "$SETUP_DIR/zeek_connect_host.sh"
+    sudo "${SCRIPT_DIR}/zeek_connect_host.sh"
 }
 
 # =============================================================================
-# SOP-002: Filebeat — Install & Configure
+# SOP-002: Filebeat - Install & Configure
 # =============================================================================
 
 run_sop_002() {
-    print_section "SOP-002: Filebeat — Install & Configure"
+    print_section "SOP-002: Filebeat - Install & Configure"
 
     if systemctl is-active --quiet filebeat 2>/dev/null; then
         pass "Filebeat is already installed and running"
@@ -220,15 +220,15 @@ run_sop_002() {
     warn "Requires sudo"
     confirm || return
 
-    chmod +x "$SETUP_DIR/install_filebeat.sh"
-    sudo "$SETUP_DIR/install_filebeat.sh"
+    chmod +x "${SCRIPT_DIR}/install_filebeat.sh"
+    sudo "${SCRIPT_DIR}/install_filebeat.sh"
 
     echo ""
     info "Configuring Filebeat to watch Zeek logs and output to Logstash..."
-    FILEBEAT_CONFIG="/etc/filebeat/filebeat.yml"
+    local FILEBEAT_CONFIG="/etc/filebeat/filebeat.yml"
 
     if [ -f "$FILEBEAT_CONFIG" ]; then
-        sudo tee -a "$FILEBEAT_CONFIG" > /dev/null <<'EOF'
+        sudo tee -a "$FILEBEAT_CONFIG" > /dev/null <<'FBEOF'
 
 # --- Suburban-SOC Zeek Integration ---
 filebeat.inputs:
@@ -243,10 +243,10 @@ filebeat.inputs:
 
 output.logstash:
   hosts: ["localhost:5044"]
-EOF
+FBEOF
         pass "Filebeat config updated"
     else
-        warn "filebeat.yml not found at $FILEBEAT_CONFIG — apply config manually"
+        warn "filebeat.yml not found at $FILEBEAT_CONFIG - apply config manually"
     fi
 
     sudo systemctl enable filebeat
@@ -260,7 +260,7 @@ EOF
 # =============================================================================
 
 run_sop_004() {
-    print_section "SOP-004: Clear Logs — Reset Environment"
+    print_section "SOP-004: Clear Logs - Reset Environment"
     warn "This will PERMANENTLY DELETE all files in $LOG_DIR"
     warn "Ensure Filebeat has already shipped logs to Elasticsearch"
     echo ""
@@ -271,8 +271,8 @@ run_sop_004() {
         return
     fi
 
-    chmod +x "$SETUP_DIR/clear_logs.sh"
-    sudo "$SETUP_DIR/clear_logs.sh"
+    chmod +x "${SCRIPT_DIR}/clear_logs.sh"
+    sudo "${SCRIPT_DIR}/clear_logs.sh"
     pass "Logs cleared: $LOG_DIR"
 }
 
@@ -290,7 +290,7 @@ run_sop_005() {
     if docker ps &>/dev/null; then
         pass "Docker is running"
     else
-        fail "Docker not running. Start Docker Desktop or run: sudo service docker start"
+        fail "Docker not running. Start Docker Desktop or: sudo service docker start"
         return 1
     fi
 
@@ -314,7 +314,7 @@ run_sop_005() {
     if curl -s --connect-timeout 5 http://localhost:5601 &>/dev/null; then
         pass "Kibana reachable at http://localhost:5601"
     else
-        warn "Kibana not reachable — check Docker containers"
+        warn "Kibana not reachable - check Docker containers"
     fi
 
     echo -e "\n${BOLD}Step 5: Start Filebeat${NC}"
@@ -326,9 +326,9 @@ run_sop_005() {
     fi
 
     echo -e "\n${BOLD}Step 6: Select Capture Mode${NC}"
-    echo -e "  ${CYAN}[A]${NC} Live capture — bat0 (mesh)"
-    echo -e "  ${CYAN}[B]${NC} Live capture — br-lan"
-    echo -e "  ${CYAN}[C]${NC} Live capture — eth0 (local)"
+    echo -e "  ${CYAN}[A]${NC} Live capture - bat0 (mesh)"
+    echo -e "  ${CYAN}[B]${NC} Live capture - br-lan"
+    echo -e "  ${CYAN}[C]${NC} Live capture - eth0 (local)"
     echo -e "  ${CYAN}[D]${NC} Offline PCAP analysis"
     read -rp "  Select [A/B/C/D]: " cap_choice
 
@@ -346,11 +346,11 @@ run_sop_005() {
         pass "$LOG_COUNT log files found in $LOG_DIR"
         ls "$LOG_DIR"
     else
-        warn "No log files yet in $LOG_DIR — capture may still be running"
+        warn "No log files yet in $LOG_DIR - capture may still be running"
     fi
 
     echo -e "\n${BOLD}Step 8: Confirm data in Kibana${NC}"
-    info "Open Kibana → Discover → Index pattern: logstash-*"
+    info "Open Kibana -> Discover -> Index pattern: logstash-*"
     info "URL: http://localhost:5601"
     pass "Pipeline startup sequence complete"
 }
@@ -366,14 +366,14 @@ main_menu() {
     while true; do
         echo ""
         print_section "Select SOP to Execute"
-        echo -e "  ${CYAN}[1]${NC} SOP-001-A — Live Capture: bat0 (mesh interface)"
-        echo -e "  ${CYAN}[2]${NC} SOP-001-B — Live Capture: br-lan (LAN bridge)"
-        echo -e "  ${CYAN}[3]${NC} SOP-001-C — Live Capture: eth0 (local host)"
-        echo -e "  ${CYAN}[4]${NC} SOP-001-D — Offline PCAP Analysis"
-        echo -e "  ${CYAN}[5]${NC} SOP-001-E — Interactive Zeek Host Monitor"
-        echo -e "  ${CYAN}[6]${NC} SOP-002   — Install & Configure Filebeat"
-        echo -e "  ${CYAN}[7]${NC} SOP-004   — Clear Logs (Reset Environment)"
-        echo -e "  ${CYAN}[8]${NC} SOP-005   — Full End-to-End Pipeline Startup"
+        echo -e "  ${CYAN}[1]${NC} SOP-001-A - Live Capture: bat0 (mesh interface)"
+        echo -e "  ${CYAN}[2]${NC} SOP-001-B - Live Capture: br-lan (LAN bridge)"
+        echo -e "  ${CYAN}[3]${NC} SOP-001-C - Live Capture: eth0 (local host)"
+        echo -e "  ${CYAN}[4]${NC} SOP-001-D - Offline PCAP Analysis"
+        echo -e "  ${CYAN}[5]${NC} SOP-001-E - Interactive Zeek Host Monitor"
+        echo -e "  ${CYAN}[6]${NC} SOP-002   - Install & Configure Filebeat"
+        echo -e "  ${CYAN}[7]${NC} SOP-004   - Clear Logs (Reset Environment)"
+        echo -e "  ${CYAN}[8]${NC} SOP-005   - Full End-to-End Pipeline Startup"
         echo -e "  ${CYAN}[9]${NC} Re-run Prerequisite Checks"
         echo -e "  ${CYAN}[Q]${NC} Quit"
         echo ""
@@ -390,7 +390,7 @@ main_menu() {
             8) run_sop_005  ;;
             9) run_prereq_checks ;;
             [Qq]) echo -e "\n${CYAN}Exiting Suburban-SOC Pipeline Automation.${NC}\n"; exit 0 ;;
-            *) warn "Invalid choice — select 1-9 or Q" ;;
+            *) warn "Invalid choice - select 1-9 or Q" ;;
         esac
     done
 }

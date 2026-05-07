@@ -4,6 +4,7 @@
 - [Team Members](#team-members)
 - [Course Modules](#course-modules)
 - [Project Status](#project-status)
+- [Architecture](#architecture)
 - [Overview](#overview)
 - [Scope: Suburban-SOC Network Pipeline](#scope-suburban-soc-network-pipeline)
   - [Systems & Applications Targeted for Scanning](#systems--applications-targeted-for-scanning)
@@ -57,6 +58,22 @@ This project directly covers the following course modules from CIS 3353 — Comp
 | M7 | Custom Home Network Dashboards | 🔄 In Progress |
 | M8 | Live Anomaly Simulation & SOC Response Testing | 🔄 In Progress |
 
+## Architecture
+
+![Architecture Diagram](docs/architecture-diagram.png)
+
+The Suburban-SOC pipeline is a modular, end-to-end security monitoring system composed of the following components:
+
+| Component | Runtime | Port | Role |
+|---|---|---|---|
+| **OpenWrt Router** | Hardware / Physical | — | Captures all boundary network traffic for the home mesh network |
+| **Zeek** | WSL / Docker Container | File-based | Ingests raw PCAP via SSH/tcpdump and converts it into structured JSON logs |
+| **Logstash** | Docker Container | 5044 in / 9200 out | Enriches, filters, and routes JSON logs with GeoIP data to Elasticsearch |
+| **Elasticsearch** | Docker Container | 9200 | Indexes and stores all structured log data for fast querying |
+| **Kibana** | Docker Container | 5601 | Visualizes network events, security notices, and threat dashboards |
+
+> For a full breakdown see the [Architecture Wiki page](../../wiki/Architecture).
+
 ## Overview
 **Suburban-SOC:** Mesh-based wireless network for suburban neighborhoods with centralized SOC management. Replaces insecure home networks with a unified system that captures and analyzes traffic for threats, delivering enterprise-grade security and simple, plug-and-play connectivity for homeowners.
 
@@ -87,6 +104,9 @@ This project encompasses the design, development, and testing of an advanced **n
 ### Systems & Applications Targeted for Scanning:
 * The tool is engineered to analyze and identify anomalies in **network traffic**. This includes dynamic routing, wireless access points, and devices on the OpenWrt router network.
 
+### Baseline Traffic Monitoring Scope (Boundary Rules):
+* To ensure system efficiency and targeted threat detection, the pipeline is configured to capture **only boundary HTTP traffic** entering and exiting the main router. This rule avoids processing internal network noise (e.g., local LAN file-sharing) and bypasses encrypted traffic that cannot be deeply inspected without a decryption proxy.
+
 ### Core Components & Functionalities of the Developed Tool:
 * **Zeek Processing Engine:** Parses raw network packets into categorized JSON logs.
 * **Logstash & Filebeat Forwarders:** Aggregates, filters, and forwards logs robustly.
@@ -104,7 +124,7 @@ This project encompasses the design, development, and testing of an advanced **n
 1.  **Group Project Presentation:**
     * A presentation showcasing the project's objectives, architecture, and outcomes.
 2.  **Group Project Report (GitHub Wiki):**
-    * For full project documentation, progress notes, and the final report, please visit our [Project Wiki](../../wiki).
+    * For full project documentation, progress notes, and the final report, please visit our [Project Wiki](../../wiki). (Wiki authored by Maria Frausto)
 3.  **GitHub Project with Agile Artifacts:**
     * A GitHub Project board utilized for Agile project management.
 4.  **GitHub Repository:**

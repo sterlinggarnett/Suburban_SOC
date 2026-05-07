@@ -1,0 +1,12 @@
+filebeat.inputs:
+- type: filestream
+  id: my-zeek-logs
+  enabled: true
+  paths:
+    # Tell Filebeat exactly where the Zeek logs are
+    - /storage/PCAP/zeek_logs/*.log
+
+# ------------------------------ Logstash Output -------------------------------
+output.logstash:
+  # Remove the hashtag to enable this, and put in your Logstash IP address
+  hosts: ["localhost:5044"]

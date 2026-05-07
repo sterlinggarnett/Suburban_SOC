@@ -4,6 +4,7 @@
 - [Team Members](#team-members)
 - [Course Modules](#course-modules)
 - [Project Status](#project-status)
+- [Architecture](#architecture)
 - [Overview](#overview)
 - [Scope: Suburban-SOC Network Pipeline](#scope-suburban-soc-network-pipeline)
   - [Systems & Applications Targeted for Scanning](#systems--applications-targeted-for-scanning)
@@ -56,6 +57,22 @@ This project directly covers the following course modules from CIS 3353 — Comp
 | M6 | Proactive Kibana Alerting | 🔄 In Progress |
 | M7 | Custom Home Network Dashboards | 🔄 In Progress |
 | M8 | Live Anomaly Simulation & SOC Response Testing | 🔄 In Progress |
+
+## Architecture
+
+![Architecture Diagram](docs/architecture-diagram.png)
+
+The Suburban-SOC pipeline is a modular, end-to-end security monitoring system composed of the following components:
+
+| Component | Runtime | Port | Role |
+|---|---|---|---|
+| **OpenWrt Router** | Hardware / Physical | — | Captures all boundary network traffic for the home mesh network |
+| **Zeek** | WSL / Docker Container | File-based | Ingests raw PCAP via SSH/tcpdump and converts it into structured JSON logs |
+| **Logstash** | Docker Container | 5044 in / 9200 out | Enriches, filters, and routes JSON logs with GeoIP data to Elasticsearch |
+| **Elasticsearch** | Docker Container | 9200 | Indexes and stores all structured log data for fast querying |
+| **Kibana** | Docker Container | 5601 | Visualizes network events, security notices, and threat dashboards |
+
+> For a full breakdown see the [Architecture Wiki page](../../wiki/Architecture).
 
 ## Overview
 **Suburban-SOC:** Mesh-based wireless network for suburban neighborhoods with centralized SOC management. Replaces insecure home networks with a unified system that captures and analyzes traffic for threats, delivering enterprise-grade security and simple, plug-and-play connectivity for homeowners.

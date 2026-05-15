@@ -1,1 +1,0 @@
-query { node(id: "PVT_kwHOD4fhTM4BU152") { ... on ProjectV2 { field(name: "Iteration") { ... on ProjectV2IterationField { configuration { iterations { id title startDate } } } } } } }

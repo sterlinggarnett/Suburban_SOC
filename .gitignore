@@ -24,6 +24,23 @@ __pycache__/
 zeek_logs/
 filebeat_data/
 
+# Zeek runtime artifacts (generated at capture time, never commit)
+conn.log
+http.log
+dns.log
+ntp.log
+files.log
+weird.log
+reporter.log
+packet_filter.log
+loaded_scripts.log
+stderr.log
+stdout.log
+.state/
+
+# Docker named volumes
+suburban_soc_data/
+
 # ==== Secrets & Credentials ====
 .env
 .env.*

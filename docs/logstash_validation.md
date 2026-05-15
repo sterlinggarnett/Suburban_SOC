@@ -30,3 +30,15 @@ if [destination][ip] {
 **Scenario:** Because we decided to monitor internal Mesh Network traffic (Issue #8), a massive chunk of our IPs will be local addresses like `192.168.x.x` or `10.0.x.x`. These IPs do not exist on the global internet, so they have no GPS coordinates.
 **How we validated it:** 
 Because we are using the native Logstash `geoip` plugin, it is built to handle RFC1918 natively. When it encounters `192.168.1.50`, the plugin silently skips returning GPS coordinates, but doesn't halt the pipeline. We mapped it accurately to `[destination][geo]`, ensuring local traffic simply passes through to Elasticsearch cleanly without bloating the database with failed lookup tags.
+
+---
+
+## Post-Validation Fixes Applied
+
+### Fix 1: Empty Logstash Config (Path Mismatch)
+**Issue:** The `docker-compose.yml` volume mount referenced `./configs/logstash/logstash.conf` but the file was missing from that path, causing Logstash to start with no pipeline and silently discard all data.
+**Fix:** Created `scripts/setup/configs/logstash/logstash.conf` — a full copy of the validated pipeline config. The Docker-mounted path now resolves correctly.
+
+### Fix 2: Auth Fields Removed from Output Block
+**Issue:** The root `configs/logstash.conf` had `user` and `password` fields in the Elasticsearch output block. With `xpack.security.enabled=false` in `docker-compose.yml`, Logstash throws an authentication error at startup.
+**Fix:** Removed `user` and `password` from the output block. Security is handled at the network layer (Docker internal network `setup_soc-mesh-net`), not at the application level.

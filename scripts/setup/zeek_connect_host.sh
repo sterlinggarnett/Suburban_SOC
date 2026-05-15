@@ -1,5 +1,8 @@
 #!/bin/bash
 # CONNECTING TO HOST INTERFACE
+# Sync Intel configurations to the host volume
+sudo mkdir -p /storage/PCAP/intel
+sudo cp -r configs/intel/* /storage/PCAP/intel/
 
 sudo docker run --rm \
 --network host \
@@ -9,4 +12,4 @@ sudo docker run --rm \
 -v /storage/PCAP/intel:/data/intel \
 -w /data/zeek_logs \
 zeek/zeek \
-zeek -i eth0 LogAscii::use_json=T /data/intel/config.zeek
+zeek -C -i eth0 LogAscii::use_json=T /data/intel/config.zeek

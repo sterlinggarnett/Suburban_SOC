@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.3.2
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g" # Fixes the stack trace crash
+    ports:
+      - 9200:9200
+    volumes:
+      - suburban_soc_data:/usr/share/elasticsearch/data
+    networks:
+      - soc-mesh-net
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.3.2
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - 5601:5601
+    depends_on:
+      - elasticsearch
+    networks:
+      - soc-mesh-net
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:9.3.2
+    container_name: logstash
+    ports:
+      - 5044:5044
+    environment:
+      - LS_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - ./configs/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    networks:
+      - soc-mesh-net
+    depends_on:
+      - elasticsearch
+  ai-agent:
+    build: 
+      context: ./ai_agent
+    container_name: soc_ai_agent
+    ports:
+      - "5000:5000"
+    networks:
+      - soc-mesh-net # Make sure this matches the network name your ELK stack uses
+    restart: unless-stopped
+networks:
+  soc-mesh-net:
+    driver: bridge
+
+volumes:
+  suburban_soc_data:

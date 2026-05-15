@@ -42,6 +42,9 @@ We ran into an `"i/o timeout"` issue when Filebeat tried connecting to Logstash 
 
 **The Fix:** We changed the Filebeat output host to `localhost:5044`. Docker Desktop natively proxies `localhost` calls cleanly across the Windows/WSL boundary, resulting in an instant `talk to server... OK` connection!
 
+> [!IMPORTANT]
+> **Filebeat 9.x requires `type: filestream`** — the legacy `type: log` input is deprecated and causes a **fatal startup error** in Filebeat 9.x. Always use `filestream` with the `ndjson` parser block.
+
 ---
 
 ## 3. Configuring the Receiver (Logstash)

@@ -6,4 +6,4 @@ sudo docker run -i --rm \
 -v /storage/PCAP/zeek_logs:/data/zeek_logs \
 -w /data/zeek_logs \
 zeek/zeek \
-zeek -r - LogAscii::use_json=T
+zeek -C -r - LogAscii::use_json=T

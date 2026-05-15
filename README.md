@@ -131,18 +131,38 @@ This project encompasses the design, development, and testing of an advanced **n
     * The complete source code and configurations for the Suburban-SOC Network Pipeline.
 
 ## Repository Structure
+```
 / (root)
-├── README.md         # Project overview, setup instructions, and documentation links
-├── /configs          # Agent configurations including filebeat.yml and logstash.conf
-│   ├── /firewall
-│   ├── /network
-│   └── /server
-├── /docs             # Additional documentation, Zeek_ELK_Pipeline.md, sprint-notes 
-├── /evidence         # Evidence reports, hashes, and download links
-├── /reports          # Draft project reports
-├── /scripts          # Setup scripts and execution files
-│   └── /setup
-└── LICENSE
+├── README.md                   # Project overview, setup, and documentation links
+├── LICENSE                     # MIT License
+├── validate_soc.sh             # SOC pipeline validation script
+├── /configs                    # Pipeline and agent configurations
+│   ├── /firewall               # OpenWrt firewall rules (placeholder)
+│   ├── /intel                  # Zeek threat intelligence feed (intel.dat, config.zeek)
+│   ├── /network                # Filebeat configuration (filebeat.yml)
+│   ├── /server                 # Kibana dashboard exports (.ndjson)
+│   └── /zeek_intel             # Zeek intel framework configs
+├── /docs                       # Technical documentation
+│   ├── SOP-001-pipeline-operations.md
+│   ├── Zeek_ELK_Pipeline.md
+│   ├── architecture-diagram.png
+│   ├── logstash_validation.md
+│   ├── master_pipeline_guide.md
+│   ├── network_topology.md
+│   ├── presentation_slides.md
+│   └── /sprint-notes
+├── /evidence                   # Pipeline proof — hashes and Kibana screenshots
+│   └── /screenshots
+├── /reports                    # Final project report (mirrors GitHub Wiki)
+├── /scripts                    # All automation and setup scripts
+│   ├── /agile                  # GitHub project board & issue management scripts
+│   └── /setup                  # Pipeline setup, capture, and AI agent scripts
+│       ├── /ai_agent           # SOC AI agent (Flask webhook, LLM triage, ntfy)
+│       ├── /configs/logstash   # Logstash pipeline config (Docker source of truth)
+│       ├── docker-compose.yml  # ELK + AI agent stack definition
+│       └── soc_pipeline.sh     # Interactive SOP automation menu
+└── /wiki-temp                  # GitHub Wiki source files (submodule)
+```
 
 ## Setup & Installation
 ### 1. Prerequisites:

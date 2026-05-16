@@ -1,0 +1,18 @@
+title: Suspicious System Owner/User Discovery
+id: 55555555-5555-5555-5555-555555555555
+status: experimental
+description: Detects the execution of whoami.exe with the /all flag, commonly used by attackers for reconnaissance.
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\whoami.exe'
+        CommandLine|contains: '/all'
+    condition: selection
+falsepositives:
+    - Administrator troubleshooting.
+level: medium
+tags:
+    - attack.discovery
+    - attack.t1033

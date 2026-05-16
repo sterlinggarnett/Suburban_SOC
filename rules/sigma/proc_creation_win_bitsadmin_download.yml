@@ -1,0 +1,18 @@
+title: Malicious File Download via Bitsadmin
+id: 77777777-7777-7777-7777-777777777777
+status: experimental
+description: Detects the use of bitsadmin.exe to download files via the /transfer switch.
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\bitsadmin.exe'
+        CommandLine|contains: '/transfer'
+    condition: selection
+falsepositives:
+    - Legitimate background update processes.
+level: medium
+tags:
+    - attack.command_and_control
+    - attack.t1105

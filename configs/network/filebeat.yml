@@ -1,22 +1,21 @@
 # ============================== Filebeat inputs ===============================
+# Suburban-SOC Zeek Integration — authoritative config (matches SOP-002)
+# Stack: ELK 9.3.2 | Input: Zeek JSON logs via filestream
+
 filebeat.inputs:
-
-- type: filestream
-  id: my-zeek-logs
-  enabled: true
-  # Keeping your original chosen path for the logs
-  paths:
-    - /storage/PCAP/zeek_logs/*.log
-
-  # Automatically parse the JSON Zeek logs
-  parsers:
-    - ndjson:
-        target: ""
-        add_error_key: true
-        message_key: "ts"
+  - type: filestream
+    id: zeek-logs
+    enabled: true
+    paths:
+      - /storage/PCAP/zeek_logs/*.log
+    parsers:
+      - ndjson:
+          target: ""
+          overwrite_keys: true
+          add_error_key: true
 
 # ============================== Logstash Output ===============================
 output.logstash:
-  # Using an environment variable so teams can change IPs without editing this file.
-  # The syntax below means: "Use the value of LOGSTASH_HOST, but if it's missing, default to localhost:5044"
+  # LOGSTASH_HOST env var allows team members to change target without editing this file.
+  # Default: localhost:5044 (works for Docker stack on same host)
   hosts: ["${LOGSTASH_HOST:localhost:5044}"]

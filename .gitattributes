@@ -1,0 +1,32 @@
+# Suburban-SOC .gitattributes
+# Force LF line endings for all shell scripts in the repo,
+# regardless of the developer's local OS/git config.
+# This prevents CRLF corruption that breaks bash scripts on WSL/Linux.
+
+# Shell scripts — always LF
+*.sh        text eol=lf
+
+# Config files — always LF
+*.conf      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+
+# Markdown — always LF
+*.md        text eol=lf
+
+# Python — always LF
+*.py        text eol=lf
+
+# Windows PowerShell scripts — CRLF is correct on Windows
+*.ps1       text eol=crlf
+
+# Binary files — no line ending conversion
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.ndjson    binary
+*.pcap      binary
+*.docx      binary

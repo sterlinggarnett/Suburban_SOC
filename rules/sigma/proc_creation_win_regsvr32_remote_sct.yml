@@ -1,0 +1,20 @@
+title: Regsvr32 Execution from Remote Server
+id: 66666666-6666-6666-6666-666666666666
+status: experimental
+description: Detects regsvr32.exe attempting to execute a remote script, known as the Squiblydoo bypass.
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\regsvr32.exe'
+        CommandLine|contains|all:
+            - '/i:http'
+            - 'scrobj.dll'
+    condition: selection
+falsepositives:
+    - Highly unlikely.
+level: critical
+tags:
+    - attack.defense_evasion
+    - attack.t1218.010

@@ -1,4 +1,26 @@
 #!/bin/bash
-# Stream bat0 data from remote router
+# SOP-001-A: Stream bat0 (mesh interface) traffic from remote router through Zeek
+# Reads ROUTER_USER and ROUTER_IP from environment (set by soc_pipeline.sh).
+# Fallback defaults used when run standalone.
 
-ssh root@10.18.81.1 "tcpdump -i bat0 -s 0 -U -w -" | docker run -i --rm -v /storage/PCAP/zeek_logs:/data/zeek_logs -w /data/zeek_logs zeek/zeek zeek -r - LogAscii::use_json=T
+ROUTER_USER="${ROUTER_USER:-root}"
+ROUTER_IP="${ROUTER_IP:-10.18.81.1}"
+LOG_DIR="${LOG_DIR:-/storage/PCAP/zeek_logs}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Sync Intel configurations so threat intel rules are applied to live captures
+sudo mkdir -p /storage/PCAP/intel
+sudo cp -r "${SCRIPT_DIR}/../../configs/intel/"* /storage/PCAP/intel/ 2>/dev/null || true
+
+sudo mkdir -p "$LOG_DIR"
+
+echo "[INFO] Streaming bat0 from ${ROUTER_USER}@${ROUTER_IP} -> Zeek -> ${LOG_DIR}"
+echo "[INFO] Press Ctrl+C to stop."
+
+ssh "${ROUTER_USER}@${ROUTER_IP}" "tcpdump -i bat0 -s 0 -U -w -" | \
+  docker run -i --rm \
+    -v "${LOG_DIR}:/data/zeek_logs" \
+    -v /storage/PCAP/intel:/data/intel \
+    -w /data/zeek_logs \
+    zeek/zeek \
+    zeek -r - LogAscii::use_json=T /data/intel/config.zeek

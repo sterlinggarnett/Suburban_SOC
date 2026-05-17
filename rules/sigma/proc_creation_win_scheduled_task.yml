@@ -1,0 +1,22 @@
+title: Scheduled Task Creation via Schtasks
+id: 44444444-4444-4444-4444-444444444444
+status: experimental
+description: Detects the creation of a new scheduled task using schtasks.exe.
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\schtasks.exe'
+        CommandLine|contains|all:
+            - '/create'
+            - '/tn'
+    condition: selection
+falsepositives:
+    - Software installations and updates.
+    - Legitimate administrative tasks.
+level: low
+tags:
+    - attack.execution
+    - attack.persistence
+    - attack.t1053.005

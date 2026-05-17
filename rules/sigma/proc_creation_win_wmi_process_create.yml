@@ -1,0 +1,21 @@
+title: WMI Process Call Create
+id: 88888888-8888-8888-8888-888888888888
+status: experimental
+description: Detects the use of WMIC to create a new process, a common technique for local or remote execution.
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\wmic.exe'
+        CommandLine|contains|all:
+            - 'process'
+            - 'call'
+            - 'create'
+    condition: selection
+falsepositives:
+    - Legitimate remote administration.
+level: medium
+tags:
+    - attack.execution
+    - attack.t1047

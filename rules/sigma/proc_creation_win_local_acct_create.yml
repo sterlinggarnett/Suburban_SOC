@@ -1,0 +1,22 @@
+title: Local User Account Creation via Net.exe
+id: 99999999-9999-9999-9999-999999999999
+status: experimental
+description: Detects the creation of a local user account using the net user command.
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith:
+            - '\net.exe'
+            - '\net1.exe'
+        CommandLine|contains|all:
+            - 'user'
+            - '/add'
+    condition: selection
+falsepositives:
+    - Initial workstation setup or provisioning scripts.
+level: medium
+tags:
+    - attack.persistence
+    - attack.t1136.001

@@ -1,0 +1,19 @@
+title: RDP Session Hijacking via Tscon
+id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+status: experimental
+description: Detects the use of tscon.exe to hijack an RDP session by passing a destination session ID.
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\tscon.exe'
+        CommandLine|contains: '/dest:'
+    condition: selection
+falsepositives:
+    - IT administrators forcefully connecting to specific sessions.
+level: high
+tags:
+    - attack.privilege_escalation
+    - attack.lateral_movement
+    - attack.t1574

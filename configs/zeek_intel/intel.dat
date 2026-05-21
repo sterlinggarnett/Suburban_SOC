@@ -1,0 +1,3 @@
+#fields	indicator	indicator_type	meta.source	meta.desc
+192.168.1.100	Intel::ADDR	local_test	Malicious IP Test
+malicious-site.com	Intel::DOMAIN	local_test	Known C2 Domain Test

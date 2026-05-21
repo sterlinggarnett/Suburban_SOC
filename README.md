@@ -23,23 +23,6 @@
   - [2. Manual Testing](#2-manual-testing)
 - [License](#license)
 - [Additional Notes](#additional-notes)
-  - [Project-Specific Considerations](#project-specific-considerations)
-  - [Future Enhancements](#future-enhancements)
-  - [Known Issues & Limitations](#known-issues--limitations)
-
-## Team Members
-
-| Name | GitHub Username | Role |
-|---|---|---|
-| Tommy Lammers | [@voltron-1](https://github.com/voltron-1) | Security Analyst / Manager |
-| Sterling Garnett | [@sterlinggarnett](https://github.com/sterlinggarnett) | System Architect / Engineer / Project Lead |
-| Maria Frausto | [@megifrausto](https://github.com/megifrausto) | Design / Docs Lead / Manager |
-
-## Course Modules
-
-This project directly covers the following course modules from CIS 3353 — Computer Systems Security:
-
-| Module | Topic | Connection to Pipeline |
 |---|---|---|
 | **Module 2** | Network Fundamentals & Traffic Analysis | The core pipeline captures and analyzes raw boundary network traffic from our OpenWrt mesh router, applying the principles of packet inspection, protocol dissection, and traffic scoping covered in this module. |
 | **Module 8** | Intrusion Detection Systems (IDS) | Zeek functions as our IDS engine, parsing PCAP captures into structured JSON logs and generating `notice.log` alerts for port scans, brute-force attempts, and anomalous file transfers — directly applying the detection methodology from this module. |
@@ -77,7 +60,7 @@ The Suburban-SOC pipeline is a modular, end-to-end security monitoring system co
 ## Overview
 **Suburban-SOC:** Mesh-based wireless network for suburban neighborhoods with centralized SOC management. Replaces insecure home networks with a unified system that captures and analyzes traffic for threats, delivering enterprise-grade security and simple, plug-and-play connectivity for homeowners.
 
-The "Suburban-SOC Network Pipeline" is a software project developed by Tommy Lammers, Sterling Garnett, and Maria Frausto for the Computer Systems Security course.
+The "Suburban-SOC Network Pipeline" is a software project developed by Tommy Lammers and Sterling Garnett for the Computer Systems Security course.
 
 **Objective:**
 The primary objective of this project is to enhance organizational cybersecurity defenses by building an end-to-end Zeek and ELK network packet analysis pipeline for an openWrt SOC. 
@@ -124,7 +107,7 @@ This project encompasses the design, development, and testing of an advanced **n
 1.  **Group Project Presentation:**
     * A presentation showcasing the project's objectives, architecture, and outcomes.
 2.  **Group Project Report (GitHub Wiki):**
-    * For full project documentation, progress notes, and the final report, please visit our [Project Wiki](../../wiki). (Wiki authored by Maria Frausto)
+    * For full project documentation, progress notes, and the final report, please visit our [Project Wiki](../../wiki).
 3.  **GitHub Project with Agile Artifacts:**
     * A GitHub Project board utilized for Agile project management.
 4.  **GitHub Repository:**

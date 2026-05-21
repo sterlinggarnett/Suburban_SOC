@@ -65,3 +65,9 @@ pdf_content.txt
 /tmp/
 /temp/
 node_modules/
+
+# ==== Tool / Editor Config (not project files) ====
+.agyrule
+.antigravitycli/
+.antigravity/
+*.antigravity

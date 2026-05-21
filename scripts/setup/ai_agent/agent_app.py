@@ -1,9 +1,11 @@
 import os
 import requests
 import subprocess
+import logging
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
+logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 NTFY_TOPIC = "uiw_lab_soc_alerts_tjlam_99"
@@ -43,8 +45,9 @@ def analyze_alert_with_ai(raw_log_data):
             return response.json()['choices'][0]['message']['content']
         else:
             return "AI Analysis failed. Manual review required."
-    except Exception as e:
-        return f"AI Integration Error: {e}"
+    except Exception:
+        logger.exception("AI integration failed during alert analysis.")
+        return "AI Analysis failed. Manual review required."
 
 # --- 2. The Notification Engine ---
 def send_soc_alert(title, message, priority=3, tags="rotating_light"):

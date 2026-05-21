@@ -31,9 +31,9 @@
 
 | Name | GitHub Username | Role |
 |---|---|---|
-| Tommy Lammers | [@voltron-1](https://github.com/voltron-1) | Security Analyst / Manager |
-| Sterling Garnett | [@sterlinggarnett](https://github.com/sterlinggarnett) | System Architect / Engineer / Project Lead |
-| Maria Frausto | [@megifrausto](https://github.com/megifrausto) | Design / Docs Lead / Manager |
+| Tommy Lammers | [@voltron-1](https://github.com/voltron-1) | Security Analyst / Engineer |
+| Sterling Garnett | [@sterlinggarnett](https://github.com/sterlinggarnett) | System Architect / Engineer |
+
 
 ## Course Modules
 

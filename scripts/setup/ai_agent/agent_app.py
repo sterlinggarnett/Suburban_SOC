@@ -12,10 +12,11 @@ app = Flask(__name__)
 logger = logging.getLogger(__name__)
 
 # --- Configuration ---
-NTFY_TOPIC  = os.environ.get("NTFY_TOPIC",    "uiw_lab_soc_alerts_tjlam_99")
-LLM_API_KEY = os.environ.get("LLM_API_KEY",   "your_api_key_here")
-LLM_API_URL = os.environ.get("LLM_API_URL",   "https://api.openai.com/v1/chat/completions")
-LLM_MODEL   = os.environ.get("LLM_MODEL",     "gpt-4")
+NTFY_TOPIC         = os.environ.get("NTFY_TOPIC",         "uiw_lab_soc_alerts_tjlam_99")
+LLM_API_KEY        = os.environ.get("LLM_API_KEY",        "your_api_key_here")
+LLM_API_URL        = os.environ.get("LLM_API_URL",        "https://api.openai.com/v1/chat/completions")
+LLM_MODEL          = os.environ.get("LLM_MODEL",          "gpt-4")
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 
 
 # =============================================================================
@@ -70,28 +71,80 @@ def send_soc_alert(title, message, priority=3, tags="rotating_light"):
 
 
 # =============================================================================
-# 3. WEBHOOK LISTENER — real-time alert triage
+# 3. DISCORD NOTIFICATION — SOC channel alert
+# =============================================================================
+def send_discord_alert(device_ip: str, device_mac: str, ai_summary: str):
+    """
+    Posts a rich quarantine notification to the SOC Discord channel.
+    Requires DISCORD_WEBHOOK_URL environment variable to be set.
+    """
+    if not DISCORD_WEBHOOK_URL:
+        app.logger.warning("DISCORD_WEBHOOK_URL not set — skipping Discord notification.")
+        return
+
+    payload = {
+        "embeds": [{
+            "title": "\ud83d\udd12 Device Automatically Quarantined",
+            "color": 15158332,  # Red
+            "fields": [
+                {"name": "Device IP",    "value": device_ip,  "inline": True},
+                {"name": "MAC Address",  "value": device_mac, "inline": True},
+                {"name": "Reason",       "value": "High-Confidence IOC — Ransomware/C2 domain communication detected", "inline": False},
+                {"name": "AI Analysis",  "value": ai_summary[:1024], "inline": False},
+            ],
+            "footer": {"text": "Suburban-SOC | Automated SOAR Response"}
+        }]
+    }
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
+    except Exception as e:
+        app.logger.error("Discord notification failed: %s", e)
+
+
+# =============================================================================
+# 4. WEBHOOK LISTENER — real-time alert triage
 # =============================================================================
 @app.route("/alert", methods=["POST"])
 def handle_kibana_webhook():
     """Receives Kibana alert payload and orchestrates AI triage + response."""
-    data       = request.json or {}
-    severity   = data.get("severity",   "medium")
-    target_ip  = data.get("source_ip",  "unknown")
-    raw_details = data.get("raw_log",   "No log data provided")
+    data        = request.json or {}
+    severity    = data.get("severity",   "medium")
+    target_ip   = data.get("source_ip",  "unknown")
+    target_mac  = data.get("source_mac", "")
+    raw_details = data.get("raw_log",    "No log data provided")
 
     # Step 1: AI triage
     ai_summary = analyze_alert_with_ai(raw_details)
 
     # Step 2: Automated response
     if severity == "critical":
-        subprocess.run(["sudo", "./isolate.sh", target_ip], check=False)
-        alert_body = f"NODE ISOLATED: {target_ip}\n\nAI Analysis:\n{ai_summary}"
+        if target_mac:
+            # Quarantine by MAC address (persists across IP/DHCP changes)
+            subprocess.run(["sudo", "./isolate.sh", target_mac], check=False)
+            quarantine_target = target_mac
+        else:
+            # Fallback: quarantine by IP if MAC is unavailable
+            app.logger.warning("source_mac missing from payload — falling back to IP quarantine.")
+            subprocess.run(["sudo", "./isolate.sh", target_ip], check=False)
+            quarantine_target = target_ip
+
+        # ntfy mobile push
+        alert_body = (
+            f"NODE ISOLATED\nIP: {target_ip} | MAC: {target_mac or 'N/A'}\n\n"
+            f"AI Analysis:\n{ai_summary}"
+        )
         send_soc_alert(
             title="CRITICAL: Autonomous Isolation",
             message=alert_body,
             priority=5,
             tags="skull,lock,robot",
+        )
+
+        # Discord SOC channel notification
+        send_discord_alert(
+            device_ip=target_ip,
+            device_mac=target_mac or "N/A",
+            ai_summary=ai_summary,
         )
     else:
         alert_body = (
@@ -110,7 +163,7 @@ def handle_kibana_webhook():
 
 
 # =============================================================================
-# 4. WEEKLY CISO REPORT ENDPOINT  (Issue #51 — wired from weekly_ciso_report.py)
+# 5. WEEKLY CISO REPORT ENDPOINT  (Issue #51 — wired from weekly_ciso_report.py)
 # =============================================================================
 @app.route("/weekly-report", methods=["POST"])
 def trigger_weekly_report():

@@ -1,0 +1,49 @@
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1m"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ["logstash-security-*"],
+        "body": {
+          "query": {
+            "bool": {
+              "must": [
+                { "match": { "event.dataset": "zeek.conn" } },
+                { "exists": { "field": "threat.indicator.domain" } }
+              ],
+              "filter": {
+                "range": {
+                  "@timestamp": { "gte": "now-1m" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "condition": {
+    "compare": {
+      "ctx.payload.hits.total": { "gt": 0 }
+    }
+  },
+  "actions": {
+    "webhook_to_soar_agent": {
+      "webhook": {
+        "scheme": "http",
+        "host": "127.0.0.1",
+        "port": 5000,
+        "method": "post",
+        "path": "/alert",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"severity\": \"critical\", \"source_ip\": \"{{ctx.payload.hits.hits.0._source.source.ip}}\", \"source_mac\": \"{{ctx.payload.hits.hits.0._source.source.mac}}\", \"raw_log\": {{ctx.payload.hits.hits.0._source}}}"
+      }
+    }
+  }
+}

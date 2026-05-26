@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from elasticsearch import Elasticsearch
+from elastic_transport import TransportError
 
 
 @dataclass
@@ -89,7 +90,11 @@ def main() -> int:
 
     failures = 0
     for check in build_checks(lookback):
-        resp = es.count(index=index, query=check.query)
+        try:
+            resp = es.count(index=index, query=check.query)
+        except TransportError as exc:
+            print(f"  [ERR ] {check.name} — Elasticsearch unreachable: {exc}")
+            return 2
         hits = resp.get("count", 0)
         ok = hits >= check.min_hits
         marker = "PASS" if ok else "FAIL"

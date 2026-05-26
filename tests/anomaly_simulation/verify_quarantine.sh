@@ -29,20 +29,29 @@ RULE_NAME="SOAR_QUARANTINE_${MAC_NORM}"
 
 echo "[*] Verifying quarantine rule '${RULE_NAME}' on ${OPENWRT_HOST}..."
 
-# -q for quiet, -o BatchMode to fail fast instead of prompting
-if ! ssh -i "$SSH_KEY" \
-        -o StrictHostKeyChecking=no \
-        -o BatchMode=yes \
-        -o ConnectTimeout=10 \
-        "${OPENWRT_USER}@${OPENWRT_HOST}" \
-        "uci show firewall 2>/dev/null | grep -q \"name='${RULE_NAME}'\""; then
-  rc=$?
-  if [[ $rc -eq 255 ]]; then
+# Run ssh directly so $? captures its real exit code (255 = transport failure,
+# 1 = grep didn't match → rule absent, 0 = rule present). The `if !` pattern
+# masks ssh's exit code, so use an explicit set +e / set -e bracket instead.
+set +e
+ssh -i "$SSH_KEY" \
+    -o StrictHostKeyChecking=no \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    "${OPENWRT_USER}@${OPENWRT_HOST}" \
+    "uci show firewall 2>/dev/null | grep -q \"name='${RULE_NAME}'\""
+rc=$?
+set -e
+
+case $rc in
+  0)
+    echo "[+] PASS: Rule ${RULE_NAME} is installed and persistent."
+    ;;
+  255)
     echo "[-] SSH to ${OPENWRT_HOST} failed (network or auth)." >&2
     exit 3
-  fi
-  echo "[-] FAIL: Rule ${RULE_NAME} not found on router." >&2
-  exit 1
-fi
-
-echo "[+] PASS: Rule ${RULE_NAME} is installed and persistent."
+    ;;
+  *)
+    echo "[-] FAIL: Rule ${RULE_NAME} not found on router (ssh rc=$rc)." >&2
+    exit 1
+    ;;
+esac

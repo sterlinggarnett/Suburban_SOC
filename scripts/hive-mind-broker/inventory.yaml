@@ -1,0 +1,15 @@
+# Hive-Mind Mesh Router Inventory
+# This file stores the connection details for all OpenWrt routers in the mesh network.
+# IMPORTANT: In production, do NOT store plain-text secrets here. Use HashiCorp Vault or SOPS.
+# For MVP, we point to strictly scoped Ed25519 SSH keys.
+
+routers:
+  - id: "primary-node-home"
+    ip_address: "192.168.1.1"
+    username: "root"
+    ssh_key_path: "~/.ssh/id_ed25519_hivemind"
+    
+  - id: "secondary-node-neighbor"
+    ip_address: "10.0.0.1"
+    username: "root"
+    ssh_key_path: "~/.ssh/id_ed25519_hivemind"

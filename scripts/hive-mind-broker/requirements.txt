@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+pyyaml
+asyncssh
+pytest
+httpx

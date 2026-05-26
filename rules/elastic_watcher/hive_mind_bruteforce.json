@@ -1,0 +1,54 @@
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1m"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ["logstash-*", "filebeat-*"],
+        "body": {
+          "query": {
+            "bool": {
+              "must": [
+                { "match": { "event.dataset": "zeek.notice" } },
+                { "match": { "alert.type": "bruteforce_success" } }
+              ],
+              "filter": {
+                "range": {
+                  "@timestamp": {
+                    "gte": "now-1m"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "condition": {
+    "compare": {
+      "ctx.payload.hits.total": {
+        "gt": 0
+      }
+    }
+  },
+  "actions": {
+    "webhook_to_hive_mind": {
+      "webhook": {
+        "scheme": "http",
+        "host": "127.0.0.1",
+        "port": 8000,
+        "method": "post",
+        "path": "/webhook/alert",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-elastic-signature": "KIBANA_HMAC_SIGNATURE"
+        },
+        "body": "{\"attacker_ip\": \"{{ctx.payload.hits.hits.0._source.source.ip}}\"}"
+      }
+    }
+  }
+}

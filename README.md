@@ -53,13 +53,11 @@ main
 | Milestone | Title | Status |
 |---|---|---|
 | M1 | Topology | ✅ Complete |
-| M2 | Data Acquisition (Mesh Capture) | ✅ Complete |
-| M3 | The Processing Pipeline (Zeek & Filebeat) | ✅ Complete |
+| M2 | Data Acquisition (The Mesh capture) | ✅ Complete |
+| M3 | The Processing Pipeline (Zeek & Agent) | ✅ Complete |
 | M4 | Data Visualization (ELK Integration) | ✅ Complete |
-| M5 | Threat Intelligence Integration | 🔄 In Progress |
-| M6 | Proactive Kibana Alerting | 🔄 In Progress |
-| M7 | Custom Home Network Dashboards | 🔄 In Progress |
-| M8 | Live Anomaly Simulation & SOC Response Testing | 🔄 In Progress |
+| M5 | Advanced Features/Automation (SOAR Quarantine) | 🔄 In Progress |
+| M6 | Presentation | 🔄 In Progress |
 
 ## Architecture
 
@@ -115,6 +113,7 @@ This project encompasses the design, development, and testing of an advanced **n
 * **Logstash & Filebeat Forwarders:** Aggregates, filters, and forwards logs robustly.
 * **Elasticsearch Database:** Stores and indexes log data efficiently.
 * **Kibana UI:** A user-friendly interface to visualize metrics, initiate queries, and view security dashboards.
+* **AI Agent & SOAR Quarantine:** Automated threat triage via LLM and instant OpenWrt MAC-based device isolation upon receiving high-confidence alerts.
 
 ### Security Domain & Vulnerabilities Covered:
 * The primary focus is on **network security monitoring and threat detection** across the defined network segments monitored by the OpenWrt router.
@@ -213,7 +212,7 @@ This project is licensed under the MIT License. (Make sure you include a `LICENS
 
 ### Future Enhancements:
 * Integrate threat intelligence feeds directly into Zeek.
-* Set up real-time alerting using ElastAlert or native Kibana alerts for anomalous activity.
+* Implement dynamic rollback of automated quarantine rules after 24 hours.
 
 ### Known Issues & Limitations:
 * Performance for streaming very large packet volumes from the router hasn't been heavily benchmarked and may require interface optimization.

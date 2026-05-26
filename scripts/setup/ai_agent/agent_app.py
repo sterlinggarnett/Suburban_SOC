@@ -3,6 +3,7 @@ import threading
 import requests
 import subprocess
 import logging
+from pathlib import Path
 from flask import Flask, request, jsonify
 
 # Import the CISO reporting pipeline (Task 4.1-4.5, Issue #51)
@@ -17,6 +18,10 @@ LLM_API_KEY        = os.environ.get("LLM_API_KEY",        "your_api_key_here")
 LLM_API_URL        = os.environ.get("LLM_API_URL",        "https://api.openai.com/v1/chat/completions")
 LLM_MODEL          = os.environ.get("LLM_MODEL",          "gpt-4")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
+
+# Absolute path to isolate.sh — resolved at import time so subprocess.run works
+# regardless of Flask's current working directory.
+ISOLATE_SCRIPT = str((Path(__file__).resolve().parent.parent / "isolate.sh"))
 
 
 # =============================================================================
@@ -120,12 +125,12 @@ def handle_kibana_webhook():
     if severity == "critical":
         if target_mac:
             # Quarantine by MAC address (persists across IP/DHCP changes)
-            subprocess.run(["sudo", "./isolate.sh", target_mac], check=False)
+            subprocess.run(["sudo", ISOLATE_SCRIPT, target_mac], check=False)
             quarantine_target = target_mac
         else:
             # Fallback: quarantine by IP if MAC is unavailable
             app.logger.warning("source_mac missing from payload — falling back to IP quarantine.")
-            subprocess.run(["sudo", "./isolate.sh", target_ip], check=False)
+            subprocess.run(["sudo", ISOLATE_SCRIPT, target_ip], check=False)
             quarantine_target = target_ip
 
         # ntfy mobile push

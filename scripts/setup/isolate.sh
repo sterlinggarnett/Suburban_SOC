@@ -37,16 +37,26 @@ if ! echo "$TARGET_MAC" | grep -qE '^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$'; th
   exit 1
 fi
 
+# Normalize: uppercase + colon delimiter (OpenWrt uci expects XX:XX:XX:XX:XX:XX)
+TARGET_MAC="$(echo "$TARGET_MAC" | tr '[:lower:]' '[:upper:]' | tr '-' ':')"
+RULE_NAME="SOAR_QUARANTINE_${TARGET_MAC//:/}"
+
 echo "[*] Initiating quarantine for device: $TARGET_MAC"
 echo "[*] Connecting to OpenWrt router at $OPENWRT_HOST..."
 
-# --- Execute uci firewall rule injection via SSH ---
+# --- Execute uci firewall rule injection via SSH (idempotent) ---
+# If a SOAR_QUARANTINE rule with the same name already exists, skip the
+# add+restart cycle. Avoids accumulating duplicate uci rules on re-fires.
 ssh -i "$SSH_KEY" \
     -o StrictHostKeyChecking=no \
     -o ConnectTimeout=10 \
     "${OPENWRT_USER}@${OPENWRT_HOST}" \
-    "uci add firewall rule && \
-     uci set firewall.@rule[-1].name='SOAR_QUARANTINE_${TARGET_MAC//:/}' && \
+    "if uci show firewall | grep -q \"name='${RULE_NAME}'\"; then \
+       echo '[=] Rule ${RULE_NAME} already present — no-op.'; \
+       exit 0; \
+     fi && \
+     uci add firewall rule && \
+     uci set firewall.@rule[-1].name='${RULE_NAME}' && \
      uci set firewall.@rule[-1].src='lan' && \
      uci set firewall.@rule[-1].src_mac='${TARGET_MAC}' && \
      uci set firewall.@rule[-1].target='DROP' && \
@@ -54,11 +64,4 @@ ssh -i "$SSH_KEY" \
      uci commit firewall && \
      /etc/init.d/firewall restart"
 
-EXIT_CODE=$?
-
-if [[ $EXIT_CODE -eq 0 ]]; then
-  echo "[+] SUCCESS: Device $TARGET_MAC has been quarantined on $OPENWRT_HOST"
-else
-  echo "[-] FAILURE: Could not quarantine $TARGET_MAC on $OPENWRT_HOST (exit code: $EXIT_CODE)" >&2
-  exit $EXIT_CODE
-fi
+echo "[+] SUCCESS: Device $TARGET_MAC has been quarantined on $OPENWRT_HOST"

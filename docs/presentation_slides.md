@@ -70,3 +70,4 @@ The Suburban-SOC project replaces insecure home environments with a unified, mes
 
 ### Slide 9: Citations
 *   Google DeepMind. (2026). *Antigravity* (Gemini 3.1 Pro) [Large language model]. https://deepmind.google/technologies/gemini/
+*   Anthropic. (2026). *Claude* [Large language model]. https://www.anthropic.com/claude

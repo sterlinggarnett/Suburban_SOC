@@ -44,25 +44,29 @@ This document contains the finalized content for the Suburban-SOC project presen
 
 ---
 
-### Slide 5: Known Limitations & Challenges
+### Slide 5: Advanced Automation & SOAR (Milestone 5)
+*   **Active Response (IPS):** The pipeline now features an AI-driven agent that automatically quarantines malicious devices (via MAC/IP blocking on the OpenWrt router) upon high-confidence threat detection.
+*   **Real-Time Push Alerts:** Critical security alerts are instantly pushed to SOC analysts through Discord webhooks and the `ntfy` mobile app.
+*   **Live Threat Intelligence:** Zeek is integrated with the Intel Framework (`intel.dat`) to automatically flag connections matching known malicious IPs and file hashes.
+
+---
+
+### Slide 6: Known Limitations & Challenges
 *   **Encrypted Traffic Blind Spot:** The pipeline monitors boundary traffic but cannot inspect deep HTTPS payloads without an active SSL/TLS proxy.
-*   **Passive Identification Only:** The system is engineered strictly to identify and log threats. It does not yet feature automated remediation, real-time push alerts, or active attacker IP blocking.
 *   **Unbenchmarked Stress Limits:** The OpenWrt gateway’s continuous packet-streaming capability has not yet been stress-tested for stability under extreme network loads.
 
 ---
 
-### Slide 6: Future Improvements & Extensions
-*   **Active Response (IPS):** Upgrade to an Intrusion Prevention System by scripting the router to automatically block malicious IPs or quarantine MACs upon detection.
-*   **Real-Time Push Alerts:** Instantly push critical security alerts to SOC analysts via Slack, Discord, or email webhooks.
+### Slide 7: Future Improvements & Extensions
 *   **SSL/TLS Decryption Proxy:** Implement an inspection proxy to analyze the deep payloads of HTTPS traffic, eliminating the encrypted blind spot.
-*   **Live Threat Intelligence:** Pipe lists of known malicious IPs and file hashes directly into Zeek to automatically flag active threats on the wire.
+*   **Dynamic Quarantine Rollback:** Implement a dynamic rollback mechanism to automatically release isolated MACs and IPs after a 24-hour quarantine period.
 
 ---
 
-### Slide 7: Conclusion
+### Slide 8: Conclusion
 The Suburban-SOC project replaces insecure home environments with a unified, mesh-based network architecture that provides enterprise-grade security for suburban neighborhoods. It operates by capturing targeted boundary traffic directly from an OpenWrt gateway router and securely streaming those raw packets to a centralized host. A fully automated processing pipeline then utilizes Zeek to transform the raw data into structured JSON logs, which are rapidly harvested and shipped by Filebeat. Finally, the ELK stack ingests and enriches this data, providing a centralized Kibana dashboard that empowers analysts to visualize network trends and detect malicious anomalies in real-time.
 
 ---
 
-### Slide 8: Citations
+### Slide 9: Citations
 *   Google DeepMind. (2026). *Antigravity* (Gemini 3.1 Pro) [Large language model]. https://deepmind.google/technologies/gemini/

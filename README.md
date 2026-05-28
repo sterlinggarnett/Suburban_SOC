@@ -23,8 +23,6 @@
   - [2. Manual Testing](#2-manual-testing)
 - [License](#license)
 - [Additional Notes](#additional-notes)
- chore/repo-cleanup-may20
-
   - [Project-Specific Considerations](#project-specific-considerations)
   - [Future Enhancements](#future-enhancements)
   - [Known Issues & Limitations](#known-issues--limitations)
@@ -42,7 +40,6 @@
 This project directly covers the following course modules from CIS 3353 — Computer Systems Security:
 
 | Module | Topic | Connection to Pipeline |
-main
 |---|---|---|
 | **Module 2** | Network Fundamentals & Traffic Analysis | The core pipeline captures and analyzes raw boundary network traffic from our OpenWrt mesh router, applying the principles of packet inspection, protocol dissection, and traffic scoping covered in this module. |
 | **Module 8** | Intrusion Detection Systems (IDS) | Zeek functions as our IDS engine, parsing PCAP captures into structured JSON logs and generating `notice.log` alerts for port scans, brute-force attempts, and anomalous file transfers — directly applying the detection methodology from this module. |
@@ -217,14 +214,6 @@ This project is licensed under the MIT License. (Make sure you include a `LICENS
 ### Known Issues & Limitations:
 * Performance for streaming very large packet volumes from the router hasn't been heavily benchmarked and may require interface optimization.
 
-feat/offline-integration-patch
 
-## Project Status Milestones
 
-| Milestone | Target Date | Description | Status |
-| :--- | :--- | :--- | :--- |
-| **Iteration 1** | TBD | Initial architecture and core framework setup | In Progress |
-| **Iteration 2** | TBD | Behavioral detection algorithms integration | Planned |
-| **Iteration 3** | TBD | Distributed node deployment and testing | Planned |
-| **Iteration 4** | TBD | Real-time alerting framework and visualizations | Planned |
 

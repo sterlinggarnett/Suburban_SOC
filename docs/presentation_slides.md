@@ -1,10 +1,19 @@
 # Suburban-SOC Presentation Slides
 
+![Title Slide](C:/Users/tjlam/.gemini/antigravity-ide/brain/8fdd09d8-3374-46a8-9374-b1b5f9bed6ce/slide_0_title_updated_1779896975035.png)
+
+**Developed By:**
+*   **Thomas Lammers** - System Architect and Lead Engineer
+*   **Sterling Garnett** - Security Analyst and Engineer
+
 This document contains the finalized content for the Suburban-SOC project presentation, fulfilling the requirements for Milestone 6.
 
 ---
 
 ### Slide 1: Network Topology & Monitoring Scope
+
+![Slide 1 Topology](C:/Users/tjlam/.gemini/antigravity-ide/brain/8fdd09d8-3374-46a8-9374-b1b5f9bed6ce/slide_1_topology_1779894028060.png)
+
 **Associated Milestone:** Milestone 1: Topology
 
 *   **Mesh Network Architecture:** Built around 1 main gateway router acting as the mesh controller, with 6 remote wireless nodes distributing access.
@@ -15,6 +24,9 @@ This document contains the finalized content for the Suburban-SOC project presen
 ---
 
 ### Slide 2: Data Acquisition via OpenWrt
+
+![Slide 2 Acquisition](C:/Users/tjlam/.gemini/antigravity-ide/brain/8fdd09d8-3374-46a8-9374-b1b5f9bed6ce/slide_2_acquisition_1779894040601.png)
+
 **Associated Milestone:** Milestone 2: Data Acquisition (The Mesh capture)
 
 *   **Objective:** Configure the physical mesh nodes to stream raw traffic directly to our host.
@@ -25,6 +37,9 @@ This document contains the finalized content for the Suburban-SOC project presen
 ---
 
 ### Slide 3: The Processing Pipeline (Zeek & Filebeat)
+
+![Slide 3 Pipeline](C:/Users/tjlam/.gemini/antigravity-ide/brain/8fdd09d8-3374-46a8-9374-b1b5f9bed6ce/slide_3_pipeline_1779894053538.png)
+
 **Associated Milestone:** Milestone 3: The Processing Pipeline (Zeek & Agent)
 
 *   **Objective:** Automate the transformation of raw network packets into structured, human-readable security logs.
@@ -36,6 +51,9 @@ This document contains the finalized content for the Suburban-SOC project presen
 ---
 
 ### Slide 4: Data Visualization & ELK Integration
+
+![Slide 4 ELK](C:/Users/tjlam/.gemini/antigravity-ide/brain/8fdd09d8-3374-46a8-9374-b1b5f9bed6ce/slide_4_elk_1779894066461.png)
+
 **Associated Milestone:** Milestone 4: Data Visualization (ELK Integration)
 
 *   **Objective:** Finalize data ingestion to create a human-readable, centralized security dashboard.
@@ -45,8 +63,10 @@ This document contains the finalized content for the Suburban-SOC project presen
 
 ---
 
- docs/refresh-presentation-slides
 ### Slide 5: SOAR Response Layer — Automated Quarantine
+
+![Slide 5 SOAR](C:/Users/tjlam/.gemini/antigravity-ide/brain/8fdd09d8-3374-46a8-9374-b1b5f9bed6ce/slide_5_soar_1779894082139.png)
+
 **Associated Milestone:** Milestone 5: Advanced Features / Automation
 
 *   **Objective:** Close the detect-and-respond loop. The earlier slides build the *detection* plane; M5 adds *response* at machine speed.
@@ -73,6 +93,9 @@ This document contains the finalized content for the Suburban-SOC project presen
 ---
 
 ### Slide 7: Known Limitations & Challenges
+
+![Slide 7 Limitations](C:/Users/tjlam/.gemini/antigravity-ide/brain/8fdd09d8-3374-46a8-9374-b1b5f9bed6ce/slide_6_limitations_1779894094801.png)
+
 *   **Encrypted Traffic Blind Spot:** The pipeline monitors boundary traffic but cannot inspect deep HTTPS payloads without an active SSL/TLS proxy.
 *   **Narrow SOAR Trigger Scope:** The Watcher currently fires only on `threat.indicator.domain` matches. Port scans (`Scan::Port_Scan`) and SSH brute-force cascades are *detected and logged* but do not yet trigger automated quarantine — they require analyst review.
 *   **Unbenchmarked Stress Limits:** The OpenWrt gateway's continuous packet-streaming capability has not yet been stress-tested for stability under extreme network loads.
@@ -80,6 +103,9 @@ This document contains the finalized content for the Suburban-SOC project presen
 ---
 
 ### Slide 8: Future Improvements & Extensions
+
+![Slide 8 Improvements](C:/Users/tjlam/.gemini/antigravity-ide/brain/8fdd09d8-3374-46a8-9374-b1b5f9bed6ce/slide_7_improvements_1779894113536.png)
+
 *   **Widen SOAR Triggers:** Extend the Watcher to fire on `Scan::Port_Scan` and `zeek.ssh` brute-force cascades, closing the auto-response gap for the most common opportunistic attacks.
 *   **SSL/TLS Decryption Proxy:** Implement an inspection proxy to analyze the deep payloads of HTTPS traffic, eliminating the encrypted blind spot.
 *   **Live Threat Intelligence Feed:** Continuously updated lists of malicious IPs and file hashes piped directly into Zeek, so unknown indicators light up the same Watcher pathway already in production.
@@ -89,39 +115,16 @@ This document contains the finalized content for the Suburban-SOC project presen
 ---
 
 ### Slide 9: Conclusion
+
+![Slide 9 Conclusion](C:/Users/tjlam/.gemini/antigravity-ide/brain/8fdd09d8-3374-46a8-9374-b1b5f9bed6ce/slide_8_conclusion_1779894129531.png)
+
 The Suburban-SOC project replaces insecure home environments with a unified, mesh-based network architecture that provides enterprise-grade security for suburban neighborhoods. Boundary traffic captured at the OpenWrt gateway is streamed to a centralized host, where Zeek (with MAC-address enrichment) transforms raw packets into structured JSON, and Filebeat + Logstash ship that data into Elasticsearch indexed as `logstash-security-*`. Kibana surfaces dashboards for human analysts, while a Kibana Watcher + Flask AI Agent + `isolate.sh` chain closes the detect-and-respond loop by quarantining infected devices on the OpenWrt router at machine-speed via persistent `uci` MAC-DROP rules — with parallel ntfy and Discord notifications to the SOC. An anomaly-simulation harness exercises the three canonical attack scenarios end-to-end, giving the team a repeatable regression test for every future change.
 
 ---
 
 ### Slide 10: Citations
+
+![Slide 10 Citations](C:/Users/tjlam/.gemini/antigravity-ide/brain/8fdd09d8-3374-46a8-9374-b1b5f9bed6ce/slide_9_citations_updated_1779896536098.png)
+
 *   Google DeepMind. (2026). *Antigravity* (Gemini 3.1 Pro) [Large language model]. https://deepmind.google/technologies/gemini/
 *   Anthropic. (2026). *Claude Code* (Claude Opus 4.7) [Large language model]. https://claude.com/claude-code
-=======
-### Slide 5: Advanced Automation & SOAR (Milestone 5)
-*   **Active Response (IPS):** The pipeline now features an AI-driven agent that automatically quarantines malicious devices (via MAC/IP blocking on the OpenWrt router) upon high-confidence threat detection.
-*   **Real-Time Push Alerts:** Critical security alerts are instantly pushed to SOC analysts through Discord webhooks and the `ntfy` mobile app.
-*   **Live Threat Intelligence:** Zeek is integrated with the Intel Framework (`intel.dat`) to automatically flag connections matching known malicious IPs and file hashes.
-
----
-
-### Slide 6: Known Limitations & Challenges
-*   **Encrypted Traffic Blind Spot:** The pipeline monitors boundary traffic but cannot inspect deep HTTPS payloads without an active SSL/TLS proxy.
-*   **Unbenchmarked Stress Limits:** The OpenWrt gateway’s continuous packet-streaming capability has not yet been stress-tested for stability under extreme network loads.
-
----
-
-### Slide 7: Future Improvements & Extensions
-*   **SSL/TLS Decryption Proxy:** Implement an inspection proxy to analyze the deep payloads of HTTPS traffic, eliminating the encrypted blind spot.
-*   **Dynamic Quarantine Rollback:** Implement a dynamic rollback mechanism to automatically release isolated MACs and IPs after a 24-hour quarantine period.
-
----
-
-### Slide 8: Conclusion
-The Suburban-SOC project replaces insecure home environments with a unified, mesh-based network architecture that provides enterprise-grade security for suburban neighborhoods. It operates by capturing targeted boundary traffic directly from an OpenWrt gateway router and securely streaming those raw packets to a centralized host. A fully automated processing pipeline then utilizes Zeek to transform the raw data into structured JSON logs, which are rapidly harvested and shipped by Filebeat. Finally, the ELK stack ingests and enriches this data, providing a centralized Kibana dashboard that empowers analysts to visualize network trends and detect malicious anomalies in real-time.
-
----
-
-### Slide 9: Citations
-*   Google DeepMind. (2026). *Antigravity* (Gemini 3.1 Pro) [Large language model]. https://deepmind.google/technologies/gemini/
-*   Anthropic. (2026). *Claude* [Large language model]. https://www.anthropic.com/claude
-

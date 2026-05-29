@@ -5,6 +5,7 @@
 - [Course Modules](#course-modules)
 - [Project Status](#project-status)
 - [Architecture](#architecture)
+- [Dashboard Architecture](#dashboard-architecture)
 - [Overview](#overview)
 - [Scope: Suburban-SOC Network Pipeline](#scope-suburban-soc-network-pipeline)
   - [Systems & Applications Targeted for Scanning](#systems--applications-targeted-for-scanning)
@@ -71,6 +72,27 @@ The Suburban-SOC pipeline is a modular, end-to-end security monitoring system co
 | **Kibana** | Docker Container | 5601 | Visualizes network events, security notices, and threat dashboards |
 
 > For a full breakdown see the [Architecture Wiki page](../../wiki/Architecture).
+
+## Dashboard Architecture
+
+The SOC presents its telemetry through a **four-dashboard ecosystem** plus a navigation
+hub, deployed via [`scripts/setup/deploy_dashboards.sh`](scripts/setup/deploy_dashboards.sh)
+(PowerShell equivalent: `deploy_dashboards.ps1`). See
+[SOP-003 Dashboard Operations](docs/SOP-003-dashboard-operations.md) for full procedures.
+
+| # | Dashboard | Saved-object ID | Focus |
+|---|---|---|---|
+| 1 | **Executive / Bird's-Eye** | `executive-dashboard` | KPIs, NIST CSF donut, MITRE ATT&CK heatmap, SOAR response metrics |
+| 2 | **Network & Traffic** | `network-dashboard-v3` | Traffic volume, top talkers, DNS, HTTP, TLS/SNI, GeoIP |
+| 3 | **Endpoint & Host-Level** | `endpoint-dashboard` | Process anomalies, authentication, privilege escalation, Sigma hits |
+| 4 | **Data Quality & Ingestion** | `dataquality-dashboard` | Agent heartbeats, ingest throughput, parse-error tracking |
+| 🏠 | **SOC Home (Navigation Hub)** | `soc-navigation-hub` | Cross-dashboard links + at-a-glance KPIs |
+
+Supporting pipeline enrichment lives in [`configs/logstash.conf`](configs/logstash.conf)
+(MITRE/NIST tagging, TLS field mapping, endpoint Sigma tags, ingest-quality metadata),
+[`configs/zeek/local.zeek`](configs/zeek/local.zeek) (TLS telemetry), and the AI agent's
+SOAR feedback loop ([`agent_app.py`](scripts/setup/ai_agent/agent_app.py) →
+`soar-actions-*`). Endpoint agents: [`configs/endpoint/`](configs/endpoint).
 
 ## Overview
 **Suburban-SOC:** Mesh-based wireless network for suburban neighborhoods with centralized SOC management. Replaces insecure home networks with a unified system that captures and analyzes traffic for threats, delivering enterprise-grade security and simple, plug-and-play connectivity for homeowners.

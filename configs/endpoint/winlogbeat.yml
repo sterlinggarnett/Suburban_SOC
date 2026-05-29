@@ -1,0 +1,41 @@
+# =============================================================================
+# Suburban-SOC — Winlogbeat configuration (Endpoint Dashboard, Component 3)
+# Deploy on Windows lab hosts to ship Sysmon + Security + System events to the
+# SOC Logstash pipeline (:5044). Parsed by configs/logstash.conf Category 2.
+#
+# Prereqs on the host:
+#   - Sysmon installed with a config (e.g. SwiftOnSecurity) for Event IDs below
+#   - Winlogbeat 9.x installed as a service
+# Install:  .\winlogbeat.exe -c winlogbeat.yml -e
+# =============================================================================
+
+winlogbeat.event_logs:
+  # Sysmon — process creation (1), network (3), image load (7), driver (8),
+  # file create (11), registry (13), file stream (15)
+  - name: Microsoft-Windows-Sysmon/Operational
+    event_id: 1, 3, 7, 8, 11, 13, 15
+
+  # Windows Security — logon success/failure, explicit creds, special privs,
+  # account creation, group membership changes
+  - name: Security
+    event_id: 4624, 4625, 4648, 4672, 4720, 4732
+
+  # Windows System — reboots / service control manager
+  - name: System
+    event_id: 1074, 6005, 6006, 6008
+
+# Tag so Logstash routes these through the endpoint_logs branch.
+tags: ["endpoint_logs", "winlogbeat"]
+
+# Ship to the SOC Logstash beats input. Override host via env if needed.
+output.logstash:
+  hosts: ["${LOGSTASH_HOST:localhost:5044}"]
+
+# Keep Winlogbeat's own logs local for troubleshooting.
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: C:/ProgramData/winlogbeat/logs
+  name: winlogbeat
+  keepfiles: 7
+  permissions: 0644

@@ -7,3 +7,13 @@
 
 @load base/protocols/conn
 @load policy/protocols/conn/mac-logging
+
+# Suburban-SOC — Network Dashboard (Component 2): TLS/SSL telemetry
+#
+# Generates ssl.log with server_name (SNI), cipher, curve, version, and
+# validation_status fields, feeding the SNI / cipher-suite / TLS-audit
+# panels on the Network & Traffic dashboard. Boundary HTTP scope keeps
+# ssl.log volume manageable; monitor disk if mesh traffic is heavy.
+@load base/protocols/ssl
+@load policy/protocols/ssl/validate-certs
+@load policy/protocols/ssl/log-hostcerts-only

@@ -1,0 +1,40 @@
+# =============================================================================
+# Suburban-SOC — Filebeat endpoint configuration (Endpoint Dashboard, Component 3)
+# Deploy on Linux hosts (incl. the WSL pipeline host) to ship auth + system logs
+# to the SOC Logstash pipeline (:5044). Parsed by configs/logstash.conf Category 2
+# (the `auth.log` grok branch keys on [log][file][path]).
+#
+# Install:  sudo filebeat -c filebeat_endpoint.yml -e
+# =============================================================================
+
+filebeat.inputs:
+  - type: filestream
+    id: auth-logs
+    enabled: true
+    paths:
+      - /var/log/auth.log      # Debian/Ubuntu
+      - /var/log/secure        # RHEL/CentOS
+    parsers:
+      - syslog: ~
+
+  - type: filestream
+    id: syslog
+    enabled: true
+    paths:
+      - /var/log/syslog
+      - /var/log/messages
+
+# Tag so Logstash routes these through the endpoint_logs branch.
+tags: ["endpoint_logs", "filebeat"]
+
+# Ship to the SOC Logstash beats input. Override host via env if needed.
+output.logstash:
+  hosts: ["${LOGSTASH_HOST:localhost:5044}"]
+
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644

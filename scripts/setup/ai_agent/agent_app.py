@@ -3,6 +3,7 @@ import threading
 import requests
 import subprocess
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, request, jsonify
 
@@ -18,6 +19,9 @@ LLM_API_KEY        = os.environ.get("LLM_API_KEY",        "your_api_key_here")
 LLM_API_URL        = os.environ.get("LLM_API_URL",        "https://api.openai.com/v1/chat/completions")
 LLM_MODEL          = os.environ.get("LLM_MODEL",          "gpt-4")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
+# Elasticsearch endpoint for the SOAR feedback loop (Executive Dashboard metrics).
+# Defaults to the Docker-network service name used by docker-compose.yml.
+ES_HOST            = os.environ.get("ES_HOST",            "http://elasticsearch:9200")
 
 # Absolute path to isolate.sh — resolved at import time so subprocess.run works
 # regardless of Flask's current working directory.
@@ -107,6 +111,47 @@ def send_discord_alert(device_ip: str, device_mac: str, ai_summary: str):
 
 
 # =============================================================================
+# 3.5 SOAR FEEDBACK LOOP — index response actions back to Elasticsearch
+# =============================================================================
+def log_soar_action(action_type, target_ip, target_mac, ai_summary, severity):
+    """
+    Indexes SOAR response actions back to Elasticsearch so the Executive
+    Dashboard can track automated response metrics (devices quarantined,
+    AI recommendations, automated-vs-manual ratio, response latency).
+
+    Writes to a daily `soar-actions-YYYY.MM.dd` index. Failures are logged
+    but never raised — dashboard telemetry must not break alert handling.
+
+    Args:
+        action_type: e.g. "quarantine_mac", "quarantine_ip", "analyst_review".
+        target_ip:   offending device IP.
+        target_mac:  offending device MAC (may be empty).
+        ai_summary:  the LLM triage summary text.
+        severity:    alert severity ("critical", "medium", ...).
+    """
+    doc = {
+        "@timestamp":     datetime.now(timezone.utc).isoformat(),
+        "action.type":    action_type,
+        "source.ip":      target_ip,
+        "source.mac":     target_mac or "N/A",
+        "ai.summary":     ai_summary,
+        "event.severity": severity,
+        # Whether a human still needs to act. Drives the automated-vs-manual pie.
+        "response.automated": action_type != "analyst_review",
+    }
+    index = "soar-actions-" + datetime.now(timezone.utc).strftime("%Y.%m.%d")
+    try:
+        requests.post(
+            f"{ES_HOST}/{index}/_doc",
+            json=doc,
+            headers={"Content-Type": "application/json"},
+            timeout=5,
+        )
+    except Exception as e:
+        app.logger.error("Failed to index SOAR action: %s", e)
+
+
+# =============================================================================
 # 4. WEBHOOK LISTENER — real-time alert triage
 # =============================================================================
 @app.route("/alert", methods=["POST"])
@@ -151,6 +196,15 @@ def handle_kibana_webhook():
             device_mac=target_mac or "N/A",
             ai_summary=ai_summary,
         )
+
+        # SOAR feedback loop — record the automated quarantine for the dashboard
+        log_soar_action(
+            action_type="quarantine_mac" if target_mac else "quarantine_ip",
+            target_ip=target_ip,
+            target_mac=target_mac,
+            ai_summary=ai_summary,
+            severity=severity,
+        )
     else:
         alert_body = (
             f"Suspicious Activity from {target_ip}\n\n"
@@ -162,6 +216,15 @@ def handle_kibana_webhook():
             message=alert_body,
             priority=3,
             tags="warning,mag,robot",
+        )
+
+        # SOAR feedback loop — record the manual-review path (not automated)
+        log_soar_action(
+            action_type="analyst_review",
+            target_ip=target_ip,
+            target_mac=target_mac,
+            ai_summary=ai_summary,
+            severity=severity,
         )
 
     return jsonify({"status": "Alert Processed", "ai_analysis": ai_summary}), 200

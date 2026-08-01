@@ -9,7 +9,60 @@ Status: `[ ]` todo · `[~]` in-progress · `[x]` done · `[!]` blocked
 
 ## NEXT UP
 
-**Phase: Post-remediation execution plan — Phase B (P3 script fixes).**
+**Milestone: [M12 - Approval Gate Integrity & Detection Engineering Tuning](https://github.com/voltron-1/Suburban_SOC/milestone/16).**
+Filed 2026-08-01 after fact-checking a detection-capability evaluation against
+the repo. Verifying the evaluation's weakest item (SOAR action dedup)
+surfaced a live regression: PR-less commit `2bb3d8f` ("phase H agent
+orchestration and compliance core", merged 2026-07-20) silently dropped the
+atomic approval claim #172 had added to `/approve`, reopening a
+double-execution race on network isolation. That regression, plus an
+uncommitted working tree making it worse, blocks everything else. Full plan:
+[`plans/20260801-approval-gate-integrity-detection-tuning.md`](plans/20260801-approval-gate-integrity-detection-tuning.md).
+Umbrella user story: [#213](https://github.com/voltron-1/Suburban_SOC/issues/213).
+
+Multi-phase execution gating applies: each phase below executes and is
+reviewed individually, no unattended multi-phase runs.
+
+- [ ] **Phase 0 (CRITICAL, blocking) — #214** — restore the atomic
+  approval-gate claim via ES create-if-absent (`claim_approval()` in
+  `checkpoints.py`), restore `raise_for_status()` on checkpoint writes,
+  discard the uncommitted JSONL-fallback replay hole, handle `/alert` intake
+  vs `/approve` execution asymmetrically (intake tolerates ES hiccups,
+  execution fails closed).
+- [ ] **Phase 1 — #215** — resolve the rest of the uncommitted working tree:
+  relocate SOP-022/SOP-147 operational content (dropped by an uncommitted
+  playbook-template refactor) into companion runbooks, repair 4 dangling
+  references, land the `inventory.py` path fix and README compliance-link
+  addition.
+- [ ] **Phase 3 (metric) — #216** — add a raw alert-volume SLO metric.
+  **Sequenced before #217** — Phase 2 tuning has no before/after signal
+  without it.
+- [ ] **Phase 2 — #217** (blocked-by #216) — Sigma false-positive tuning;
+  verify `CommandLine → process.args` semantics against live data before
+  patching the `-enc` rule (the fix direction is ambiguous and the two
+  candidate fixes are opposite).
+- [ ] **Phase 2 — #218** — exclude the mesh router from the Zeek PortScan
+  false-positive (evidence: `evidence/README.md:23`, 60-port legitimate trip
+  vs 20-port threshold) without raising the threshold itself.
+- [ ] **Phase 3 — #219** — verify/enforce Logstash Beats-input mTLS
+  client-cert requirement (`ssl_client_authentication` may not actually be
+  `required`).
+- [ ] **Phase 3 — #220** — extend alert dedup key to a sliding host+technique
+  suppression window.
+- [ ] **Phase 3 — #221** — add live-fire Sigma detection tests against real
+  Elasticsearch data.
+- [ ] **Phase 4 — #222** — expand threat-intel feed coverage, automate
+  `refresh_intel.sh` cron install.
+
+Next unstarted item: **Phase 0 — #214**, blocking everything else in this
+milestone.
+
+---
+
+<details>
+<summary>Prior milestone — M11 Phase A-H (structural remediation + agent
+orchestration), COMPLETE 2026-07-16 through 2026-07-20 — click to expand</summary>
+
 Approved plan (2026-07-16, Fable 5 planning session): Phase 0 triage of all 9
 open issues (each classification adversarially verified, 9/9 agreement) →
 execute-now = #189, #190, #204-#208; #201 closed as superseded; #182 stays
@@ -21,13 +74,20 @@ DEFERRED. Phase sequence: **A gate integrity — COMPLETE** → B P3 fixes (#189
 vocabulary) → G remediation reserve (gated fix-now vs backlog split) → H agent
 orchestration refactor (Perceive→Think→Act→Check loop, ES-backed checkpoints,
 retry logic — 6 components, §12.3 human gate preserved). Execution
-model: Sonnet 5 for phases A-E. Standing constraints for the rest of this plan:
-no Logstash start/restart until #208 merges (the bind-mounted
-`configs/logstash.conf` already carries #208's translate filters pointing at
-an unmounted `lookups/` dir with invalid stub CSVs); selective staging only
-across the dirty working tree spanning #204-#208 (never `git add -A`); the
-in-tree `README.md` is a stale pre-#192 overwrite — #204 owns saving the
-drafted Compliance bullet and restoring from HEAD.
+model: Sonnet 5 for phases A-E.
+
+**Phases B-E COMPLETE**: PRs
+[#209](https://github.com/voltron-1/Suburban_SOC/pull/209) (System Hardening
+& Config), [#210](https://github.com/voltron-1/Suburban_SOC/pull/210)
+(Compliance & Documentation),
+[#211](https://github.com/voltron-1/Suburban_SOC/pull/211) (Pipeline,
+Detections & Data Enrichment) merged 2026-07-16, closing #189, #190,
+#204-#208. **Phase H COMPLETE**: `agent.py`, `checkpoints.py`, `retry.py`,
+`test_agent.py` merged via `2bb3d8f` (2026-07-20) — **but this commit also
+introduced the approval-gate regression that M12/#214 now fixes**; see NEXT
+UP above. Phases F/G (three-lens audit, remediation reserve) were not
+executed as separate tracked work before this session's evaluation review
+superseded them — folded into M12's scope going forward.
 
 Phase A (gate integrity) — **COMPLETE 2026-07-16**:
 - [x] Branch protection enabled on `main`: 9 required status checks (`Analyze
@@ -49,13 +109,7 @@ Phase A (gate integrity) — **COMPLETE 2026-07-16**:
   before #201 was even filed; the ticket was simply left orphaned-open.
   Closed with a comment citing the specific evidence per file/line.
 
-Next unstarted item: **Phase B — #189** — `soc_pipeline.sh` ES health checks
-still probe `http://localhost:9200` against the TLS-only stack (Kibana half
-already fixed by #177/PR #202); fix in-place via `es_common.sh`'s fail-closed
-CA-verified pattern, not delegated to `stack_health.sh` (side effects +
-creds-prompt-flow mismatch). #190 (`reindex-existing.sh` `es()`/`esj()`
-infinite recursion — a 1-line-wrapper rename across 6 call sites) follows in
-the same phase, independent parallel branch.
+</details>
 
 - [x] **#184** — SOC agent audit-write failures had no dashboard-visible
   metric (follow-up to #165). `write_audit()`'s except block now best-effort
@@ -332,69 +386,119 @@ plus the new Area 1-5 compliance wave (#204-#208) are now sequenced by the
 Phase A-H plan above; [Project Board #17](https://github.com/users/voltron-1/projects/17)
 continues to track everything.
 
-Phase H (agent orchestration refactor):
-Refactor the monolithic `handle_kibana_webhook()` in
+Phase H (agent orchestration refactor) — **COMPLETE via `2bb3d8f`,
+2026-07-20** — refactored the monolithic `handle_kibana_webhook()` in
 `scripts/setup/ai_agent/agent_app.py` into an explicit `Agent` class with a
-two-phase Perceive→Think→Act→Check loop. The §12.3 human gate is structural:
-Phase 1 (`/alert`) parks at `PENDING_APPROVAL`; Phase 2 (`/approve`) triggers
-execution. ES-backed checkpoints enable crash recovery and idempotency. No new
-infrastructure dependencies — uses existing ES.
+two-phase Perceive→Think→Act→Check loop, ES-backed checkpoints, and retry
+logic. **Component 4's atomic-claim carryover requirement
+("Retain ... `_queue_lock` atomic claim") was dropped during the refactor —
+this is the regression M12/#214 fixes; see NEXT UP.** All components below
+are implemented in code; checked off with that one caveat noted inline.
 
-  Component 1 — Agent Core (`agent.py`, NEW):
-  - [ ] `Agent` class with `run()` (Phase 1) and `execute_approved()` (Phase 2)
-  - [ ] `perceive()` — parse, validate, sanitise inputs, open Kibana case
-  - [ ] `think()` — LLM triage with retry + circuit breaker
-  - [ ] `act()` — §12.3/§12.4 decision gate: DRAFTED (default), EXECUTED
+  Component 1 — Agent Core (`agent.py`):
+  - [x] `Agent` class with `run()` (Phase 1) and `execute_approved()` (Phase 2)
+  - [x] `perceive()` — parse, validate, sanitise inputs, open Kibana case
+  - [x] `think()` — LLM triage with retry + circuit breaker
+  - [x] `act()` — §12.3/§12.4 decision gate: DRAFTED (default), EXECUTED
         (autonomous only), or NO_ACTION (excluded asset)
-  - [ ] `check()` — verify outcome, set terminal state (PENDING_APPROVAL,
+  - [x] `check()` — verify outcome, set terminal state (PENDING_APPROVAL,
         CLOSED, or ESCALATED)
-  - [ ] `execute_approved()` — Phase 2 entry point: Act(execute) → Check(verify)
-  - [ ] `AlertContext` frozen dataclass — typed, immutable between phases
-  - [ ] `AgentResult` dataclass — status code + serialisable response
+  - [x] `execute_approved()` — Phase 2 entry point: Act(execute) → Check(verify)
+  - [x] `AlertContext` frozen dataclass — typed, immutable between phases
+  - [x] `AgentResult` dataclass — status code + serialisable response
 
-  Component 2 — Checkpoint Store (`checkpoints.py`, NEW):
-  - [ ] `write_checkpoint()` — upsert phase transition to `agent-checkpoints`
+  Component 2 — Checkpoint Store (`checkpoints.py`):
+  - [x] `write_checkpoint()` — upsert phase transition to `agent-checkpoints`
         ES index, keyed by alert_id
-  - [ ] `read_checkpoint()` — load latest checkpoint for crash resume
-  - [ ] `is_duplicate()` — idempotency gate (terminal phase = reject)
-  - [ ] `is_awaiting_approval()` — validates PENDING_APPROVAL state for
+  - [x] `read_checkpoint()` — load latest checkpoint for crash resume
+  - [x] `is_duplicate()` — idempotency gate (terminal phase = reject)
+  - [x] `is_awaiting_approval()` — validates PENDING_APPROVAL state for
         Phase 2 entry
 
-  Component 3 — Retry Logic (`retry.py`, NEW):
-  - [ ] `@retry` decorator — exponential backoff on transient failures
-  - [ ] Apply to `analyze_alert_with_ai()` (LLM call — 3× retry)
-  - [ ] Apply to `dispatch_block_via_broker()` (broker call — 3× retry)
-  - [ ] Non-transient errors (4xx) do NOT retry
+  Component 3 — Retry Logic (`retry.py`):
+  - [x] `@retry` decorator — exponential backoff on transient failures
+  - [x] Apply to `analyze_alert_with_ai()` (LLM call — 3× retry)
+  - [x] Apply to `dispatch_block_via_broker()` (broker call — 3× retry)
+  - [x] Non-transient errors (4xx) do NOT retry
 
   Component 4 — Refactor `agent_app.py` (MODIFY):
-  - [ ] `/alert` → thin shell delegating to `Agent.run()` (Phase 1)
-  - [ ] `/approve` → delegate post-claim execution to
+  - [x] `/alert` → thin shell delegating to `Agent.run()` (Phase 1)
+  - [x] `/approve` → delegate post-claim execution to
         `Agent.execute_approved()` (Phase 2)
-  - [ ] Retain HMAC auth, `_queue_lock` atomic claim, JSONL queue
-  - [ ] Move input parsing, LLM call, exclusion check, isolation/draft logic,
+  - [!] Retain HMAC auth, `_queue_lock` atomic claim, JSONL queue — **HMAC and
+        JSONL queue retained; the atomic claim was NOT carried over. Fixed by
+        M12/#214** (ES create-if-absent claim, not the old lock — see that
+        issue for why).
+  - [x] Move input parsing, LLM call, exclusion check, isolation/draft logic,
         SOAR logging, case management into `agent.py`
 
-  Component 5 — Tests (`test_agent.py`, NEW):
-  - [ ] Phase 1 tests: perceive validates inputs, think retries on timeout,
+  Component 5 — Tests (`test_agent.py`):
+  - [x] Phase 1 tests: perceive validates inputs, think retries on timeout,
         think does not retry on 4xx, act drafts by default, act respects
         exclusion list, checkpoint resume, duplicate alert idempotent
-  - [ ] Phase 2 tests: execute_approved calls broker, escalates on failure,
+  - [x] Phase 2 tests: execute_approved calls broker, escalates on failure,
         rejects wrong state, loads checkpoint from ES
-  - [ ] Human gate integrity: `run()` with `AUTONOMOUS_ISOLATION=false` never
+  - [x] Human gate integrity: `run()` with `AUTONOMOUS_ISOLATION=false` never
         calls `dispatch_block_via_broker()`; no code path from `run()` to
         `execute_approved()`
 
-  Component 6 — ES Index Template (`agent-checkpoints-template.json`, NEW):
-  - [ ] Index template for `agent-checkpoints` (30-day ILM retention)
-  - [ ] Fields: `alert_id`, `phase`, `context` (JSON), `@timestamp`,
+  Component 6 — ES Index Template (`agent-checkpoints-template.json`):
+  - [x] Index template for `agent-checkpoints` (30-day ILM retention)
+  - [x] Fields: `alert_id`, `phase`, `context` (JSON), `@timestamp`,
         `tenant.id`
-  - [ ] Deploy to `configs/` following existing `soar-actions-*` template pattern
+  - [x] Deploy to `configs/` following existing `soar-actions-*` template pattern
 
   Resolved Architecture Decisions:
   - Alert ID sourcing: uses a Semantic Deduplication Key (hash of tenant+IP+severity+5m_bucket)
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-01
+
+- Reviewed a pasted detection-capability evaluation (signature/behavioral
+  detection, Sigma quality, alert tuning, platform features). Fact-checked
+  every claim against the repo via three parallel Explore agents before
+  planning — about a third of the evaluation's items turned out already
+  implemented (webhook replay protection, non-root containers), factually
+  wrong (Sigma field-name consistency claim), or re-proposing a design
+  already evaluated and approved elsewhere (Suricata integration, per
+  `docs/detections/suricata-evaluation.md`'s existing "adopt as follow-up"
+  decision).
+- Verifying the evaluation's weakest item (SOAR action dedup) surfaced a live
+  regression instead: commit `2bb3d8f` (2026-07-20, Phase H merge) silently
+  dropped the atomic approval-gate claim #172 had added, reopening a
+  double-execution race on `/approve` (network isolation). Confirmed via
+  direct diff inspection (`_queue_lock` 6→0 across that commit) rather than
+  taking a subagent's report at face value. The uncommitted working tree at
+  session start made it worse (silent ES-write failures, an unbounded replay
+  fallback) — also found and root-caused, not just described.
+- User pushed back on an initial framing that the resulting plan only
+  "improves or completes" the evaluation with no downside — correct
+  challenge. Re-verified two items under that scrutiny and found real
+  problems: the top-ranked Sigma FP fix (`-enc` rule) may be exactly
+  backwards depending on whether `process.args` is tokenized (unverified);
+  and Phase 0's fail-closed design, applied uniformly, would have made ES
+  outages drop alerts at intake, not just block approval. Both corrected in
+  the plan before filing issues. Lesson: verify triage claims when
+  challenged, don't just restate confidence.
+- Wrote the approved plan to
+  [`plans/20260801-approval-gate-integrity-detection-tuning.md`](plans/20260801-approval-gate-integrity-detection-tuning.md).
+  Filed [Milestone M12](https://github.com/voltron-1/Suburban_SOC/milestone/16),
+  umbrella user story [#213](https://github.com/voltron-1/Suburban_SOC/issues/213),
+  and 9 child issues (#214-#222) as GitHub sub-issues of #213, with #217
+  (Sigma tuning) formally `blocked-by` #216 (the prerequisite alert-volume
+  metric) via `gh issue create --blocked-by`. All 10 added to
+  [Project Board #17](https://github.com/users/voltron-1/projects/17).
+- This file's NEXT UP was stale (last touched 2026-07-16, still showing
+  Phase B as next-unstarted) despite PRs #209-#211 having merged Phases B-E
+  and Phase H being fully implemented in code. Refreshed NEXT UP and the
+  Phase H component checklist to match reality, and folded the prior
+  milestone's detail into a collapsed `<details>` block rather than deleting
+  it.
+- Per the multi-phase execution gating rule, stopped after issue creation to
+  report before starting Phase 0 implementation — did not commit/push this
+  file yet, pending go-ahead.
 
 ## LAST SESSION — 2026-07-16
 

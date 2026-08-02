@@ -1,0 +1,42 @@
+title: Indirect Command Execution via Forfiles
+id: ee6a128e-2b25-4e19-9eac-6b4bc4c7f6ec
+status: experimental
+description: |
+    Detects forfiles.exe invoked with the /c flag AND a suspicious
+    payload token in the executed command — e.g.
+    `forfiles /p C:\Windows\System32 /m notepad.exe /c "cmd /c calc.exe"`.
+    A prior draft matched on bare `/c`, which is present in the single
+    most common *legitimate* forfiles invocation (the log-rotation
+    one-liner `forfiles /p C:\Logs /s /m *.log /d -30 /c "cmd /c del
+    @path"`) and would have fired on every routine run of it; requiring a
+    suspicious payload token alongside `/c` keeps the log-rotation case
+    negative while still catching the indirect-execution abuse pattern.
+references:
+    - https://attack.mitre.org/techniques/T1202/
+author: Suburban-SOC
+date: 2026-08-02
+tags:
+    - attack.defense_evasion
+    - attack.t1202
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_forfiles:
+        Image|endswith: '\forfiles.exe'
+        CommandLine|contains: '/c'
+    selection_payload:
+        CommandLine|contains:
+            - 'cmd /c'
+            - 'powershell'
+            - 'pwsh'
+            - 'rundll32'
+            - 'regsvr32'
+            - 'mshta'
+            - 'wscript'
+            - 'cscript'
+            - 'certutil'
+    condition: selection_forfiles and selection_payload
+falsepositives:
+    - A legitimate script that happens to invoke cmd.exe or powershell.exe as the per-file action (uncommon; most legitimate forfiles usage calls a single utility like del/copy/attrib directly).
+level: medium

@@ -1,0 +1,35 @@
+title: MSI Package Installed from a Remote URL
+id: 839f23f7-efa2-42cb-acc2-d2720ba1f737
+status: experimental
+description: |
+    Detects msiexec.exe installing a package directly from an http(s) URL
+    rather than a local or UNC path — a common technique for delivering
+    a signed-binary-proxied payload past naive allowlisting. Matches the
+    install-verb-adjacent-to-URL phrase directly (`/i http`, `/package
+    http`, etc.) rather than the flag and `http` as independent floating
+    tokens, since the latter also matches routine deployments that pass
+    an unrelated URL-valued MSI property (e.g. `SERVERURL=https://...`)
+    alongside a purely local package path.
+references:
+    - https://attack.mitre.org/techniques/T1218/007/
+author: Suburban-SOC
+date: 2026-08-02
+tags:
+    - attack.defense_evasion
+    - attack.t1218.007
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\msiexec.exe'
+        CommandLine|contains:
+            - '/i http'
+            - '/i"http'
+            - '-i http'
+            - '/package http'
+            - '/a http'
+    condition: selection
+falsepositives:
+    - Enterprise software deployment tools that legitimately push MSIs from an internal HTTP repository.
+level: medium

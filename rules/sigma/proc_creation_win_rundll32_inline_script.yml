@@ -1,0 +1,34 @@
+title: Rundll32 Executing Inline Script via mshtml
+id: 668c1792-6f68-4898-8fe7-84aecac1a745
+status: experimental
+description: |
+    Detects rundll32.exe invoked with an inline `javascript:` or
+    `vbscript:` payload via the `RunHTMLApplication` mshtml.dll export —
+    a signed-binary proxy execution technique that runs attacker script
+    without dropping a file. Both moniker forms achieve identical
+    execution; anchoring only on `javascript:` (as a prior draft of this
+    rule did) is trivially bypassed by using `vbscript:` instead, so both
+    monikers and the shared `mshtml`/`RunHTMLApplication` invariant are
+    matched.
+references:
+    - https://attack.mitre.org/techniques/T1218/011/
+author: Suburban-SOC
+date: 2026-08-02
+tags:
+    - attack.defense_evasion
+    - attack.t1218.011
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\rundll32.exe'
+        CommandLine|contains:
+            - 'javascript:'
+            - 'vbscript:'
+            - 'runhtmlapplication'
+            - 'mshtml'
+    condition: selection
+falsepositives:
+    - Extremely rare in legitimate administration; effectively none.
+level: high

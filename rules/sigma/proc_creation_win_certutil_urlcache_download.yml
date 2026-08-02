@@ -1,0 +1,34 @@
+title: Ingress Tool Transfer via Certutil URL Cache
+id: 57663db4-5639-4910-aa2b-c2c7ee677397
+status: experimental
+description: |
+    Detects certutil.exe used to fetch a remote file into the local URL
+    cache via either the `-urlcache` or the lesser-known `-verifyctl`
+    verb, both combined with `-split` (the flag that turns the fetch into
+    a file write, dropping the payload to disk) — a common LOLBin
+    technique for downloading a second-stage payload without invoking a
+    browser or scripting engine. Distinct from
+    proc_creation_win_certutil_decode.yml (T1140, payload deobfuscation).
+    Promotes hunts/HUNT-005-lolbin-download.yml.
+references:
+    - https://attack.mitre.org/techniques/T1105/
+author: Suburban-SOC
+date: 2026-08-02
+tags:
+    - attack.command_and_control
+    - attack.t1105
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_verb:
+        Image|endswith: '\certutil.exe'
+        CommandLine|contains:
+            - 'urlcache'
+            - 'verifyctl'
+    selection_split:
+        CommandLine|contains: 'split'
+    condition: selection_verb and selection_split
+falsepositives:
+    - Legitimate certificate-chain retrieval against an internal PKI endpoint that happens to also pass -split (uncommon but possible).
+level: medium

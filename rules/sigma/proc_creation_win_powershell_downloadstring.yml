@@ -1,0 +1,44 @@
+title: PowerShell Remote Download Cradle
+id: 44db1bc0-933a-4ad8-bbd8-8aa0efbd6c3c
+status: experimental
+description: |
+    Detects PowerShell fetching (and typically executing) remote content
+    via a WebClient/WebRequest/HttpClient/BITS download cradle — the
+    classic fileless-payload delivery pattern
+    (`IEX (New-Object Net.WebClient).DownloadString(...)`,
+    `Invoke-WebRequest`, `Start-BitsTransfer`, etc.). Overlaps
+    proc_creation_win_powershell_encoded.yml (T1059.001, the -enc flag
+    itself) and posh_ps_obfuscated_scriptblock.yml (same technique, the
+    4104 script-block-logging data source) — expect double-alerting where
+    script-block logging is also enabled; this rule covers hosts/configs
+    where it isn't.
+references:
+    - https://attack.mitre.org/techniques/T1059/001/
+    - https://attack.mitre.org/techniques/T1105/
+author: Suburban-SOC
+date: 2026-08-02
+tags:
+    - attack.execution
+    - attack.t1059.001
+    - attack.t1105
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith:
+            - '\powershell.exe'
+            - '\pwsh.exe'
+        CommandLine|contains:
+            - 'downloadstring'
+            - 'downloadfile'
+            - 'downloaddata'
+            - 'invoke-webrequest'
+            - 'invoke-restmethod'
+            - 'start-bitstransfer'
+            - 'webrequest::create'
+            - 'httpclient'
+    condition: selection
+falsepositives:
+    - Legitimate admin scripts that pull configuration or update files over HTTP.
+level: high

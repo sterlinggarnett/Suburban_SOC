@@ -1,0 +1,35 @@
+title: InstallUtil Execution Bypassing Uninstall Logging
+id: 9b2a48e3-12d8-4eea-8a5a-0ba437cb4abc
+status: experimental
+description: |
+    Detects InstallUtil.exe invoked with the uninstall switch (`/U`) or
+    log-suppression flags (`/logfile=`, `/LogToConsole=false`) — a signed
+    Microsoft binary proxy execution technique that runs an
+    attacker-supplied assembly's `[Uninstall]`-attributed method. Matches
+    on any one of these rather than requiring them together: `/U` alone
+    (with no log-suppression flags at all) is the canonical form of the
+    technique and must not be missed just because logging wasn't also
+    suppressed.
+references:
+    - https://attack.mitre.org/techniques/T1218/004/
+author: Suburban-SOC
+date: 2026-08-02
+tags:
+    - attack.defense_evasion
+    - attack.t1218.004
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\installutil.exe'
+        CommandLine|contains:
+            - '/u'
+            - '-u'
+            - '/logfile='
+            - '-logfile='
+            - '/logtoconsole=false'
+    condition: selection
+falsepositives:
+    - Legitimate .NET application uninstall/rollback during software deployment tooling (msiexec, CI agents).
+level: high

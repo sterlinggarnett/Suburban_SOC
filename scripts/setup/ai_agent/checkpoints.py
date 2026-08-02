@@ -37,7 +37,7 @@ def write_checkpoint(tenant_id: str, alert_id: str, phase: str, context: Optiona
     if context is not None:
         doc["context"] = context
 
-    res = requests.put(url, json=doc, auth=_get_auth(), verify=ES_VERIFY)
+    res = requests.put(url, json=doc, auth=_get_auth(), verify=ES_VERIFY, timeout=5)
     res.raise_for_status()
     logger.info(f"Checkpoint written: {alert_id} -> {phase}")
 
@@ -45,7 +45,7 @@ def read_checkpoint(tenant_id: str, alert_id: str) -> Optional[Dict[str, Any]]:
     """Loads the latest checkpoint from ES for crash resume/idempotency."""
     index = f"agent-checkpoints-{tenant_id}"
     url = f"{ES_HOST}/{index}/_doc/{alert_id}"
-    res = requests.get(url, auth=_get_auth(), verify=ES_VERIFY)
+    res = requests.get(url, auth=_get_auth(), verify=ES_VERIFY, timeout=5)
     if res.status_code == 404:
         return None
     res.raise_for_status()
@@ -65,3 +65,29 @@ def is_awaiting_approval(tenant_id: str, alert_id: str) -> bool:
     if not ckpt:
         return False
     return ckpt.get("phase") == "PENDING_APPROVAL"
+
+def claim_approval(tenant_id: str, alert_id: str, approver: str) -> bool:
+    """Atomically claims an approval so at most one /approve execution wins (#214).
+
+    Uses ES op_type=create as the atomicity primitive rather than a
+    threading.Lock: a lock only protects a single process, and the agent's
+    gunicorn --workers 1 pin is itself a fragile constraint this claim
+    shouldn't depend on staying true. First writer gets 201 and wins; every
+    other writer for the same alert_id gets 409 and loses. Any other error
+    (ES unreachable, 5xx) propagates — callers must fail closed on a lost or
+    unconfirmed claim, since duplicate isolation is worse than a delayed one.
+    """
+    index = f"agent-checkpoints-{tenant_id}"
+    url = f"{ES_HOST}/{index}/_create/{alert_id}.claim"
+    doc = {
+        "@timestamp": datetime.now(timezone.utc).isoformat(),
+        "tenant": {"id": tenant_id},
+        "alert_id": alert_id,
+        "approver": approver,
+        "phase": "CLAIMED",
+    }
+    res = requests.put(url, json=doc, auth=_get_auth(), verify=ES_VERIFY, timeout=5)
+    if res.status_code == 409:
+        return False
+    res.raise_for_status()
+    return True

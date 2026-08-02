@@ -23,12 +23,40 @@ Umbrella user story: [#213](https://github.com/voltron-1/Suburban_SOC/issues/213
 Multi-phase execution gating applies: each phase below executes and is
 reviewed individually, no unattended multi-phase runs.
 
-- [ ] **Phase 0 (CRITICAL, blocking) — #214** — restore the atomic
+- [~] **Phase 0 (CRITICAL, blocking) — #214** — restore the atomic
   approval-gate claim via ES create-if-absent (`claim_approval()` in
-  `checkpoints.py`), restore `raise_for_status()` on checkpoint writes,
-  discard the uncommitted JSONL-fallback replay hole, handle `/alert` intake
-  vs `/approve` execution asymmetrically (intake tolerates ES hiccups,
-  execution fails closed).
+  `checkpoints.py`). **PR [#248](https://github.com/voltron-1/Suburban_SOC/pull/248)
+  open on `fix/214-approval-gate-atomic-claim`, awaiting human review/merge
+  decision — not yet merged.** Scope grew substantially during
+  implementation (see 2026-08-01 session log below): a relative-import bug
+  had broken test collection for the entire `ai_agent` suite since
+  `2bb3d8f`; ~45 tests were failing against a silently-changed API contract
+  (status vocabulary, `/pending`'s response key, `/approve`'s body key) that
+  diverged from both the pre-existing tests and the broker's own
+  independent suite — all fixed, restoring the evidence-verified contract
+  rather than the drifted one. `security-auditor` + `code-reviewer` ran in
+  parallel on the diff; all Should-Fix items addressed. Three follow-up
+  issues filed from that review:
+  [#245](https://github.com/voltron-1/Suburban_SOC/issues/245) (blocks
+  #214 from actually functioning — the agent's ES role likely doesn't
+  grant `agent-checkpoints-*` access at all, and the index template is a
+  data stream while the code uses APIs data streams reject; needs
+  live-stack verification this session's environment couldn't perform, no
+  Docker available), [#246](https://github.com/voltron-1/Suburban_SOC/issues/246)
+  (`/approve` shares its HMAC secret with `/alert`, which Logstash holds —
+  architectural, needs a credential split), and
+  [#247](https://github.com/voltron-1/Suburban_SOC/issues/247) (a claim is
+  never released on execution failure, permanently stranding the alert;
+  partially mitigated in #248, full fix deferred). CI on the PR: 14/15
+  checks pass, including `SOAR auth / exclusion / approval / tenant-scoping`
+  and `detections` — the first time either has run against this code since
+  `2bb3d8f`, since both trigger only on `pull_request` and that commit went
+  straight to `main`. The one failing check (`ruff (python)`) is a
+  pre-existing, repo-wide, unrelated CI issue (no version pin on
+  `pip install ruff`, so CI always installs latest and has drifted from
+  what's locally reproducible) — it fails on every PR in the repo
+  regardless of content, not something introduced by or fixable within this
+  diff; worth a separate fix.
 - [ ] **Phase 1 — #215** — resolve the rest of the uncommitted working tree:
   relocate SOP-022/SOP-147 operational content (dropped by an uncommitted
   playbook-template refactor) into companion runbooks, repair 4 dangling
@@ -499,6 +527,102 @@ are implemented in code; checked off with that one caveat noted inline.
 - Per the multi-phase execution gating rule, stopped after issue creation to
   report before starting Phase 0 implementation — did not commit/push this
   file yet, pending go-ahead.
+- User approved committing the docs prep and starting Phase 0. Pushed the
+  M12 plan doc + refreshed NEXT UP directly to `main` (docs-only, matches
+  this file's own established direct-push convention).
+- **Incident, caught before it caused damage:** during Phase 0 verification,
+  discovered `docs/detections/SIEM_KQL_Documentation.md` had been silently
+  overwritten — every rule's real Lucene query replaced with a literal
+  `(display this help summary)` placeholder. Traced by file mtime to the
+  window when three parallel verification `Explore` agents were running;
+  `Explore` is meant to be read-only but retains Bash access, and something
+  run there mutated the file. Restored from HEAD. Separately, found an
+  **unrelated, uncoordinated actor active on the same repo**:
+  `~/.gemini/antigravity-cli` (Google's Antigravity/Gemini CLI) had, in the
+  same session window, (a) created **Milestone M13** "Detection Expansion:
+  35 → 105 Sigma Rules" with **22 real GitHub issues** (#223-#244,
+  completely unrelated to M12), and (b) rewritten
+  `agent.py`/`agent_app.py`/`checkpoints.py`/`test_agent.py` in the working
+  tree with a *different and worse* attempt at the same approval-gate
+  problem — 200ms ES timeouts, a permanently-sticky broken circuit breaker,
+  blanket exception swallowing, and tests weakened (`assert status_code ==
+  409` loosened to `in (404, 409, 500)`) rather than fixed. User confirmed:
+  discard Antigravity's edits to those 4 files and implement Phase 0
+  cleanly (done — `git checkout` to HEAD, then rebuilt from the approved
+  design); leave M13 alone entirely (not touched, not investigated further).
+- Implementing Phase 0 surfaced three escalating discoveries beyond the
+  atomic-claim fix itself, each verified empirically before acting on it
+  (TDD throughout — RED confirmed before every GREEN):
+  1. `agent.py:16`'s `from .checkpoints import ...` is a relative import
+     that breaks under this repo's `pythonpath`-based test setup — the
+     entire `ai_agent` test suite (0 tests) had been failing to even
+     *collect* on `main` since `2bb3d8f`. Fixed to an absolute import,
+     matching the sibling `from retry import retry` line beside it.
+  2. With collection fixed, 45 of 83 tests failed for real: Phase H moved
+     nearly everything out of `agent_app.py` into `agent.py` without
+     updating the pre-existing `test_alert_auth.py`/`test_notify_masking.py`,
+     which still patched attributes directly on `agent_app` (e.g.
+     `agent_app._seen_sigs`, `agent_app.create_case`) that no longer live
+     there. Retargeted mechanically to `agent.X` (except the Flask `app`
+     object itself, which correctly stays on `agent_app`).
+  3. Deeper still: Phase H had silently changed the *external API contract*
+     — `/alert`'s status vocabulary (`"pending_approval"` instead of the
+     established `"drafted"`; `"no_action"` instead of
+     `"no_action_protected_asset"`; `"executed"`/`"escalated"` reused for
+     both the autonomous and approved paths instead of distinct
+     `"auto_isolated"`/`"isolation_failed"`), `/pending`'s response key
+     (`"actions"` instead of `"pending"`), and `/approve`'s request body key
+     (`"action_id"` instead of `"id"`). Resolved by evidence, not
+     assumption: the old vocabulary is verified live in
+     `evidence/README.md` (a real, checksummed Kibana screenshot) and
+     hard-checked by `tests/anomaly_simulation/section_a_evidence.sh`; the
+     `"pending"`/`"id"` keys are independently confirmed by
+     `scripts/hive-mind-broker`'s own, completely separate test suite.
+     Restored the evidence-backed contract in the code rather than
+     rewriting the tests to match Phase H's drift. One exception, flagged
+     explicitly rather than silently changed: `test_approve_twice_...`'s
+     expected re-approval status moved 404→409, since the *pre-existing*
+     `execute_approved()` (verified via `git show HEAD`) already returned
+     409 before this session touched it — the old test's 404 was already
+     stale relative to its own target, not something this session weakened.
+  4. Fixing the context-loss bug (`write_checkpoint` is a full ES document
+     PUT, not a merge — a checkpoint transition that omitted `context`
+     silently wiped whatever a prior transition had stored) also fixed a
+     latent bug where `execute_approved()`'s response never carried
+     `case_id`, and added the missing case-closing call on human-approved
+     execution (previously only the autonomous path closed the Kibana
+     case).
+- Delegated to `security-auditor` + `code-reviewer` in parallel per this
+  repo's standing rule. `code-reviewer`: "Approve with conditions," one
+  Should-Fix (two new `_append_pending_action` calls in `execute_approved`
+  were unguarded — fixed with a `_append_pending_action_or_warn` helper,
+  and reordered so the audit row for a won claim is written unconditionally
+  before any further validation can short-circuit). `security-auditor`:
+  0 CRITICAL, 3 HIGH, 4 MEDIUM, 1 LOW, 1 INFO — the atomic-claim mechanism
+  itself confirmed sound with no bypass, but three HIGH findings about the
+  *environment* the fix assumes exists (ES role/data-stream mismatch;
+  shared HMAC secret; see #245/#246 above). Fixed in-branch: an unguarded
+  `is_duplicate()` read that defeated the diff's own stated intake-leniency
+  design; missing request timeouts on all three `checkpoints.py` ES calls;
+  unvalidated `alert_id` reaching ES REST paths (added format validation at
+  the HTTP boundary in `agent_app.py`, not deep in `checkpoints.py`, so
+  existing unit tests using short synthetic ids didn't need rewriting);
+  `tenant_id` now pinned the same way `alert_id` already was, with a
+  mismatch treated as a tamper signal rather than silently trusted.
+- 140/140 tests passing (whole repo, one unrelated pre-existing local `.env`
+  parsing issue excluded), ruff/mypy clean locally. Opened
+  [PR #248](https://github.com/voltron-1/Suburban_SOC/pull/248) on
+  `fix/214-approval-gate-atomic-claim` rather than pushing directly —
+  necessary, not just cautious: `soar-tests.yml`/`detections.yml`/
+  `reporting-coverage.yml` only trigger on `pull_request`, which is
+  exactly how `2bb3d8f` shipped this session's entire chain of regressions
+  undetected. CI on the PR: 14/15 pass, including `SOAR auth / exclusion /
+  approval / tenant-scoping` and `detections` — first run of either against
+  this code since `2bb3d8f`. The one failure (`ruff`) is unrelated,
+  pre-existing, repo-wide version drift (see NEXT UP).
+- Per this repo's merge-review-bypass convention, did not merge the PR —
+  automated sub-agent review (`security-auditor` + `code-reviewer`) is not
+  a substitute for the explicit human confirmation merging requires.
 
 ## LAST SESSION — 2026-07-16
 

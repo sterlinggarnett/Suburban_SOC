@@ -103,13 +103,13 @@ parent-child links had silently failed because the seeding script used
 proceeding). Multi-phase execution gating applies here too: each user story
 is its own gated batch, no unattended multi-story runs.
 
-- [x] **US1 — #224/#231 — COMPLETE** — 10 Windows LOLBin/execution rules.
-  [PR #251](https://github.com/voltron-1/Suburban_SOC/pull/251),
-  `feat/213-m13-us1-windows-lolbin`. `security-auditor` review of the first
-  draft: **"0 of 10 rules are solid as written"** — 3 had zero real
-  detection value or matched routine legitimate activity, all fixed (see
-  PR body for the per-rule breakdown). Surfaced two corpus-wide findings
-  unrelated to this batch specifically — see below.
+- [x] **US1 — #224/#231 — COMPLETE, MERGED** — 10 Windows LOLBin/execution
+  rules. [PR #251](https://github.com/voltron-1/Suburban_SOC/pull/251)
+  merged 2026-08-03; both #224 and #231 closed. `security-auditor` review
+  of the first draft: **"0 of 10 rules are solid as written"** — 3 had zero
+  real detection value or matched routine legitimate activity, all fixed
+  (see PR body for the per-rule breakdown). Surfaced two corpus-wide
+  findings unrelated to this batch specifically — see below.
 - [x] **#249/#250 — process.args mapping — COMPLETE, LIVE-VERIFIED** — the
   security review of US1 found `process.args` (and
   `process.parent.args`/`ScriptBlockText`/etc.) indexed as plain `keyword`,
@@ -553,6 +553,24 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-03
+
+- User asked why CI was still failing on the two PRs left open from the prior
+  session (#251, #254). Root cause: both branches were cut from `main`
+  *before* that session's ruff-pin (#255) and approval-gate (#248) fixes
+  landed, so their CI runs were stale snapshots of the same two
+  already-diagnosed pre-existing failures — confirmed directly via
+  `git merge-base --is-ancestor` rather than assumed. Updated both branches
+  (`git merge origin/main`), both went 15/15 clean, no bypass needed.
+- Merged both on explicit go-ahead (same standing review-bypass confirmation
+  as every other self-authored PR this cycle — asked directly since sub-agent
+  review isn't a substitute). [PR #251](https://github.com/voltron-1/Suburban_SOC/pull/251)
+  merged, closing #231 automatically; #224 (its parent user story) didn't
+  auto-close since the PR body only referenced #231, so closed manually with
+  evidence. [PR #254](https://github.com/voltron-1/Suburban_SOC/pull/254)
+  merged (no tracked issue). Branches deleted on merge; local stale branches
+  and remote-tracking refs pruned after.
 
 ## LAST SESSION — 2026-08-02 (later)
 

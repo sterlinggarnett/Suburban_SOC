@@ -24,9 +24,10 @@ import slo_metrics
 
 
 class _FakeResponse:
-    def __init__(self, status_code=200, payload=None):
+    def __init__(self, status_code=200, payload=None, text=""):
         self.status_code = status_code
         self._payload = payload or {}
+        self.text = text
 
     def json(self):
         return self._payload
@@ -163,6 +164,41 @@ class MetricFunctionTests(unittest.TestCase):
                                return_value=_FakeResponse(200, {"count": 0})):
             self.assertEqual(slo_metrics.metric_audit_write_failures(), 0)
 
+    def test_raw_alert_volume_raises_on_es_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_raw_alert_volume()
+
+    def test_raw_alert_volume_sums_zeek_notices_and_rule_hits(self):
+        # First _count() call is logstash-security-* (Zeek notices), second is
+        # .alerts-security.alerts-* (Sigma/Elastic rule hits) — same call order
+        # as the function body. Sub-counts stay visible, not just their sum
+        # (#216 review: collapsing them hides which side moved).
+        with mock.patch.object(slo_metrics, "_count", side_effect=[7, 3]):
+            result = slo_metrics.metric_raw_alert_volume()
+        self.assertEqual(result, {"zeek_notices": 7, "rule_hits": 3, "value": 10})
+
+    def test_raw_alert_volume_returns_zero_when_healthy_and_quiet(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 0})):
+            result = slo_metrics.metric_raw_alert_volume()
+        self.assertEqual(result, {"zeek_notices": 0, "rule_hits": 0, "value": 0})
+
+    def test_raw_alert_volume_rule_hits_query_is_strict(self):
+        # #216 review: .alerts-security.alerts-* should always exist once
+        # Kibana's Security app has initialized, so its count is queried
+        # strict (allow_no_indices=false) - a missing/unresolvable pattern is
+        # a real problem, not a benign "no alerts yet" the way an idle
+        # tenant's logstash-security-* legitimately can be.
+        with mock.patch.object(slo_metrics, "_count", side_effect=[0, 0]) as mock_count:
+            slo_metrics.metric_raw_alert_volume()
+        zeek_call, rule_call = mock_count.call_args_list
+        self.assertNotIn("strict", zeek_call.kwargs)
+        self.assertTrue(rule_call.kwargs.get("strict"))
+        # Excludes the parse-failure quarantine index from the Zeek half —
+        # it can carry the same threat.technique.id tag.
+        self.assertIn("-logstash-security-quarantine-*", zeek_call.args[0])
+
 
 class EsKbWrapperTests(unittest.TestCase):
     """Cover the real es()/kb() request wrappers — every test above mocks them
@@ -228,7 +264,10 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 0)
 
     def _mock_all_metrics(self, mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
-                           ingest_lag=10.0, parse_err=0.0, audit_write_failures=0.0):
+                           ingest_lag=10.0, parse_err=0.0, audit_write_failures=0.0,
+                           raw_alert_volume=None):
+        if raw_alert_volume is None:
+            raw_alert_volume = {"zeek_notices": 0, "rule_hits": 0, "value": 0}
         return [
             mock.patch.object(slo_metrics, "metric_mttd", return_value=mttd),
             mock.patch.object(slo_metrics, "metric_mttr", return_value=mttr),
@@ -238,6 +277,8 @@ class MainExitCodeTests(unittest.TestCase):
             mock.patch.object(slo_metrics, "metric_parse_error_pct", return_value=parse_err),
             mock.patch.object(slo_metrics, "metric_audit_write_failures",
                                return_value=audit_write_failures),
+            mock.patch.object(slo_metrics, "metric_raw_alert_volume",
+                               return_value=raw_alert_volume),
             mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(200, {})),
         ]
 
@@ -271,6 +312,36 @@ class MainExitCodeTests(unittest.TestCase):
             code = self._run_main_capturing_exit()
         self.assertEqual(code, 2)
         self.assertIn("audit_write_failures", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_raw_alert_volume_never_breaches_regardless_of_value(self):
+        # #216: NO_TARGET means this is measured but never checked against a
+        # threshold — an arbitrarily large value must not trip a breach.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
+            for p in self._mock_all_metrics(
+                    raw_alert_volume={"zeek_notices": 500000, "rule_hits": 499999,
+                                       "value": 999999}):
+                stack.enter_context(p)
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 0)
+
+    def test_raw_alert_volume_unmeasurable_is_never_silent(self):
+        # #216 review (MEDIUM): a NO_TARGET metric's failure used to leave
+        # doc["status"]="ok" and send no ntfy, since only `breaches` gated
+        # both — a real regression of the "measurement failure is never
+        # silently healthy" invariant every other metric already honors.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in self._mock_all_metrics():
+                stack.enter_context(p)
+            stack.enter_context(mock.patch.object(
+                slo_metrics, "metric_raw_alert_volume",
+                side_effect=slo_metrics.MetricUnavailable("es down")))
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 3)
+        ntfy_post.assert_called_once()
+        self.assertIn("raw_alert_volume", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_ntfy_failure_is_swallowed_not_fatal(self):
         # A downed ntfy.sh must not crash main() or change the breach exit code.

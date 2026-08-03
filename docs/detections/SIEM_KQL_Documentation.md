@@ -5,7 +5,7 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**35 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**45 rules.** Each query is the exact Lucene the Sigma rule compiles to.
 
 ## Repeated Failed Sign-Ins (Windows Security 4625)
 
@@ -111,12 +111,36 @@ process.executable:*\\bitsadmin.exe AND process.args:*\/transfer*
 process.executable:*\\certutil.exe AND process.args:*decode*
 ```
 
+## Ingress Tool Transfer via Certutil URL Cache
+
+- **Rule:** `proc_creation_win_certutil_urlcache_download.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1105
+
+```
+(process.executable:*\\certutil.exe AND (process.args:(*urlcache* OR *verifyctl*))) AND process.args:*split*
+```
+
 ## Clearing Windows Event Logs via Wevtutil
 
 - **Rule:** `proc_creation_win_clear_event_logs.yml` · **level:** high · **status:** stable · **ATT&CK:** T1070.001
 
 ```
 process.executable:*\\wevtutil.exe AND (process.args:(*\ cl\ * OR *\ clear\-log\ *))
+```
+
+## CMSTP Execution via Malicious INF or Silent-Install Flags
+
+- **Rule:** `proc_creation_win_cmstp_execution.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1218.003
+
+```
+process.executable:*\\cmstp.exe AND (process.args:(*\/s* OR *\/ns* OR *.inf* OR *\\appdata\\* OR *\\temp\\* OR *\\users\\public\\*))
+```
+
+## Cscript/Wscript Executing from a Non-Standard Location
+
+- **Rule:** `proc_creation_win_cscript_wscript_remote.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1059.005, T1059.007
+
+```
+(process.executable:(*\\cscript.exe OR *\\wscript.exe)) AND (process.args:(*\/\/e\:* OR *\\appdata\\* OR *\\temp\\* OR *\\users\\public\\* OR *\\downloads\\* OR *http*))
 ```
 
 ## Windows Defender Real-Time Protection Disabled
@@ -133,6 +157,22 @@ process.executable:*\\wevtutil.exe AND (process.args:(*\ cl\ * OR *\ clear\-log\
 
 ```
 (process.executable:(*\\net.exe OR *\\net1.exe)) AND (process.args:*group* AND process.args:*\/domain*)
+```
+
+## Indirect Command Execution via Forfiles
+
+- **Rule:** `proc_creation_win_forfiles_execution.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1202
+
+```
+(process.executable:*\\forfiles.exe AND process.args:*\/c*) AND (process.args:(*cmd\ \/c* OR *powershell* OR *pwsh* OR *rundll32* OR *regsvr32* OR *mshta* OR *wscript* OR *cscript* OR *certutil*))
+```
+
+## InstallUtil Execution Bypassing Uninstall Logging
+
+- **Rule:** `proc_creation_win_installutil_bypass.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1218.004
+
+```
+process.executable:*\\installutil.exe AND (process.args:(*\/u* OR *\-u* OR *\/logfile\=* OR *\-logfile\=* OR *\/logtoconsole\=false*))
 ```
 
 ## Shell Spawned by PsExec Service or WMI Provider Host
@@ -167,12 +207,36 @@ process.executable:*\\rundll32.exe AND (process.args:*comsvcs.dll* AND process.a
 process.executable:*\\mshta.exe AND (process.args:(*http* OR *javascript* OR *vbscript*))
 ```
 
+## MSI Package Installed from a Remote URL
+
+- **Rule:** `proc_creation_win_msiexec_remote.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1218.007
+
+```
+process.executable:*\\msiexec.exe AND (process.args:(*\/i\ http* OR *\/i\"http* OR *\-i\ http* OR *\/package\ http* OR *\/a\ http*))
+```
+
 ## Domain Controller Discovery via Nltest
 
 - **Rule:** `proc_creation_win_nltest_discovery.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1018
 
 ```
 process.executable:*\\nltest.exe AND (process.args:(*\/dclist\:* OR *\/domain_trusts* OR *\/dsgetdc\:*))
+```
+
+## Indirect Command Execution via Pcalua
+
+- **Rule:** `proc_creation_win_pcalua_execution.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1202
+
+```
+(process.executable:*\\pcalua.exe AND process.args:*\-a*) AND (NOT process.parent.name:*\\explorer.exe)
+```
+
+## PowerShell Remote Download Cradle
+
+- **Rule:** `proc_creation_win_powershell_downloadstring.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1059.001, T1105
+
+```
+(process.executable:(*\\powershell.exe OR *\\pwsh.exe)) AND (process.args:(*downloadstring* OR *downloadfile* OR *downloaddata* OR *invoke\-webrequest* OR *invoke\-restmethod* OR *start\-bitstransfer* OR *webrequest\:\:create* OR *httpclient*))
 ```
 
 ## Suspicious PowerShell Encoded Command Execution
@@ -199,6 +263,14 @@ process.executable:*\\tscon.exe AND process.args:*\/dest\:*
 process.executable:*\\reg.exe AND (process.args:*save* AND process.args:*hklm\\sam*)
 ```
 
+## Regasm/Regsvcs Proxy Execution
+
+- **Rule:** `proc_creation_win_regasm_regsvcs_bypass.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1218.009
+
+```
+(process.executable:(*\\regasm.exe OR *\\regsvcs.exe)) AND (process.args:(*\/u* OR *\\appdata\\* OR *\\temp\\* OR *\\users\\public\\* OR *\\programdata\\* OR *\\downloads\\*))
+```
+
 ## Regsvr32 Execution from Remote Server
 
 - **Rule:** `proc_creation_win_regsvr32_remote_sct.yml` · **level:** critical · **status:** stable · **ATT&CK:** T1218.010
@@ -213,6 +285,14 @@ process.executable:*\\regsvr32.exe AND (process.args:*\/i\:http* AND process.arg
 
 ```
 process.executable:*\\reg.exe AND (process.args:*add* AND process.args:*CurrentVersion\\Run*)
+```
+
+## Rundll32 Executing Inline Script via mshtml
+
+- **Rule:** `proc_creation_win_rundll32_inline_script.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1218.011
+
+```
+process.executable:*\\rundll32.exe AND (process.args:(*javascript\:* OR *vbscript\:* OR *runhtmlapplication* OR *mshtml*))
 ```
 
 ## Scheduled Task Creation via Schtasks

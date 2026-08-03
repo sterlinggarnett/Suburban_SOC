@@ -1,0 +1,33 @@
+title: Indirect Command Execution via Pcalua
+id: d9cb8be8-0bfc-45ca-9645-023ed21f5616
+status: experimental
+description: |
+    Detects pcalua.exe (Program Compatibility Assistant) invoked with the
+    -a flag from a parent process that is not Explorer's own
+    compatibility-troubleshooter flow. Legitimate PCA relaunches ("Reinstall
+    using recommended settings") spawn pcalua.exe -a from explorer.exe;
+    the identical command line spawned from a shell, script host, or Office
+    application is the abuse case this rule targets — a prior draft matched
+    on the command line alone with no parent check, which is indistinguishable
+    from the legitimate flow and so has real (not "none expected") false
+    positives without it.
+references:
+    - https://attack.mitre.org/techniques/T1202/
+author: Suburban-SOC
+date: 2026-08-02
+tags:
+    - attack.defense_evasion
+    - attack.t1202
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\pcalua.exe'
+        CommandLine|contains: '-a'
+    filter_explorer:
+        ParentImage|endswith: '\explorer.exe'
+    condition: selection and not filter_explorer
+falsepositives:
+    - A legitimate PCA relaunch where explorer.exe is not the recorded parent (e.g. relaunched via a scheduled task acting on the user's behalf).
+level: medium

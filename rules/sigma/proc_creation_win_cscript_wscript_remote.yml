@@ -1,0 +1,41 @@
+title: Cscript/Wscript Executing from a Non-Standard Location
+id: e77b97cf-62fb-4563-a773-763966962bd8
+status: experimental
+description: |
+    Detects cscript.exe/wscript.exe invoked against a script staged in a
+    user-writable location (temp/appdata/public/downloads), with an
+    explicit scripting-engine override (`//e:`), or with an http(s)
+    reference on the command line. Windows Script Host has no HTTP
+    handler of its own — a bare `wscript.exe http://...` argument does
+    not execute anything, so `http` is kept only as a secondary signal
+    (e.g. a WebDAV/UNC path embedding a URL-like string), not the sole
+    condition; the primary signal is where the script is staged.
+references:
+    - https://attack.mitre.org/techniques/T1059/005/
+    - https://attack.mitre.org/techniques/T1059/007/
+author: Suburban-SOC
+date: 2026-08-02
+tags:
+    - attack.execution
+    - attack.t1059.005
+    - attack.t1059.007
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_binary:
+        Image|endswith:
+            - '\cscript.exe'
+            - '\wscript.exe'
+    selection_signal:
+        CommandLine|contains:
+            - '//e:'
+            - '\appdata\'
+            - '\temp\'
+            - '\users\public\'
+            - '\downloads\'
+            - 'http'
+    condition: selection_binary and selection_signal
+falsepositives:
+    - Legitimate business VBScript/JScript run from a user-writable path during a manual troubleshooting session.
+level: medium

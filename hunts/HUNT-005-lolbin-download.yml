@@ -9,4 +9,8 @@ index: logstash-security-*
 query: 'process.executable:(*certutil.exe* OR *curl.exe* OR *wget.exe* OR *bitsadmin.exe*) AND process.args:(*http* OR *urlcache* OR *transfer*)'
 threshold: 1
 status: active
-notes: Complements the bitsadmin Sigma rule; certutil/curl variants are detection candidates.
+notes: >
+  Complements the bitsadmin Sigma rule. certutil is now promoted to
+  rules/sigma/proc_creation_win_certutil_urlcache_download.yml (2026-08-02,
+  M13). curl/wget variants remain open hypothesis — status stays active
+  until those are covered too.

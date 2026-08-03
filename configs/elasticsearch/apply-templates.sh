@@ -7,9 +7,18 @@
 # these, Elasticsearch dynamically maps strings to `text` (fielddata disabled),
 # which silently fails shard-level aggregations and produces data-view conflicts.
 #
-# Templates apply to indices created AFTER they are installed. To fix existing
-# indices, reindex them (see reindex-existing.sh) — field types cannot be
-# changed in place.
+# Templates apply to indices created AFTER they are installed — field types
+# cannot be changed in place. logstash-security-*/soar-actions-*/
+# agent-checkpoints-* are data streams (see each template's "data_stream": {}),
+# so the fix-existing-data step is a rollover, not a reindex:
+# reindex-existing.sh predates the data-stream conversion, targets legacy
+# daily indices only, and cannot delete a data stream as its cleanup step
+# assumes. Force the current write index to roll over immediately instead —
+# non-destructive, no data loss, matches the pattern already used in
+# scripts/setup/verify_lifecycle.sh:
+#   POST /<data-stream-name>/_rollover
+# History still on the pre-rollover backing indices keeps the old mapping
+# until it ages out under each index's ILM policy.
 #
 # Usage (from repo root or anywhere):
 #   ES_URL=https://localhost:9200 ES_USER=elastic ES_PASS=... ./apply-templates.sh
@@ -29,20 +38,35 @@ ENV_FILE="$HERE/../../scripts/setup/.env"
 # shellcheck source=../../scripts/setup/lib/es_common.sh
 source "$HERE/../../scripts/setup/lib/es_common.sh"
 
-echo "==> Installing logstash-security-template"
-esj -o /dev/null -w '    -> HTTP %{http_code}\n' -X PUT \
+# A template PUT that ES rejects (e.g. an unsupported mapping parameter) still
+# gets a normal curl exit code (curl considers receiving any HTTP response a
+# success) — the old fire-and-print-the-code version of this script would have
+# shipped a silently-discarded template update with no error anywhere. Assert
+# on the code instead of just printing it.
+put_and_check() {
+  local label="$1" url="$2" body_file="$3"
+  local response code body
+  response="$(esj -X PUT "$url" --data-binary "@$body_file" -w $'\nHTTPSTATUS:%{http_code}')"
+  code="${response##*HTTPSTATUS:}"
+  body="${response%$'\n'HTTPSTATUS:*}"
+  echo "==> Installing $label -> HTTP $code"
+  if [[ "$code" != "200" ]]; then
+    echo "    FAILED: $body" >&2
+    exit 1
+  fi
+}
+
+put_and_check "logstash-security-template" \
   "$ES_URL/_index_template/logstash-security-template" \
-  --data-binary "@$HERE/logstash-security-template.json"
+  "$HERE/logstash-security-template.json"
 
-echo "==> Installing soar-actions-template"
-esj -o /dev/null -w '    -> HTTP %{http_code}\n' -X PUT \
+put_and_check "soar-actions-template" \
   "$ES_URL/_index_template/soar-actions-template" \
-  --data-binary "@$HERE/soar-actions-template.json"
+  "$HERE/soar-actions-template.json"
 
-echo "==> Installing agent-checkpoints-template"
-esj -o /dev/null -w '    -> HTTP %{http_code}\n' -X PUT \
+put_and_check "agent-checkpoints-template" \
   "$ES_URL/_index_template/agent-checkpoints-template" \
-  --data-binary "@$HERE/agent-checkpoints-template.json"
+  "$HERE/agent-checkpoints-template.json"
 
 echo "==> Dropping replicas to 0 on existing indices (single-node -> clears yellow)"
 esj -o /dev/null -w '    logstash-security-* -> HTTP %{http_code}\n' -X PUT \

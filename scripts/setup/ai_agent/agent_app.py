@@ -3,6 +3,7 @@ agent_app.py — Suburban-SOC AI agent / SOAR webhook listener.
 """
 
 from weekly_ciso_report import run_reporting_pipeline
+import re
 import logging
 import threading
 from flask import Flask, request, jsonify
@@ -11,8 +12,15 @@ from flask import Flask, request, jsonify
 # Import everything else from our new core module
 from agent import (
     verify_signature, _require_signature, HMAC_HEADER, HMAC_TS_HEADER,
-    _read_queue, safe_tenant, Agent
+    _read_queue, safe_tenant, Agent, _RESOLVED_STATUSES
 )
+
+# generate_dedup_key() (checkpoints.py) always produces a 64-char sha256 hex
+# digest. alert_id is interpolated unquoted into Elasticsearch REST paths in
+# checkpoints.py (e.g. _create/{alert_id}.claim), so an id that doesn't match
+# this shape is rejected here — at the untrusted-input boundary — rather than
+# risk it being used to target another ES API entirely.
+_ALERT_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -40,8 +48,16 @@ def list_pending():
         return auth_err
 
     try:
-        pending = _read_queue()
-        return jsonify({"status": "ok", "count": len(pending), "actions": pending}), 200
+        # The queue is append-only (compact_agent_approval_queue.py archives
+        # resolved history separately) — an id can have multiple rows over
+        # its lifecycle (pending -> claimed -> approved). Show only ids whose
+        # LATEST row is still "pending"; a claimed-or-resolved id must not
+        # keep appearing here as if it were still awaiting approval.
+        latest_status = {}
+        for action in _read_queue():
+            latest_status[action.get("id")] = action
+        pending = [a for a in latest_status.values() if a.get("status") not in _RESOLVED_STATUSES]
+        return jsonify({"status": "ok", "count": len(pending), "pending": pending}), 200
     except Exception as e:
         app.logger.error("Failed to read approval queue: %s", e)
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -53,12 +69,17 @@ def approve_action():
         return auth_err
 
     data = request.get_json(silent=True) or {}
-    action_id = data.get("action_id")
+    # "id", not "action_id" — matches the broker's own /approve-equivalent
+    # (hive-mind-broker/app.py) and its test suite.
+    action_id = data.get("id")
     approver = data.get("approver", "unknown")
     tenant = safe_tenant(data.get("tenant_id"))
 
     if not action_id:
-        return jsonify({"status": "error", "message": "Missing action_id"}), 400
+        return jsonify({"status": "error", "message": "Missing id"}), 400
+    if not _ALERT_ID_RE.fullmatch(action_id):
+        app.logger.warning("Rejected /approve: malformed id (not a dedup-key hash).")
+        return jsonify({"status": "error", "message": "Malformed id"}), 400
 
     result = soc_agent.execute_approved(tenant, action_id, approver)
     

@@ -66,7 +66,8 @@ post-remediation integrity + detection-tuning pass filed after M11 shipped.
 | M9 | Operational Maturity (SOC-CMM Level 3) (Phase 2) | ✅ Complete (5/5) |
 | M10 | SOC 2 Type II Technical Control Readiness (Phase 3) | ✅ Complete — 7/7 (WS3.1–3.7) |
 | M11 | Agent Orchestration & Compliance (Phase 4) | ✅ Complete (merged 2026-07-20) |
-| M12 | Approval Gate Integrity & Detection Engineering Tuning | 🚧 In progress ([#213](https://github.com/voltron-1/Suburban_SOC/issues/213)) |
+| M12 | Approval Gate Integrity & Detection Engineering Tuning | 🚧 In progress ([#213](https://github.com/voltron-1/Suburban_SOC/issues/213)) — Phase 0 (#214) merged 2026-08-02, Phases 1–4 remain |
+| M13 | Detection Expansion: 35 → 105 Sigma Rules (Campus SOC) | 🚧 In progress ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/17), 7 rule-batch user stories) — process.args mapping fix merged 2026-08-02 (#249/#250, all 45 pre-existing rules affected); US1 (10 Windows LOLBin rules) implemented and reviewed, PR open |
 
 > **What "✅ Complete" means here (scope note, audit P1-12/P1-13).** A milestone is
 > marked complete when its tracked issues/workstreams were implemented and merged —
@@ -116,13 +117,26 @@ within a milestone, not milestone completions in their own right:
   (which triggers only on `pull_request`) never ran against it — it silently
   dropped the atomic claim that guarantees `/approve` executes an isolation
   action at most once, reopening a double-execution race. M12
-  ([#213](https://github.com/voltron-1/Suburban_SOC/issues/213)) restores it via
+  ([#213](https://github.com/voltron-1/Suburban_SOC/issues/213)) restored it via
   an Elasticsearch atomic create-if-absent claim
-  ([PR #248](https://github.com/voltron-1/Suburban_SOC/pull/248)), fixes the test
-  suite the same merge had silently broken, and tracks the infrastructure gaps
+  ([PR #248](https://github.com/voltron-1/Suburban_SOC/pull/248), merged
+  2026-08-02), fixed the test suite the same merge had silently broken, and
+  tracks the infrastructure gaps
   ([#245](https://github.com/voltron-1/Suburban_SOC/issues/245),
   [#246](https://github.com/voltron-1/Suburban_SOC/issues/246)) the review
-  surfaced along the way.
+  surfaced along the way — those and the rest of M12's phases remain open.
+- **Detection corpus mapping fix (M13, PR #253).** A security review of M13's
+  first rule batch found `process.args` (and `process.parent.args`,
+  `*ScriptBlockText`, and related fields) indexed as plain `keyword` with
+  `ignore_above: 1024` and no normalizer — meaning Sigma's lowercase literals
+  could silently fail to match real mixed-case Windows telemetry, and any
+  command line over 1024 characters was silently dropped from the index
+  entirely. Both affected **all 45 pre-existing Sigma rules**, not just the
+  new batch. Fixed via a custom lowercase normalizer + `ignore_above: 8191`
+  ([PR #253](https://github.com/voltron-1/Suburban_SOC/pull/253), merged
+  2026-08-02; closes #249/#250), live-verified against the running cluster,
+  and rolled out to every tenant's `logstash-security-*` data stream via a
+  non-destructive rollover.
 - **Detection framework enrichment (PR #112).** The detection plane spans
   **37 ATT&CK techniques across 9 tactics** (see
   [`docs/detections/attack-coverage.md`](docs/detections/attack-coverage.md)). The

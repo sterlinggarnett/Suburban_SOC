@@ -1,3 +1,11 @@
+import os
+
+# agent.py reads this at import time (module-level constant); other test
+# files in this dir set it too, but Python only evaluates a module's top
+# level on its FIRST import — whichever test file collects first "wins" for
+# the whole process. Set it here too so collection order can't matter (#214).
+os.environ.setdefault("SOC_AGENT_HMAC_SECRET", "unit_test_secret")
+
 import pytest
 from unittest.mock import patch
 from agent import Agent
@@ -32,9 +40,11 @@ def test_phase_1_draft_human_gate(mock_case, mock_ai, mock_append, mock_excluded
     # Run Phase 1
     result = agent.run(payload)
     
-    # Verify Human Gate: must park at PENDING_APPROVAL and draft action
+    # Verify Human Gate: must park at PENDING_APPROVAL and draft action.
+    # "drafted" is the external status word for the internal PENDING_APPROVAL
+    # checkpoint phase (evidence-verified: evidence/README.md, section_a_evidence.sh).
     assert result.status_code == 200
-    assert result.response['status'] == 'pending_approval'
+    assert result.response['status'] == 'drafted'
     mock_append.assert_called_once()
     assert mock_append.call_args[0][0]['target_ip'] == "192.168.1.10"
     
@@ -53,16 +63,19 @@ def test_idempotency_duplicate_rejected(mock_dup, agent, payload):
     assert result.status_code == 200
     assert result.response['status'] == 'ignored'
 
+@patch('agent._append_pending_action')
 @patch('agent.is_awaiting_approval')
 @patch('agent.read_checkpoint')
 @patch('agent._execute_isolation')
 @patch('agent.write_checkpoint')
-def test_phase_2_execution(mock_write, mock_exec, mock_read, mock_awaiting, agent, payload):
+@patch('agent.claim_approval')
+def test_phase_2_execution(mock_claim, mock_write, mock_exec, mock_read, mock_awaiting, mock_append, agent, payload):
     # Setup mocks
     mock_awaiting.return_value = True
+    mock_claim.return_value = True
     mock_read.return_value = {"context": payload}
     mock_exec.return_value = (True, "Blocked on router")
-    
+
     # Run Phase 2
     result = agent.execute_approved("test-tenant", "fake-alert-id", "human")
     
@@ -70,13 +83,121 @@ def test_phase_2_execution(mock_write, mock_exec, mock_read, mock_awaiting, agen
     assert result.status_code == 200
     assert result.response['status'] == 'executed'
     mock_exec.assert_called_once_with("00:11:22:33:44:55", "192.168.1.10", "test-tenant")
-    mock_write.assert_called_once_with("test-tenant", "fake-alert-id", "EXECUTED")
+    mock_write.assert_called_once_with("test-tenant", "fake-alert-id", "EXECUTED", context=payload)
 
 @patch('agent.is_awaiting_approval')
 def test_phase_2_state_rejection(mock_awaiting, agent):
     mock_awaiting.return_value = False
-    
+
     result = agent.execute_approved("test-tenant", "fake-alert-id")
-    
+
     assert result.status_code == 409
     assert result.response['status'] == 'error'
+
+
+@patch('agent._append_pending_action')
+@patch('agent.is_awaiting_approval')
+@patch('agent.read_checkpoint')
+@patch('agent._execute_isolation')
+@patch('agent.claim_approval')
+def test_phase_2_corrupt_checkpoint_context_fails_after_claim_without_executing(mock_claim, mock_exec, mock_read, mock_awaiting, mock_append, agent):
+    """A claimed checkpoint whose stored context can't be re-perceived (e.g.
+    corrupted/malformed) must still never reach isolation — claim_approval()
+    already won by this point, so the failure has to surface as a clean
+    error, not a crash, and isolation must not be attempted on garbage data."""
+    mock_awaiting.return_value = True
+    mock_claim.return_value = True
+    mock_read.return_value = {"context": "not-a-dict"}  # perceive() raises -> None
+
+    result = agent.execute_approved("test-tenant", "fake-alert-id", "human")
+
+    assert result.status_code == 500
+    assert result.response['status'] == 'error'
+    mock_exec.assert_not_called()
+
+
+@patch('agent._append_pending_action')
+@patch('agent.is_awaiting_approval')
+@patch('agent.read_checkpoint')
+@patch('agent._execute_isolation')
+@patch('agent.write_checkpoint')
+@patch('agent.claim_approval')
+def test_phase_2_claim_lost_blocks_replay(mock_claim, mock_write, mock_exec, mock_read, mock_awaiting, mock_append, agent, payload):
+    """A second /approve for an id already claimed (e.g. a replayed request,
+    or a genuine race) must be rejected with 409 and must never dispatch
+    isolation a second time — this is the core #214 regression fix."""
+    mock_awaiting.return_value = True
+    mock_claim.return_value = False  # lost the ES create-if-absent race
+    mock_read.return_value = {"context": payload}
+
+    result = agent.execute_approved("test-tenant", "fake-alert-id", "human")
+
+    assert result.status_code == 409
+    assert result.response['status'] == 'error'
+    mock_exec.assert_not_called()
+
+
+@patch('agent._append_pending_action')
+@patch('agent.is_awaiting_approval')
+@patch('agent.claim_approval')
+def test_phase_2_claim_store_unavailable_fails_closed(mock_claim, mock_awaiting, mock_append, agent):
+    """ES unreachable during the claim attempt must fail closed (503), not
+    silently allow execution — duplicate isolation is worse than a delayed
+    approval."""
+    mock_awaiting.return_value = True
+    mock_claim.side_effect = ConnectionError("ES unreachable")
+
+    result = agent.execute_approved("test-tenant", "fake-alert-id", "human")
+
+    assert result.status_code == 503
+    assert result.response['status'] == 'error'
+
+
+@patch('agent._append_pending_action')
+@patch('agent.is_awaiting_approval')
+def test_phase_2_awaiting_check_store_unavailable_fails_closed(mock_awaiting, mock_append, agent):
+    mock_awaiting.side_effect = ConnectionError("ES unreachable")
+
+    result = agent.execute_approved("test-tenant", "fake-alert-id", "human")
+
+    assert result.status_code == 503
+    assert result.response['status'] == 'error'
+
+
+@patch('agent._append_pending_action')
+@patch('agent.is_awaiting_approval')
+@patch('agent.read_checkpoint')
+@patch('agent._execute_isolation')
+@patch('agent.write_checkpoint')
+@patch('agent.claim_approval')
+def test_phase_2_writes_claimed_then_approved_queue_rows(mock_claim, mock_write, mock_exec, mock_read, mock_awaiting, mock_append, agent, payload):
+    mock_awaiting.return_value = True
+    mock_claim.return_value = True
+    mock_read.return_value = {"context": payload}
+    mock_exec.return_value = (True, "Blocked on router")
+
+    agent.execute_approved("test-tenant", "fake-alert-id", "human")
+
+    statuses = [call.args[0]['status'] for call in mock_append.call_args_list]
+    assert statuses == ["claimed", "approved"]
+
+
+@patch('agent._append_pending_action')
+@patch('agent.is_awaiting_approval')
+@patch('agent.read_checkpoint')
+@patch('agent._execute_isolation')
+@patch('agent.write_checkpoint')
+@patch('agent.claim_approval')
+def test_phase_2_uses_the_claimed_alert_id_not_a_recomputed_one(mock_claim, mock_write, mock_exec, mock_read, mock_awaiting, mock_append, agent, payload):
+    """perceive() recomputes alert_id from the payload's dedup key, which can
+    drift from the id this call was actually claimed under (e.g. a new
+    5-minute bucket). The checkpoint written for THIS execution must key on
+    the original, claimed alert_id — not perceive()'s recomputed one."""
+    mock_awaiting.return_value = True
+    mock_claim.return_value = True
+    mock_read.return_value = {"context": payload}
+    mock_exec.return_value = (True, "Blocked on router")
+
+    agent.execute_approved("test-tenant", "fake-alert-id", "human")
+
+    mock_write.assert_called_once_with("test-tenant", "fake-alert-id", "EXECUTED", context=payload)

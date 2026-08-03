@@ -23,11 +23,10 @@ Umbrella user story: [#213](https://github.com/voltron-1/Suburban_SOC/issues/213
 Multi-phase execution gating applies: each phase below executes and is
 reviewed individually, no unattended multi-phase runs.
 
-- [~] **Phase 0 (CRITICAL, blocking) — #214** — restore the atomic
+- [x] **Phase 0 (CRITICAL, blocking) — #214 — COMPLETE** — restore the atomic
   approval-gate claim via ES create-if-absent (`claim_approval()` in
-  `checkpoints.py`). **PR [#248](https://github.com/voltron-1/Suburban_SOC/pull/248)
-  open on `fix/214-approval-gate-atomic-claim`, awaiting human review/merge
-  decision — not yet merged.** Scope grew substantially during
+  `checkpoints.py`). [PR #248](https://github.com/voltron-1/Suburban_SOC/pull/248)
+  merged 2026-08-02 to `main`; issue closed. Scope grew substantially during
   implementation (see 2026-08-01 session log below): a relative-import bug
   had broken test collection for the entire `ai_agent` suite since
   `2bb3d8f`; ~45 tests were failing against a silently-changed API contract
@@ -56,7 +55,9 @@ reviewed individually, no unattended multi-phase runs.
   `pip install ruff`, so CI always installs latest and has drifted from
   what's locally reproducible) — it fails on every PR in the repo
   regardless of content, not something introduced by or fixable within this
-  diff; worth a separate fix.
+  diff. **Fixed 2026-08-02 via [PR #255](https://github.com/voltron-1/Suburban_SOC/pull/255)**
+  (pinned to 0.15.15) — see LAST SESSION below for how this and #248/#253's
+  merges depended on each other.
 - [ ] **Phase 1 — #215** — resolve the rest of the uncommitted working tree:
   relocate SOP-022/SOP-147 operational content (dropped by an uncommitted
   playbook-template refactor) into companion runbooks, repair 4 dangling
@@ -82,8 +83,79 @@ reviewed individually, no unattended multi-phase runs.
 - [ ] **Phase 4 — #222** — expand threat-intel feed coverage, automate
   `refresh_intel.sh` cron install.
 
-Next unstarted item: **Phase 0 — #214**, blocking everything else in this
-milestone.
+Next unstarted item: **Phase 1 — #215** (resolve the uncommitted working
+tree — SOP-022/SOP-147 relocation, dangling references, `inventory.py` path
+fix — currently parked in a local stash, not yet executed as its own gated
+phase).
+
+---
+
+**Milestone: [M13 - Detection Expansion: 35 → 105 Sigma Rules (Campus SOC)](https://github.com/voltron-1/Suburban_SOC/milestone/17).**
+Created 2026-08-01 by an uncoordinated external tool (Google's Antigravity/
+Gemini CLI), found running on this same repo mid-M12-session — see the
+2026-08-01 session log below for that incident. 7 user stories (#224-#230,
+~10 rules each), 14 implementation issues (#231-#244), one final-verification
+issue (#244). User approved continuing the milestone 2026-08-02 conditional
+on the repo/board being current — they weren't (M13's 22 issues existed on
+GitHub but were entirely absent from Project Board #17, and all 14
+parent-child links had silently failed because the seeding script used
+`--add-parent`, not a real `gh issue edit` flag — both fixed before
+proceeding). Multi-phase execution gating applies here too: each user story
+is its own gated batch, no unattended multi-story runs.
+
+- [x] **US1 — #224/#231 — COMPLETE** — 10 Windows LOLBin/execution rules.
+  [PR #251](https://github.com/voltron-1/Suburban_SOC/pull/251),
+  `feat/213-m13-us1-windows-lolbin`. `security-auditor` review of the first
+  draft: **"0 of 10 rules are solid as written"** — 3 had zero real
+  detection value or matched routine legitimate activity, all fixed (see
+  PR body for the per-rule breakdown). Surfaced two corpus-wide findings
+  unrelated to this batch specifically — see below.
+- [x] **#249/#250 — process.args mapping — COMPLETE, LIVE-VERIFIED** — the
+  security review of US1 found `process.args` (and
+  `process.parent.args`/`ScriptBlockText`/etc.) indexed as plain `keyword`,
+  `ignore_above: 1024`, no normalizer — meaning (#249) Sigma's lowercase
+  literals may not match real mixed-case telemetry at all, and (#250) any
+  command line over 1024 characters is silently un-indexed. Both affected
+  **all 45 pre-existing rules**, not just US1's 10. [PR
+  #253](https://github.com/voltron-1/Suburban_SOC/pull/253) merged
+  2026-08-02; both issues closed. Needed **two** `security-auditor` passes:
+  the first fix drafted used `wildcard` field type + a normalizer, which the
+  review caught as likely rejected by Elasticsearch outright, or — worse —
+  if somehow accepted, would have caused *total* false negatives on every
+  mixed-case rule literal in the corpus (the `wildcard` type's
+  query-verification is case-sensitive against the raw doc value regardless
+  of the normalizer). Corrected to `keyword` + normalizer +
+  `ignore_above: 8191`, re-reviewed clean. Also fixed: `apply-templates.sh`
+  printed each template PUT's HTTP status but never checked it (curl treats
+  a 400 as "success"), which is exactly the mechanism that would have let
+  the wrong first draft ship silently broken — now asserts on the code and
+  fails loudly. Filed [#252](https://github.com/voltron-1/Suburban_SOC/issues/252)
+  for a narrower related finding (`ScriptBlockText`'s real chunk size may
+  still exceed the new 8191 ceiling) — remains open, separate scope.
+  **Live-verified 2026-08-02** once Docker Desktop's WSL2 integration was
+  restored (see LAST SESSION): template PUT confirmed HTTP 200, installed
+  mapping confirmed byte-for-byte via `GET _index_template`, a synthetic
+  mixed-case `process.args` doc confirmed a lowercase Sigma-style query now
+  matches it, a synthetic 1385-char value confirmed no longer silently
+  dropped, and all 6 `logstash-security-*` data streams rolled over
+  (`POST .../_rollover`) with each new write index's mapping confirmed
+  corrected via `GET .../_mapping/field/process.args`. No real
+  Windows/process telemetry currently flows through the pipeline (live
+  sampling found NTP-only data) — verification used synthetic scratch-index
+  data for that reason, never the real `logstash-security-*` streams; this
+  is a pre-existing gap (echoes the DEFERRED real-telemetry ticket), not
+  something #253 introduced.
+- [ ] **US2 — #225/#232** — 7 Credential Access & AD Attack rules. Not started.
+- [ ] **US3 — #226/#233,#234** — 12 Persistence/PrivEsc/Discovery rules. Not started.
+- [ ] **US4 — #227/#235,#236** — 10 Ransomware/Collection/Exfiltration rules
+  (closes the TA0009/TA0010 coverage gaps). Not started.
+- [ ] **US5 — #228/#237-#240** — 15 Zeek network-telemetry rules. Not started.
+- [ ] **US6 — #229/#241,#242** — 8 PowerShell/Windows Security log rules. Not started.
+- [ ] **US7 — #230/#243,#244** — 5 Linux auth.log rules + final CI
+  verification (105-rule count, no duplicate UUIDs, coverage docs in sync).
+  Not started.
+
+Next unstarted item: **US2 — #232** (7 Credential Access & AD Attack rules).
 
 ---
 
@@ -479,6 +551,140 @@ are implemented in code; checked off with that one caveat noted inline.
   Resolved Architecture Decisions:
   - Alert ID sourcing: uses a Semantic Deduplication Key (hash of tenant+IP+severity+5m_bucket)
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
+
+---
+
+## LAST SESSION — 2026-08-02 (later)
+
+- Docker Desktop's WSL2 integration with Ubuntu crashed mid-session ("the
+  pipe is being closed" on the Windows host) — root-caused via systematic
+  debugging rather than just clicking retry blind: Docker Desktop's own
+  processes had just (re)started ~90s before the Ubuntu distro finished
+  booting, so its integration health probe raced the distro's interop pipe
+  coming up. Ruled out sleep/resume, OOM, and disk/memory pressure with
+  evidence first. Confirmed healthy on retry; this is what finally unblocked
+  live-verifying #253 (see below) after last session's Docker-unavailable
+  blocker.
+- **#253 (#249/#250 process.args mapping) fully live-verified and merged.**
+  Delegated to `tester-debugger` for the live-cluster checks (template PUT,
+  installed-mapping GET, synthetic mixed-case/long-value behavioral tests —
+  see the M13 entry above for detail), then executed the previously-deferred
+  data-stream rollover myself on explicit go-ahead (`POST .../_rollover` ×6,
+  gated behind the Claude Code auto-mode classifier as a live-mutation
+  action — re-ran once with auto-mode off to get the interactive prompt).
+  Verified each new write index's mapping directly rather than trusting the
+  rollover response alone. Issue #250 closed with the evidence cited above
+  (#249 had auto-closed via #253's merge; #250 hadn't, so closed manually).
+- Separately, debugged an unrelated user-reported issue: `soc_pipeline.sh`'s
+  prereq checks warned "Elasticsearch/Kibana not reachable" despite the
+  stack being fully healthy. Root cause: `ES_CA` defaulted to
+  `/certs/ca/ca.crt`, a container-only path (named Docker volume, not
+  host-mounted) — every host-side `--cacert` curl call failed with curl exit
+  77, silenced by `&>/dev/null`, and misreported a healthy stack as down, at
+  5 call sites across 2 functions. New `resolve_es_ca()` reuses SOP-003's
+  already-provisioned `/etc/filebeat/certs/ca.crt` or self-provisions via
+  `docker cp` (established repo idiom, also used by
+  `configs/systemd/slo-metrics.service`). `security-auditor` (0
+  CRITICAL/HIGH/MEDIUM, 2 LOW on the new self-provisioning path — both
+  hardened: symlink-safe extraction, cert-content validation) +
+  `code-reviewer` (1 Should-Fix — re-resolve after `run_sop_005`'s "ELK is
+  running" prompt so a cold start doesn't latch a stale failure — applied) +
+  `tester-debugger` (live-verified all scenarios pass) ran in parallel per
+  this repo's standing rule. [PR
+  #254](https://github.com/voltron-1/Suburban_SOC/pull/254) open, not yet
+  merged — no tracked issue for this, discovered and fixed ad hoc within the
+  session at the user's direct request.
+- Merging #253 surfaced a genuine circular CI dependency between two
+  infra-only fixes, both required-status-check blockers: `ruff (python)`
+  fails on every PR because `pip install ruff` in `lint.yml` was unpinned
+  and had drifted to 0.16.x, which newly enables rule `UP045` and flags 144
+  pre-existing, unrelated findings repo-wide (traced to the exact CI log
+  diff before concluding this, not assumed); `SOAR auth / exclusion /
+  approval / tenant-scoping` fails on every PR still based on pre-#248
+  `main` because of the relative-import bug #214's session already
+  diagnosed. Each fix's own PR branch was blocked by the *other* fix's
+  absence. Broke the cycle with exactly one admin-privileged bypass — on
+  [PR #255](https://github.com/voltron-1/Suburban_SOC/pull/255) (the ruff
+  pin itself, 1 unrelated required check failing) — chosen deliberately
+  over bypassing either substantive PR, presented to the user as an
+  explicit tradeoff before acting. After #255 merged, updated #248's and
+  #253's branches with the fix (`git merge origin/main`) and both then
+  merged **cleanly, 15/15 checks, zero further bypasses**. Branches deleted
+  on merge for all three (#255, #248, #253).
+
+## LAST SESSION — 2026-08-02
+
+- User asked to update the README, wiki, and project board "if the repo and
+  project board are current." Checked rather than assumed: `main` was in
+  sync with origin and PR #248 was correctly tracked, so pushed the
+  README fixes (stale `sterlinggarnett` repo owner in the milestones link,
+  M11 shown as still-in-progress, M12 missing entirely, a stale Sigma-rule
+  claim already disproven this session) and mirrored the same fixes into
+  the GitHub wiki (`Home.md` had a garbled, duplicated M11 status line from
+  a prior bad edit). Moved `#213` to "In progress" on the board to match
+  reality.
+- User then said "if the repo and project board are current move to m13."
+  Checked again rather than assuming the prior check still held — it
+  didn't fully: M13's 22 issues (from the Antigravity incident earlier
+  this session) existed on GitHub but were **entirely absent** from
+  Project Board #17, and all 14 parent-child links had silently failed
+  (the seeding script used `--add-parent`, not a real `gh issue edit`
+  flag). Fixed both before treating the condition as met.
+- Implemented M13 US1 (10 Windows LOLBin/execution Sigma rules, issue
+  #231) as its own gated phase, TDD throughout. `security-auditor` +
+  `code-reviewer` ran in parallel before commit per this repo's standing
+  rule — the security review's verdict on the first draft: **"0 of 10
+  rules are solid as written."** Fixed all of it (not left as caveats):
+  one rule matched a command line Windows Script Host cannot execute
+  (zero real detection value while still scoring green in the coverage
+  matrix); two required flags together that the real technique uses
+  independently, missing the canonical form entirely; one matched the
+  single most common *legitimate* invocation of its own target binary.
+  [PR #251](https://github.com/voltron-1/Suburban_SOC/pull/251),
+  `feat/213-m13-us1-windows-lolbin`. CI: `detections` passes; the only
+  failures are the same two pre-existing, unrelated issues already on
+  PR #248 (main's broken relative import, ruff version drift).
+- That review also surfaced two corpus-wide findings unrelated to the 10
+  new rules specifically: `process.args` (and related fields) map to
+  plain `keyword`/`ignore_above:1024`/no normalizer, meaning Sigma's
+  lowercase literals may not match real mixed-case telemetry at all
+  (#249), and any command line over 1024 characters is silently
+  un-indexed (#250) — both affecting **all 45 pre-existing rules**, not
+  just the new batch. Fixed via [PR
+  #253](https://github.com/voltron-1/Suburban_SOC/pull/253),
+  `fix/249-250-process-args-mapping`. This one took **two**
+  `security-auditor` passes: the first fix (switch the field to
+  Elasticsearch's `wildcard` type + a lowercase normalizer) was reviewed
+  and found likely broken — `normalizer` almost certainly isn't a valid
+  parameter on a `wildcard`-mapped field, so the template PUT would 400
+  and get silently discarded; and if somehow accepted, the `wildcard`
+  type's query-verification is case-sensitive against the raw doc value
+  regardless of the normalizer, which would have caused **total** false
+  negatives on every mixed-case rule literal in the corpus — a strictly
+  worse outcome than the bug being fixed. Caught before committing,
+  corrected to `keyword` + normalizer + `ignore_above: 8191`, re-reviewed
+  clean. Also fixed in the same PR: `apply-templates.sh` printed each
+  template PUT's HTTP status but never checked it (curl treats a 400 as
+  "success") — exactly the mechanism that would have let the wrong first
+  draft ship undetected. Filed
+  [#252](https://github.com/voltron-1/Suburban_SOC/issues/252) for a
+  narrower, related finding the second review pass caught
+  (`ScriptBlockText`'s real chunk size may still exceed the new 8191
+  ceiling). **Cannot be live-verified in this environment** — Docker/an
+  Elasticsearch daemon is not reachable here (checked: no
+  `/var/run/docker.sock`, no `docker.service` unit, no `dockerd` binary —
+  most likely gated behind Docker Desktop's WSL2 integration on the
+  Windows host, which has to be started from outside this session).
+- Lesson reinforced from this session's earlier Antigravity incident and
+  M12 work, now repeated on the SAME turn with the SAME pattern: a fix
+  that "looks right" for an infrastructure/config change needs the same
+  adversarial review as application code, especially when it cannot be
+  live-verified — the first `process.args` mapping draft would have
+  shipped a plausible-looking but backwards fix had the review not caught
+  it before commit.
+- Neither PR merged — same standing rule as #248 (sub-agent review alone
+  doesn't authorize a merge). Board updated: `#213`, `#214`, `#224`,
+  `#231`, `#249`, `#250`, `#252` all reflect "In progress."
 
 ---
 

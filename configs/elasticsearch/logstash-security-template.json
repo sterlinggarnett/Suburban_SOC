@@ -3,7 +3,7 @@
   "priority": 200,
   "data_stream": {},
   "_meta": {
-    "description": "Suburban-SOC unified security index. Pins ECS fields to keyword/ip/date so cross-index aggregations and dashboards are consistent (fixes the dynamic text+keyword drift that silently failed shard aggregations). WS0.3: tenant.id is a first-class keyword. WS0.5: backed by a per-tenant data stream (logstash-security-<tenant>) under ILM policy logstash-security-ilm.",
+    "description": "Suburban-SOC unified security index. Pins ECS fields to keyword/ip/date so cross-index aggregations and dashboards are consistent (fixes the dynamic text+keyword drift that silently failed shard aggregations). WS0.3: tenant.id is a first-class keyword. WS0.5: backed by a per-tenant data stream (logstash-security-<tenant>) under ILM policy logstash-security-ilm. #249/#250: command-line/script-block-shaped fields (process.args, *CommandLine, *ScriptBlockText, *uri — explicit properties plus the long_command_fields dynamic_template) use a lowercase normalizer (so Sigma's lowercase literals match mixed-case real telemetry via wildcard-query normalization) and a raised ignore_above:8191 (vs the general 1024) so long values, e.g. encoded PowerShell, aren't silently dropped from the index. Aggregations/sorts on these fields return the lowercased form; _source keeps original casing for Discover/evidence.",
     "managed_by": "configs/elasticsearch/apply-templates.sh"
   },
   "template": {
@@ -12,10 +12,22 @@
       "number_of_replicas": 0,
       "refresh_interval": "5s",
       "index.mapping.ignore_malformed": true,
-      "index.lifecycle.name": "logstash-security-ilm"
+      "index.lifecycle.name": "logstash-security-ilm",
+      "analysis": {
+        "normalizer": {
+          "lowercase_normalizer": { "type": "custom", "filter": ["lowercase"] }
+        }
+      }
     },
     "mappings": {
       "dynamic_templates": [
+        {
+          "long_command_fields": {
+            "match_mapping_type": "string",
+            "path_match": ["*command_line", "*CommandLine", "*args", "*ScriptBlockText", "*uri", "*url"],
+            "mapping": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 }
+          }
+        },
         {
           "strings_as_keyword": {
             "match_mapping_type": "string",
@@ -27,6 +39,21 @@
         "@timestamp": { "type": "date" },
         "message":    { "type": "text" },
         "tags":       { "type": "keyword" },
+
+        "process": { "properties": {
+          "executable": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 },
+          "args":       { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 },
+          "parent": { "properties": {
+            "name": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 },
+            "args": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 }
+          }}
+        }},
+
+        "winlog": { "properties": {
+          "event_data": { "properties": {
+            "ScriptBlockText": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 }
+          }}
+        }},
 
         "tenant": { "properties": {
           "id": { "type": "keyword" }
@@ -92,18 +119,18 @@
 
         "url": { "properties": {
           "domain":   { "type": "keyword" },
-          "original": { "type": "keyword" }
+          "original": { "type": "keyword", "ignore_above": 8191 }
         }},
 
         "related": { "properties": {
           "ip":    { "type": "ip" },
-          "hosts": { "type": "keyword" },
+          "hosts": { "type": "keyword", "ignore_above": 8191 },
           "user":  { "type": "keyword" }
         }},
 
         "log": { "properties": {
           "file": { "properties": {
-            "path": { "type": "keyword" }
+            "path": { "type": "keyword", "ignore_above": 8191 }
           }}
         }}
       }

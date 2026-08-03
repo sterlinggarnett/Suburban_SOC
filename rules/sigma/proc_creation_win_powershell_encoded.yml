@@ -16,6 +16,19 @@ description: >
     boundary), and excluded the '-Encoding' collision with a dedicated
     filter instead of trying to solve both problems with one boundary
     choice.
+    3rd-pass security-auditor findings: the filter only excluded the
+    space-separated form (' -encoding '), so PowerShell's colon-binding
+    syntax (`Out-File -Encoding:UTF8`) still matched ' -enco'/' -encod' and
+    re-opened the exact false positive this rule exists to close - added
+    ' -encoding:' to the filter. Also added '/'-prefixed mirrors of every
+    abbreviation: powershell.exe accepts '/' as a switch prefix identically
+    to '-' (e.g. `powershell /?`), so `powershell.exe /enc <b64>` matched
+    none of the '-'-only entries. Known residual scope limit, not fixed
+    here: CommandLineToArgvW also accepts a literal tab as an argument
+    separator, so a tab-delimited `-enc` with no adjacent space would still
+    evade every entry in this rule - low real-world likelihood (no common
+    tool invokes PowerShell this way) and left as a documented gap rather
+    than doubling the entry list for an unobserved technique.
 logsource:
     category: process_creation
     product: windows
@@ -32,8 +45,17 @@ detection:
             - ' -encod'
             - ' -EncodedCommand'
             - ' -ec '
+            - ' /e '
+            - ' /en '
+            - ' /enc '
+            - ' /enco'
+            - ' /encod'
+            - ' /EncodedCommand'
+            - ' /ec '
     filter_encoding_cmdlet_param:
-        CommandLine|contains: ' -encoding '
+        CommandLine|contains:
+            - ' -encoding '
+            - ' -encoding:'
     condition: selection and not filter_encoding_cmdlet_param
 falsepositives:
     - Legitimate administrative scripts that use encoding.

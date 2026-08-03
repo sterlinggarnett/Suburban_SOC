@@ -92,7 +92,7 @@ note:(SSH\:\:Password_Guessing OR SSH\:\:Login_By_Password_Guesser)
 - **Rule:** `posh_ps_obfuscated_scriptblock.yml` · **level:** high · **status:** stable · **ATT&CK:** T1059.001, T1027
 
 ```
-winlog.event_id:4104 AND (((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ * OR *Invoke\-Expression* OR *\[scriptblock\]\:\:Create* OR *.Invoke\(\)*)) AND (winlog.event_data.ScriptBlockText:(*DownloadString* OR *DownloadFile* OR *DownloadData* OR *Net.WebClient* OR *Invoke\-WebRequest* OR *Invoke\-RestMethod* OR *Start\-BitsTransfer* OR *iwr\ * OR *irm\ *))) OR ((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ * OR *Invoke\-Expression* OR *\[scriptblock\]\:\:Create* OR *.Invoke\(\)*)) AND (winlog.event_data.ScriptBlockText:(*\-bxor* OR *\-bnot* OR *FromBase64String* OR *\-EncodedCommand* OR *\-enc\ *))) OR ((winlog.event_data.ScriptBlockText:(*DownloadString* OR *DownloadFile* OR *DownloadData* OR *Net.WebClient* OR *Invoke\-WebRequest* OR *Invoke\-RestMethod* OR *Start\-BitsTransfer* OR *iwr\ * OR *irm\ *)) AND (winlog.event_data.ScriptBlockText:(*\-bxor* OR *\-bnot* OR *FromBase64String* OR *\-EncodedCommand* OR *\-enc\ *))))
+winlog.event_id:4104 AND (((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ * OR *\|IEX* OR *\|\ IEX* OR *;IEX* OR *;\ IEX* OR *Invoke\-Expression* OR *\[scriptblock\]\:\:Create* OR *.Invoke\(\)*)) AND ((winlog.event_data.ScriptBlockText:(*DownloadString* OR *DownloadFile* OR *DownloadData* OR *Net.WebClient* OR *Invoke\-WebRequest* OR *Invoke\-RestMethod* OR *Start\-BitsTransfer* OR *\ iwr\ * OR *\|iwr\ * OR *;iwr\ * OR *\=iwr\ * OR *\ irm\ * OR *\|irm\ * OR *;irm\ * OR *\=irm\ *)) OR (winlog.event_data.ScriptBlockText:(iwr\ * OR irm\ *)))) OR ((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ * OR *\|IEX* OR *\|\ IEX* OR *;IEX* OR *;\ IEX* OR *Invoke\-Expression* OR *\[scriptblock\]\:\:Create* OR *.Invoke\(\)*)) AND (winlog.event_data.ScriptBlockText:(*\-bxor* OR *\-bnot* OR *FromBase64String* OR *\-EncodedCommand* OR *\-enc\ *))) OR (((winlog.event_data.ScriptBlockText:(*DownloadString* OR *DownloadFile* OR *DownloadData* OR *Net.WebClient* OR *Invoke\-WebRequest* OR *Invoke\-RestMethod* OR *Start\-BitsTransfer* OR *\ iwr\ * OR *\|iwr\ * OR *;iwr\ * OR *\=iwr\ * OR *\ irm\ * OR *\|irm\ * OR *;irm\ * OR *\=irm\ *)) OR (winlog.event_data.ScriptBlockText:(iwr\ * OR irm\ *))) AND (winlog.event_data.ScriptBlockText:(*\-bxor* OR *\-bnot* OR *FromBase64String* OR *\-EncodedCommand* OR *\-enc\ *))))
 ```
 
 ## Malicious File Download via Bitsadmin
@@ -244,7 +244,7 @@ process.executable:*\\nltest.exe AND (process.args:(*\/dclist\:* OR *\/domain_tr
 - **Rule:** `proc_creation_win_powershell_encoded.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1059.001
 
 ```
-((process.executable:(*\\powershell.exe OR *\\pwsh.exe)) AND (process.args:(*\ \-e\ * OR *\ \-en\ * OR *\ \-enc\ * OR *\ \-enco* OR *\ \-encod* OR *\ \-EncodedCommand* OR *\ \-ec\ *))) AND (NOT process.args:*\ \-encoding\ *)
+((process.executable:(*\\powershell.exe OR *\\pwsh.exe)) AND (process.args:(*\ \-e\ * OR *\ \-en\ * OR *\ \-enc\ * OR *\ \-enco* OR *\ \-encod* OR *\ \-EncodedCommand* OR *\ \-ec\ * OR *\ \/e\ * OR *\ \/en\ * OR *\ \/enc\ * OR *\ \/enco* OR *\ \/encod* OR *\ \/EncodedCommand* OR *\ \/ec\ *))) AND (NOT (process.args:(*\ \-encoding\ * OR *\ \-encoding\:*)))
 ```
 
 ## RDP Session Hijacking via Tscon
@@ -356,7 +356,7 @@ winlog.event_id:7040 AND winlog.event_data.param1:*Event\ Log*
 - **Rule:** `system_win_service_installed.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1543.003
 
 ```
-winlog.event_id:7045 AND (NOT (winlog.event_data.ImagePath:(C\:\\Windows\\System32\\* OR \"C\:\\Windows\\System32\\* OR C\:\\Windows\\SysWOW64\\* OR \"C\:\\Windows\\SysWOW64\\* OR C\:\\Program\ Files\\* OR \"C\:\\Program\ Files\\* OR C\:\\Program\ Files\ \(x86\)\\* OR \"C\:\\Program\ Files\ \(x86\)\\*)))
+winlog.event_id:7045 AND (NOT (winlog.event_data.ImagePath:(C\:\\Windows\\System32\\* OR \"C\:\\Windows\\System32\\* OR C\:\\Windows\\SysWOW64\\* OR \"C\:\\Windows\\SysWOW64\\* OR C\:\\Program\ Files\\* OR \"C\:\\Program\ Files\\* OR C\:\\Program\ Files\ \(x86\)\\* OR \"C\:\\Program\ Files\ \(x86\)\\* OR %SystemRoot%\\* OR \"%SystemRoot%\\* OR \\SystemRoot\\* OR \??\\C\:\\Windows\\* OR \"\??\\C\:\\Windows\\* OR \??\\C\:\\Program\ Files\\* OR \"\??\\C\:\\Program\ Files\\*)))
 ```
 
 ## Suspicious WMI Event Filter-to-Consumer Binding (WMI-Activity 5861)

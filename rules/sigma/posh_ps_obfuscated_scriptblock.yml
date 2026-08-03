@@ -44,6 +44,21 @@ description: >
     '.Invoke()'; download now also matches DownloadFile/DownloadData,
     Invoke-WebRequest/Invoke-RestMethod (and their iwr/irm aliases, since
     4104 logs the literal text as typed), and Start-BitsTransfer.
+    Follow-up security-auditor pass (3rd) on that same broadening found two
+    more gaps: (1) the pipeline-terminal cradle form 'iwr <url> | iex' (IEX
+    as the LAST token, no trailing space/paren) matched neither original
+    'IEX(' nor 'IEX ' - added '|IEX'/'| IEX'/';IEX'/'; IEX' boundary forms;
+    (2) the unanchored 'iwr '/'irm ' entries matched inside ordinary English
+    words like "confirm " (Write-Host "Confirm the deletion") or
+    "$Confirm" - re-anchored both aliases to require a preceding
+    space/pipe/semicolon/equals so they only match where they're actually
+    invoked as a command, not as a word-internal substring. That anchoring
+    initially missed the case where iwr/irm is the very FIRST token in the
+    whole script block (nothing precedes it, so no preceding-boundary
+    character exists to match against) - caught by re-running the exact
+    combinatorial cases the earlier passes used before considering this
+    done, not by the auditor. Added selection_download_alias_start below
+    (startswith, OR'd into the condition) to cover that position.
 logsource:
     product: windows
     service: powershell
@@ -54,6 +69,10 @@ detection:
         ScriptBlockText|contains:
             - 'IEX('
             - 'IEX '
+            - '|IEX'
+            - '| IEX'
+            - ';IEX'
+            - '; IEX'
             - 'Invoke-Expression'
             - '[scriptblock]::Create'
             - '.Invoke()'
@@ -66,6 +85,16 @@ detection:
             - 'Invoke-WebRequest'
             - 'Invoke-RestMethod'
             - 'Start-BitsTransfer'
+            - ' iwr '
+            - '|iwr '
+            - ';iwr '
+            - '=iwr '
+            - ' irm '
+            - '|irm '
+            - ';irm '
+            - '=irm '
+    selection_download_alias_start:
+        ScriptBlockText|startswith:
             - 'iwr '
             - 'irm '
     selection_encode:
@@ -75,7 +104,7 @@ detection:
             - 'FromBase64String'
             - '-EncodedCommand'
             - '-enc '
-    condition: selection and ((selection_execute and selection_download) or (selection_execute and selection_encode) or (selection_download and selection_encode))
+    condition: selection and ((selection_execute and (selection_download or selection_download_alias_start)) or (selection_execute and selection_encode) or ((selection_download or selection_download_alias_start) and selection_encode))
 falsepositives:
     - Legitimate administrative or deployment scripts that combine two of
       these categories for non-malicious reasons (rare, but e.g. a bootstrap

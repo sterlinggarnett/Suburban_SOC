@@ -22,6 +22,17 @@ description: >
     "Program Files" always has - is commonly registered with surrounding
     quotes; matching only the bare form would silently fail to suppress a
     large fraction of real installers and undercut this rule's own purpose.
+    3rd-pass security-auditor findings: (1) ImagePath had no explicit index
+    mapping with a lowercase normalizer, so this startswith filter - despite
+    now resolving to a real field (see the field-mapping-windows-system
+    comment in suburban-soc-ecs.yml) - was still case-sensitive against
+    literal-cased Sigma text while real 7045 events routinely log lowercase
+    (C:\Windows\system32\...); fixed by adding an explicit
+    winlog.event_data.ImagePath mapping with lowercase_normalizer in
+    logstash-security-template.json, matching every other command/path field
+    in that template. (2) Real ImagePath values also commonly use
+    %SystemRoot%, the bare \SystemRoot\ NT path, or the \??\ NT device
+    prefix instead of C:\Windows - added those forms below.
 logsource:
     product: windows
     service: system
@@ -38,6 +49,13 @@ detection:
             - '"C:\Program Files\'
             - 'C:\Program Files (x86)\'
             - '"C:\Program Files (x86)\'
+            - '%SystemRoot%\'
+            - '"%SystemRoot%\'
+            - '\SystemRoot\'
+            - '\??\C:\Windows\'
+            - '"\??\C:\Windows\'
+            - '\??\C:\Program Files\'
+            - '"\??\C:\Program Files\'
     condition: selection and not filter_common_dirs
 falsepositives:
     - Legitimate software installers, patch management, and endpoint agents

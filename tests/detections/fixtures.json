@@ -81,6 +81,10 @@
       {
         "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
         "CommandLine": "powershell.exe -Command Out-File -Encoding utf8 report.txt"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "CommandLine": "powershell.exe -Command Out-File -Encoding:utf8 report.txt"
       }
     ]
   },
@@ -447,6 +451,14 @@
       {
         "EventID": 7045,
         "ImagePath": "\"C:\\Program Files\\Vendor\\Agent\\agent.exe\""
+      },
+      {
+        "EventID": 7045,
+        "ImagePath": "%SystemRoot%\\system32\\svchost.exe"
+      },
+      {
+        "EventID": 7045,
+        "ImagePath": "\\??\\C:\\Program Files\\Vendor\\agent.exe"
       }
     ]
   },
@@ -562,6 +574,10 @@
       {
         "EventID": 4104,
         "ScriptBlockText": "Invoke-WebRequest -Uri http://internal/report.csv -OutFile report.csv"
+      },
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "IEX (Get-Content file.txt); Write-Host 'Please confirm the operation'"
       }
     ]
   },

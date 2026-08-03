@@ -250,7 +250,7 @@ def metric_raw_alert_volume():
         scan) is a real aggregated Zeek notice, but T1110 (brute force) tags
         every single auth_success=false event, not a thresholded notice. An
         unauthenticated actor can inflate this half at will with a failed-
-        login burst; see #260 for tightening that pipeline classification.
+        login burst; see #261 for tightening that pipeline classification.
       - rule_hits: Sigma/Elastic Detection Engine alerts in
         .alerts-security.alerts-* (same index metric_mttd() already reads).
         Queried strict (#216) - this index should always exist once Kibana's

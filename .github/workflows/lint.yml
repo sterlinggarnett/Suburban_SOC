@@ -37,7 +37,10 @@ jobs:
         with:
           python-version-file: .python-version
 
-      - run: pip install --quiet ruff
+      # Pinned: unpinned installs drifted to whatever ruff shipped that day
+      # (e.g. 0.16.x enabling UP045 by default), failing every PR on 144
+      # pre-existing findings unrelated to any given diff. Bump deliberately.
+      - run: pip install --quiet ruff==0.15.15
       - run: ruff check .
 
   mypy:

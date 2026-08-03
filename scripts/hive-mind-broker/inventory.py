@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 class Inventory:
     def __init__(self, filepath="inventory.yaml"):
+        if filepath == "inventory.yaml" and not os.path.exists(filepath):
+            alt = os.path.join(os.path.dirname(__file__), filepath)
+            if os.path.exists(alt):
+                filepath = alt
         self.filepath = filepath
         self.routers = []
         self.load()

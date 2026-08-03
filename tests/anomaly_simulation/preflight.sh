@@ -101,7 +101,7 @@ elif echo "$watcher_resp" | grep -q '"_id"'; then
 elif [[ -z "$watcher_resp" ]]; then
   red "Watcher API unreachable or auth required — confirm ES_USER/ES_PASS in .env if x-pack security is on"
 else
-  red "Watcher ${WATCHER_NAME} not installed — see Step 5 of SOP-022"
+  red "Watcher ${WATCHER_NAME} not installed — see Step 5 of docs/SOP-022-anomaly-validation-procedure.md"
 fi
 
 # --- OpenWrt SSH ---

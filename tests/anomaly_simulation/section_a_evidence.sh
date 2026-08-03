@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-# section_a_evidence.sh — automate SOP-147 Section A.4–A.6 evidence collection.
+# section_a_evidence.sh — automate SOP-147 Section A.4–A.6 evidence collection
+# (docs/SOP-147-evidence-validation-procedure.md).
 #
 #   A.4  Live intel match      → drives the full Zeek→Logstash→agent SOAR loop
 #                                (delegates to sim_intel_match.sh) + confirms the

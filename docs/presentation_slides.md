@@ -88,7 +88,7 @@ This document contains the finalized content for the Suburban-SOC project presen
     *   **Suspicious Download** — EICAR test ZIP via `curl` → `zeek.files` should record `mime_type=application/zip`.
 *   **Test Harness (`tests/anomaly_simulation/`):** Three sim scripts, a Python verifier that asserts each detection landed in Elasticsearch within a lookback window, an OpenWrt verifier that confirms the `uci` quarantine rule was installed, and a `run_all.sh` orchestrator.
 *   **Operator Gate:** `preflight.sh` validates every prereq (host bins, ES, agent, Watcher, OpenWrt SSH) before the live run — single PASS/FAIL per check, exits non-zero on the first failure.
-*   **Documented:** Full procedure in [`docs/SOP-022-anomaly-validation.md`](./SOP-022-anomaly-validation.md) with detection-mapping table, troubleshooting matrix, and evidence-capture checklist.
+*   **Documented:** Overview in [`docs/SOP-022-anomaly-validation.md`](./SOP-022-anomaly-validation.md); detection-mapping table, troubleshooting matrix, and evidence-capture checklist live in its [detailed procedure](./SOP-022-anomaly-validation-procedure.md) (#215).
 
 ---
 

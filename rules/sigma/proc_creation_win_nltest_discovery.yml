@@ -1,7 +1,19 @@
 title: Domain Controller Discovery via Nltest
 id: a1c1f007-0007-4a07-9007-000000000007
-status: stable
-description: Detects nltest.exe enumerating domain controllers or domain trusts — remote system discovery during recon.
+status: experimental
+description: >
+    Detects nltest.exe enumerating domain controllers or domain trusts —
+    remote system discovery during recon.
+    #217: demoted medium -> low and this file's own status set to experimental
+    so deploy_detections.sh does not ALSO deploy this as a noisy per-event
+    query rule (matches the auth_win_bruteforce_failed_logons.yml pattern,
+    issue #192) - this file stays the logic-of-record (single-event
+    definition, sigma_eval.py fixture coverage) but the deployed enforcement
+    is the paired Elastic threshold companion
+    (rules/elastic/threshold/disc-win-nltest-discovery-repeat.ndjson), which
+    alerts on repeated nltest enumeration on the same host within a short
+    window - a single deliberate attacker execution is still recorded (raw
+    telemetry, hunting), just not alerted on alone.
 logsource:
     category: process_creation
     product: windows
@@ -15,7 +27,7 @@ detection:
     condition: selection
 falsepositives:
     - Domain administration and diagnostics.
-level: medium
+level: low
 tags:
     - attack.discovery
     - attack.t1018

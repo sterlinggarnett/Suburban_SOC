@@ -1,7 +1,19 @@
 title: Suspicious System Owner/User Discovery
 id: 55555555-5555-5555-5555-555555555555
-status: stable
-description: Detects the execution of whoami.exe with the /all flag, commonly used by attackers for reconnaissance.
+status: experimental
+description: >
+    Detects the execution of whoami.exe with the /all flag, commonly used by
+    attackers for reconnaissance.
+    #217: demoted medium -> low and this file's own status set to experimental
+    so deploy_detections.sh does not ALSO deploy this as a noisy per-event
+    query rule (matches the auth_win_bruteforce_failed_logons.yml pattern,
+    issue #192) - this file stays the logic-of-record (single-event
+    definition, sigma_eval.py fixture coverage) but the deployed enforcement
+    is the paired Elastic threshold companion
+    (rules/elastic/threshold/disc-win-user-discovery-repeat.ndjson), which
+    alerts on this exact command repeated on the same host within a short
+    window - a real deliberate single execution by an attacker is still
+    recorded (raw telemetry, hunting), just not alerted on alone.
 logsource:
     category: process_creation
     product: windows
@@ -12,7 +24,7 @@ detection:
     condition: selection
 falsepositives:
     - Administrator troubleshooting.
-level: medium
+level: low
 tags:
     - attack.discovery
     - attack.t1033

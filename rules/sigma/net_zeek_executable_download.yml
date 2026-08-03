@@ -5,6 +5,16 @@ description: |
     Detects transfer of executable or script payloads over HTTP as recorded in
     Zeek's files.log (shipped via Filebeat). Pairs with the EXPLOITATION
     emulation (tests/anomaly_simulation/sim_malware_download.sh).
+    #217: demoted medium -> low rather than adding an allowlist filter.
+    files.log does not carry the HTTP hostname/server (that lives in the
+    separately-logged http.log, correlated only via connection uid, which
+    this stack's Sigma logsource/fixture convention for zeek/files doesn't
+    carry either) - so a legitimate-CDN/update-server allowlist isn't
+    achievable at this logsource without fabricating an unverified field.
+    Network-layer executable-download detection alone genuinely can't
+    distinguish attacker staging from routine software updates without more
+    context; correlate with http.log (by uid) or endpoint telemetry before
+    escalating a hit from this rule.
 references:
     - https://attack.mitre.org/techniques/T1105/
     - https://docs.zeek.org/en/master/logs/files.html
@@ -33,4 +43,4 @@ detection:
 falsepositives:
     - Legitimate software distribution, installers, and update downloads
     - Internal patch-management or deployment traffic
-level: medium
+level: low

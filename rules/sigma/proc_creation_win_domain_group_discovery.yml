@@ -1,7 +1,19 @@
 title: Domain Group Discovery via Net.exe
 id: a1c1f008-0008-4a08-9008-000000000008
-status: stable
-description: Detects net.exe enumerating domain groups (e.g. Domain Admins) — account discovery during recon.
+status: experimental
+description: >
+    Detects net.exe enumerating domain groups (e.g. Domain Admins) — account
+    discovery during recon.
+    #217: already level: low; status set to experimental so
+    deploy_detections.sh does not ALSO deploy this as a noisy per-event query
+    rule (matches the auth_win_bruteforce_failed_logons.yml pattern, issue
+    #192) - this file stays the logic-of-record (single-event definition,
+    sigma_eval.py fixture coverage) but the deployed enforcement is the
+    paired Elastic threshold companion
+    (rules/elastic/threshold/disc-win-domain-group-discovery-repeat.ndjson),
+    which alerts on repeated group enumeration on the same host within a
+    short window - a single deliberate attacker execution is still recorded
+    (raw telemetry, hunting), just not alerted on alone.
 logsource:
     category: process_creation
     product: windows

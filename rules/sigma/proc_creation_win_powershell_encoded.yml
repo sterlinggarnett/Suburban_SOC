@@ -1,7 +1,21 @@
 title: Suspicious PowerShell Encoded Command Execution
 id: 11111111-1111-1111-1111-111111111111
 status: stable
-description: Detects the use of encoded commands in PowerShell, a common technique for obfuscation.
+description: >
+    Detects the use of encoded commands in PowerShell, a common technique for
+    obfuscation.
+    #217 (2nd pass, security-auditor review): the first fix added a trailing
+    space to bare ' -enc' to stop it matching '-Encoding' (a totally
+    unrelated Out-File-style cmdlet parameter that happens to share the
+    prefix) as a substring - but that traded a real true-positive surface for
+    it: PowerShell resolves -EncodedCommand from any unambiguous prefix, and
+    real attacker command lines commonly use the short forms (-e, -en, -enc,
+    -enco, -encod, -encode, -encoded, ...), not just the exact 4-letter '-enc'
+    the previous fix required a trailing space after. Restored the
+    abbreviation range as selection entries (each still requiring a
+    boundary), and excluded the '-Encoding' collision with a dedicated
+    filter instead of trying to solve both problems with one boundary
+    choice.
 logsource:
     category: process_creation
     product: windows
@@ -11,10 +25,16 @@ detection:
             - '\powershell.exe'
             - '\pwsh.exe'
         CommandLine|contains:
-            - ' -enc'
+            - ' -e '
+            - ' -en '
+            - ' -enc '
+            - ' -enco'
+            - ' -encod'
             - ' -EncodedCommand'
             - ' -ec '
-    condition: selection
+    filter_encoding_cmdlet_param:
+        CommandLine|contains: ' -encoding '
+    condition: selection and not filter_encoding_cmdlet_param
 falsepositives:
     - Legitimate administrative scripts that use encoding.
 level: medium

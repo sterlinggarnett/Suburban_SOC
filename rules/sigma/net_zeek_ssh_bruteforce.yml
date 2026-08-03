@@ -7,6 +7,15 @@ description: |
     CREDENTIAL_ACCESS emulation (tests/anomaly_simulation/sim_brute_ssh.sh).
     Requires '@load policy/protocols/ssh/detect-bruteforcing' in local.zeek
     (loaded by default in most local.zeek setups).
+    Deliberately status: experimental so deploy_detections.sh does not also
+    deploy this as a Detection Engine rule (issue #192 pattern): the same
+    SSH::Password_Guessing/Login_By_Password_Guesser notices already get
+    threat.technique.id=T1110 tagged in-pipeline (configs/logstash.conf) on
+    logstash-security-*, which slo_metrics.py's raw_alert_volume metric (#216)
+    counts directly. Promoting this rule would double-count the same event
+    once as a Zeek notice and again as a Detection Engine alert - keep both
+    mutually exclusive by construction (exclude T1110 from one side) before
+    changing this rule's status.
 references:
     - https://attack.mitre.org/techniques/T1110/
     - https://docs.zeek.org/en/master/logs/notice.html

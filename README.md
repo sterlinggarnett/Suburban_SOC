@@ -48,9 +48,10 @@ This project directly covers the following course modules from CIS 3353 — Comp
 
 ## Project Status
 
-Milestones mirror the [GitHub Milestones](https://github.com/sterlinggarnett/Suburban_SOC/milestones).
+Milestones mirror the [GitHub Milestones](https://github.com/voltron-1/Suburban_SOC/milestones).
 M1–M6 are the completed MVP; M7–M11 follow the phases of the
-[SOC Maturity Roadmap](docs/SOC-maturity-roadmap.md).
+[SOC Maturity Roadmap](docs/SOC-maturity-roadmap.md); M12 is a
+post-remediation integrity + detection-tuning pass filed after M11 shipped.
 
 | Milestone | Title | Status |
 |---|---|---|
@@ -64,7 +65,8 @@ M1–M6 are the completed MVP; M7–M11 follow the phases of the
 | M8 | Detection Plane — NIST CSF Coverage & ATT&CK Depth (Phase 1) | ✅ Complete (5/5) |
 | M9 | Operational Maturity (SOC-CMM Level 3) (Phase 2) | ✅ Complete (5/5) |
 | M10 | SOC 2 Type II Technical Control Readiness (Phase 3) | ✅ Complete — 7/7 (WS3.1–3.7) |
-| M11 | Agent Orchestration & Compliance (Phase 4) | 🚧 In progress |
+| M11 | Agent Orchestration & Compliance (Phase 4) | ✅ Complete (merged 2026-07-20) |
+| M12 | Approval Gate Integrity & Detection Engineering Tuning | 🚧 In progress ([#213](https://github.com/voltron-1/Suburban_SOC/issues/213)) |
 
 > **What "✅ Complete" means here (scope note, audit P1-12/P1-13).** A milestone is
 > marked complete when its tracked issues/workstreams were implemented and merged —
@@ -103,9 +105,24 @@ IP-block dispatched to the broker, tenant-scoped, instead of a direct `isolate.s
 
 ### Recent Enhancements
 
-Individual improvements merged toward the in-progress Phase 0 (M7) and detection
-plane (M8) — these are work items within those milestones, not milestone completions:
+Individual improvements merged across the milestones above — these are work items
+within a milestone, not milestone completions in their own right:
 
+- **Agent orchestration refactor + approval-gate integrity (M11 → M12).** M11
+  restructured the SOC AI agent into an explicit Perceive→Think→Act→Check `Agent`
+  class with ES-backed checkpoints (`scripts/setup/ai_agent/agent.py`), merged
+  2026-07-20. That merge went directly to `main` without a PR, so the
+  security-critical `SOAR auth / exclusion / approval / tenant-scoping` CI gate
+  (which triggers only on `pull_request`) never ran against it — it silently
+  dropped the atomic claim that guarantees `/approve` executes an isolation
+  action at most once, reopening a double-execution race. M12
+  ([#213](https://github.com/voltron-1/Suburban_SOC/issues/213)) restores it via
+  an Elasticsearch atomic create-if-absent claim
+  ([PR #248](https://github.com/voltron-1/Suburban_SOC/pull/248)), fixes the test
+  suite the same merge had silently broken, and tracks the infrastructure gaps
+  ([#245](https://github.com/voltron-1/Suburban_SOC/issues/245),
+  [#246](https://github.com/voltron-1/Suburban_SOC/issues/246)) the review
+  surfaced along the way.
 - **Detection framework enrichment (PR #112).** The detection plane spans
   **37 ATT&CK techniques across 9 tactics** (see
   [`docs/detections/attack-coverage.md`](docs/detections/attack-coverage.md)). The
@@ -354,9 +371,9 @@ This project is licensed under the MIT License. (Make sure you include a `LICENS
 * OpenWrt gateway streaming throughput has not been stress-tested; performance under extreme load is unknown.
 * **Live threat-intel feed is empty until refreshed (audit P2-23).** `configs/intel/intel.dat` ships only two RFC-5737/`.invalid` TEST placeholders; real indicators (and the `T1105` C2 detection path) only populate after `configs/intel/refresh_intel.sh` runs (cron, 6h).
 * **Detection tests validate logic, not live firing (audit P2-21).** `tests/detections/` replays fixtures through a Sigma evaluator and CI converts every rule to Lucene — this proves rule *logic*, not that the compiled query fires against a live index. End-to-end firing is exercised by `tests/anomaly_simulation/` (manual).
-* **A few Sigma rules are coarse (P3, detection-tuning backlog).** e.g. `mshta_remote` matches any `http` substring and `whoami /all` is a standalone medium alert; they lack structured `filter` false-positive exclusions. Tuning is iterative.
+* **A few Sigma rules are coarse (tracked: [#217](https://github.com/voltron-1/Suburban_SOC/issues/217)).** e.g. `proc_creation_win_powershell_encoded` and `system_win_service_installed` lack structured `filter` false-positive exclusions. (`mshta_remote` was previously miscited here as an example — it actually requires `mshta.exe` *and* an `http`/`javascript`/`vbscript` substring, not a bare `http` match; corrected 2026-08-01.) Tuning is iterative.
 * The default ntfy topic (`subsoc-alerts`) is guessable; ntfy topics are unauthenticated, so set a unique `NTFY_TOPIC` in `.env` (P3). Some docs still reference a fixed lab router IP — parameterize per environment.
 
 
-
-
+## Compliance & Standards Mapping
+- Detailed NIST CSF 2.0 and NIST SP 800-53 Rev. 5 control crosswalk matrix: [COMPLIANCE_MATRIX.md](docs/COMPLIANCE_MATRIX.md)

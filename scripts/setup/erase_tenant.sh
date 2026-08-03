@@ -4,7 +4,10 @@
 #
 # Permanently removes ALL data for one tenant slug:
 #   * data streams      logstash-security-<tenant>, soar-actions-<tenant>
-#   * audit index       soc-audit-<tenant>
+#   * plain indices     soc-audit-<tenant>, agent-checkpoints-<tenant> (#245 —
+#                       this holds each alert's raw payload, source IP/MAC,
+#                       for as long as the checkpoint is unresolved; not a
+#                       data stream, so it's deleted directly, not rolled over)
 #   * shared indices    delete_by_query on tenant.id == <tenant>
 #                       (.alerts-security.*, asset-inventory-*, soar-actions-dynamic-*)
 #   * access artifacts  tenant role + user + Kibana space + data view
@@ -50,17 +53,18 @@ USER="tenant_${TENANT//-/_}"
 ACTOR="${SUDO_USER:-${USER_NAME:-$(whoami 2>/dev/null || echo operator)}}"
 STREAMS=("logstash-security-${TENANT}" "soar-actions-${TENANT}")
 AUDIT_IDX="soc-audit-${TENANT}"
+CHECKPOINTS_IDX="agent-checkpoints-${TENANT}"
 SHARED=(".alerts-security.alerts-default" "asset-inventory-*" "soar-actions-dynamic-*")
 
 blue "==> Right-to-erasure target: tenant '${TENANT}'"
 echo "    Data streams : ${STREAMS[*]}"
-echo "    Audit index  : ${AUDIT_IDX}"
+echo "    Plain indices: ${AUDIT_IDX} ${CHECKPOINTS_IDX}"
 echo "    Shared (by tenant.id) : ${SHARED[*]}"
 echo "    Access       : role=${ROLE} user=${USER} space=${TENANT}"
 
 # Pre-count so the operator/runbook sees the scope and the audit record has totals.
 total=0
-for s in "${STREAMS[@]}" "$AUDIT_IDX"; do
+for s in "${STREAMS[@]}" "$AUDIT_IDX" "$CHECKPOINTS_IDX"; do
   c=$(es "${ES_URL}/${s}/_count" 2>/dev/null | grep -oE '"count":[0-9]+' | cut -d: -f2 || true); c=${c:-0}
   echo "    docs in ${s}: ${c}"; total=$((total + c))
 done
@@ -84,12 +88,12 @@ for idx in "$AUDIT_IDX" "soc-audit-unassigned"; do
     | es -X POST "${ES_URL}/${idx}/_bulk" -H 'Content-Type: application/x-ndjson' --data-binary @- >/dev/null || true
 done
 
-blue "==> [1/4] Deleting per-tenant data streams"
+blue "==> [1/5] Deleting per-tenant data streams"
 for s in "${STREAMS[@]}"; do
   echo "    DELETE _data_stream/${s} -> HTTP $(es_code -X DELETE "${ES_URL}/_data_stream/${s}")"
 done
 
-blue "==> [2/4] Purging tenant docs from shared indices (delete_by_query)"
+blue "==> [2/5] Purging tenant docs from shared indices (delete_by_query)"
 for idx in "${SHARED[@]}"; do
   r=$(es -X POST "${ES_URL}/${idx}/_delete_by_query?conflicts=proceed&refresh=true" \
         -H 'Content-Type: application/json' \
@@ -98,10 +102,13 @@ for idx in "${SHARED[@]}"; do
   echo "    ${idx}: deleted ${del:-0}"
 done
 
-blue "==> [3/4] Deleting the tenant audit index"
+blue "==> [3/5] Deleting the tenant audit index"
 echo "    DELETE ${AUDIT_IDX} -> HTTP $(es_code -X DELETE "${ES_URL}/${AUDIT_IDX}")"
 
-blue "==> [4/4] Removing access artifacts (role / user / space / data view)"
+blue "==> [4/5] Deleting the tenant agent-checkpoints index (#245)"
+echo "    DELETE ${CHECKPOINTS_IDX} -> HTTP $(es_code -X DELETE "${ES_URL}/${CHECKPOINTS_IDX}")"
+
+blue "==> [5/5] Removing access artifacts (role / user / space / data view)"
 echo "    user  -> HTTP $(es_code -X DELETE "${ES_URL}/_security/user/${USER}")"
 echo "    role  -> HTTP $(es_code -X DELETE "${ES_URL}/_security/role/${ROLE}")"
 # #177: Kibana now serves TLS on the same stack CA as ES — add ES_TLS[@], not just auth.

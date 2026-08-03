@@ -8,17 +8,21 @@
 # which silently fails shard-level aggregations and produces data-view conflicts.
 #
 # Templates apply to indices created AFTER they are installed — field types
-# cannot be changed in place. logstash-security-*/soar-actions-*/
-# agent-checkpoints-* are data streams (see each template's "data_stream": {}),
-# so the fix-existing-data step is a rollover, not a reindex:
-# reindex-existing.sh predates the data-stream conversion, targets legacy
-# daily indices only, and cannot delete a data stream as its cleanup step
-# assumes. Force the current write index to roll over immediately instead —
-# non-destructive, no data loss, matches the pattern already used in
-# scripts/setup/verify_lifecycle.sh:
+# cannot be changed in place. logstash-security-*/soar-actions-* are data
+# streams (see each template's "data_stream": {}), so the fix-existing-data
+# step for THOSE is a rollover, not a reindex: reindex-existing.sh predates
+# the data-stream conversion, targets legacy daily indices only, and cannot
+# delete a data stream as its cleanup step assumes. Force the current write
+# index to roll over immediately instead — non-destructive, no data loss,
+# matches the pattern already used in scripts/setup/verify_lifecycle.sh:
 #   POST /<data-stream-name>/_rollover
 # History still on the pre-rollover backing indices keeps the old mapping
 # until it ages out under each index's ILM policy.
+# agent-checkpoints-* is NOT a data stream (#245 — dropped intentionally, it
+# only ever holds keyed-by-alert_id upsert/read-by-id documents, which data
+# streams can't serve) — a mapping change there is a plain reindex-existing.sh
+# case, or in practice a non-issue since the index is only ever populated by
+# checkpoints.py's own writes going forward.
 #
 # Usage (from repo root or anywhere):
 #   ES_URL=https://localhost:9200 ES_USER=elastic ES_PASS=... ./apply-templates.sh

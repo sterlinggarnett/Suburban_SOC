@@ -8,10 +8,14 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-# Re-read ES config from environment (or import from config if extracted later)
+# Re-read ES config from environment (or import from config if extracted later).
+# #245: a dedicated credential, not the shared ES_USER/ES_PASS agent.py's other
+# writes (soar-actions/soc-audit/soc-agent-health) and the real Logstash pipeline
+# all use (logstash_internal) - granting agent-checkpoints-* access to that shared
+# identity would hand it to Logstash too, which has no business touching this index.
 ES_HOST   = os.environ.get("ES_HOST", "https://elasticsearch:9200")
-ES_USER   = os.environ.get("ES_USER", "logstash_internal")
-ES_PASS   = os.environ.get("ES_PASS", "")
+ES_USER   = os.environ.get("AGENT_CHECKPOINTS_ES_USER", "agent_checkpoints")
+ES_PASS   = os.environ.get("AGENT_CHECKPOINTS_ES_PASS", "")
 ES_CA     = os.environ.get("ES_CA", "/certs/ca/ca.crt")
 ES_VERIFY = ES_CA if ES_CA else True
 

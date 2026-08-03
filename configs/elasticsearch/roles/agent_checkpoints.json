@@ -1,0 +1,6 @@
+{
+  "indices": [
+    {"names": ["agent-checkpoints-*"],
+     "privileges": ["auto_configure","create_index","index","read"]}
+  ]
+}

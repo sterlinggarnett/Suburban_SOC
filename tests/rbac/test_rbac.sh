@@ -25,8 +25,10 @@ expect() { # $1=label $2=actual $3=expected
 }
 
 admin -o /dev/null -X POST "$ES_URL/logstash-security-rbactest/_doc?refresh=true" -H 'Content-Type: application/json' -d '{"x":1}'
+admin -o /dev/null -X PUT "$ES_URL/agent-checkpoints-rbactest/_doc/rbactest1?refresh=true" -H 'Content-Type: application/json' -d '{"alert_id":"rbactest1","phase":"PENDING_APPROVAL","tenant":{"id":"rbactest"}}'
 mkuser t_analyst soc_analyst
 mkuser t_logstash logstash_writer
+mkuser t_agent_checkpoints agent_checkpoints
 
 echo "== soc_analyst: read-only on SOC data, no admin =="
 expect "analyst reads logstash-*"           "$(as t_analyst "$ES_URL/logstash-security-*/_search?size=0")" 200
@@ -39,9 +41,27 @@ echo "== logstash_writer: write SOC indices only, no alerts read, no security mg
 expect "logstash_writer writes asset-inventory-*" "$(as t_logstash -X POST "$ES_URL/asset-inventory-rbactest/_doc" -H 'Content-Type: application/json' -d '{"y":2}')" 201
 expect "logstash_writer CANNOT read alerts" "$(as t_logstash "$ES_URL/.alerts-security.alerts-default/_search?size=0")" 403
 expect "logstash_writer CANNOT create user" "$(as t_logstash -X PUT "$ES_URL/_security/user/evil" -H 'Content-Type: application/json' -d "{\"password\":\"$PW\",\"roles\":[]}")" 403
+# #245: logstash_internal must NOT be able to reach agent-checkpoints-* - that
+# credential is shared with the real Logstash pipeline, which has no business
+# touching agent checkpoints (and it's the exact gap #245 fixed).
+expect "logstash_writer CANNOT write agent-checkpoints-*" "$(as t_logstash -X PUT "$ES_URL/agent-checkpoints-rbactest/_doc/evil" -H 'Content-Type: application/json' -d '{"x":1}')" 403
+expect "logstash_writer CANNOT read agent-checkpoints-*"  "$(as t_logstash "$ES_URL/agent-checkpoints-rbactest/_search?size=0")" 403
 
-rmuser t_analyst; rmuser t_logstash
+echo "== agent_checkpoints: read/write its own index only, no delete, no other indices =="
+expect "agent_checkpoints reads agent-checkpoints-*"        "$(as t_agent_checkpoints "$ES_URL/agent-checkpoints-rbactest/_doc/rbactest1")" 200
+expect "agent_checkpoints writes agent-checkpoints-*"       "$(as t_agent_checkpoints -X PUT "$ES_URL/agent-checkpoints-rbactest/_doc/rbactest2" -H 'Content-Type: application/json' -d '{"alert_id":"rbactest2","phase":"PERCEIVING","tenant":{"id":"rbactest"}}')" 201
+# The whole point of #245's fix: index (not write) - a holder of this credential
+# must not be able to erase a .claim doc and re-open the at-most-once gate.
+expect "agent_checkpoints CANNOT delete a checkpoint doc"   "$(as t_agent_checkpoints -X DELETE "$ES_URL/agent-checkpoints-rbactest/_doc/rbactest1")" 403
+# A wildcard search against indices the user can't see returns 200/empty, not
+# 403 (ES resolves the pattern to zero visible indices rather than leaking
+# their existence) - assert against the explicit named index instead, which
+# does 403, to actually test the boundary.
+expect "agent_checkpoints CANNOT read logstash-security-*"  "$(as t_agent_checkpoints "$ES_URL/logstash-security-default/_search?size=0")" 403
+
+rmuser t_analyst; rmuser t_logstash; rmuser t_agent_checkpoints
 admin -o /dev/null -X DELETE "$ES_URL/logstash-security-rbactest"
 admin -o /dev/null -X DELETE "$ES_URL/asset-inventory-rbactest"
+admin -o /dev/null -X DELETE "$ES_URL/agent-checkpoints-rbactest"
 echo
 if [[ $fails -eq 0 ]]; then echo "[=] RBAC least-privilege verified."; exit 0; else echo "[=] $fails RBAC check(s) FAILED."; exit 1; fi

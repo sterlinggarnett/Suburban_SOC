@@ -118,6 +118,44 @@ configure_elk_auth() {
     echo ""
 }
 
+# Resolves a host-readable CA cert for TLS-verifying the ELK stack. The stack CA
+# lives inside the Elasticsearch/Logstash containers' certs volume
+# (/certs/ca/ca.crt) - that path never exists on the bare host this script runs
+# on, so every --cacert curl call using it as a default fails with curl exit 77
+# (bad/missing CA file), which gets silenced by &>/dev/null and misreported as
+# "not reachable," even when the stack is healthy. Reuses SOP-003's already-
+# provisioned copy if present, otherwise self-provisions via docker cp (same
+# idiom as SOP-003 above and configs/systemd/slo-metrics.service).
+resolve_es_ca() {
+    if [ -f "${ES_CA:-}" ] && [ -r "$ES_CA" ]; then
+        info "Stack CA: $ES_CA (inherited)"
+        return
+    fi
+    if [ -r /etc/filebeat/certs/ca.crt ]; then
+        ES_CA="/etc/filebeat/certs/ca.crt"
+        export ES_CA
+        info "Stack CA: $ES_CA (SOP-003)"
+        return
+    fi
+    local dest="$HOME/.config/suburban-soc/ca.crt"
+    mkdir -p "$(dirname "$dest")"
+    # Remove any pre-existing file/symlink at dest first so a planted symlink or
+    # stale cert can't survive the copy; verify the result is actually a cert
+    # before trusting it (catches a truncated copy too).
+    rm -f "$dest"
+    if docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt "$dest" &>/dev/null \
+        && openssl x509 -in "$dest" -noout &>/dev/null; then
+        chmod 0644 "$dest"
+        ES_CA="$dest"
+        info "Stack CA: $ES_CA (self-provisioned)"
+    else
+        rm -f "$dest"
+        warn "Could not obtain the stack CA cert (checked /etc/filebeat/certs/ca.crt and 'docker cp elasticsearch:...') - ES/Kibana checks below will fail even if the stack is healthy"
+        ES_CA="/certs/ca/ca.crt"
+    fi
+    export ES_CA
+}
+
 # Automates the creation and distribution of SSH keys to the remote router
 setup_ssh_keys() {
     echo ""
@@ -265,7 +303,7 @@ run_prereq_checks() {
 
     # Test Elasticsearch API connection using the provided credentials
     # Connect-timeout prevents hanging if the service is down
-    ES_CA="${ES_CA:-/certs/ca/ca.crt}"
+    resolve_es_ca
     if curl -s --cacert "$ES_CA" -u "${ES_USER}:${ES_PASS}" --connect-timeout 3 https://localhost:9200/_cluster/health &>/dev/null; then
         pass "Elasticsearch is reachable (port 9200)"
     else
@@ -274,7 +312,6 @@ run_prereq_checks() {
 
     # Test Kibana frontend availability. #189: Kibana is TLS-only now (self-signed
     # stack CA); use the CA to securely verify reachability, mirroring es_common.sh.
-    ES_CA="${ES_CA:-/certs/ca/ca.crt}"
     if curl -s --cacert "$ES_CA" --connect-timeout 3 https://localhost:5601 &>/dev/null; then
         pass "Kibana is reachable (port 5601)"
     else
@@ -514,18 +551,24 @@ run_sop_005() {
 
     echo -e "\n${BOLD}Step 2: ELK Stack${NC}"
     # Wait for the user to manually start ELK if it isn't already responsive
-    ES_CA="${ES_CA:-/certs/ca/ca.crt}"
+    resolve_es_ca
     if curl -s --cacert "$ES_CA" -u "${ES_USER}:${ES_PASS}" --connect-timeout 3 https://localhost:9200/_cluster/health &>/dev/null; then
         pass "Elasticsearch already up"
     else
         warn "Elasticsearch not reachable. Start your ELK stack (docker compose up -d)"
         echo -ne "  Press Enter once ELK is running..."
         read -r
+        # Re-resolve: a cold start (ELK/its containers not up yet at the first
+        # call above) can leave ES_CA latched on the broken fallback from
+        # resolve_es_ca's last branch. Now that the user has confirmed ELK is
+        # actually up, clear it and retry so Steps 3-4 don't inherit a stale
+        # failure.
+        unset ES_CA
+        resolve_es_ca
     fi
 
     echo -e "\n${BOLD}Step 3: Verify Elasticsearch${NC}"
     # Parse the specific 'status' field from the JSON health response
-    ES_CA="${ES_CA:-/certs/ca/ca.crt}"
     ES_STATUS=$(curl -s --cacert "$ES_CA" -u "${ES_USER}:${ES_PASS}" https://localhost:9200/_cluster/health | grep -o '"status":"[^"]*"' | head -1)
     if [ -n "$ES_STATUS" ]; then
         pass "Elasticsearch: $ES_STATUS"
@@ -535,7 +578,6 @@ run_sop_005() {
 
     echo -e "\n${BOLD}Step 4: Verify Kibana${NC}"
     # #189: Kibana is TLS-only now (self-signed stack CA); verify using CA.
-    ES_CA="${ES_CA:-/certs/ca/ca.crt}"
     if curl -s --cacert "$ES_CA" --connect-timeout 5 https://localhost:5601 &>/dev/null; then
         pass "Kibana reachable at https://localhost:5601"
     else

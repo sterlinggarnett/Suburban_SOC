@@ -10,11 +10,11 @@ routed to the hive-mind-broker over a second HMAC-signed webhook (the slim
 agent container has no ssh/sudo). Also serves /weekly-report, wiring in the
 CISO reporting pipeline (weekly_ciso_report.py).
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 from flask import request, jsonify
-from .checkpoints import write_checkpoint, read_checkpoint, is_duplicate, is_awaiting_approval, generate_dedup_key
-from .retry import retry
+from checkpoints import write_checkpoint, read_checkpoint, is_duplicate, is_awaiting_approval, generate_dedup_key, claim_approval
+from retry import retry
 
 import os
 import re
@@ -121,6 +121,9 @@ _QUEUE_LOCK_PATH = APPROVAL_QUEUE + ".lock"
 _queue_lock = threading.Lock()
 # audit #172: any status other than "pending" means the action is no longer
 # awaiting approval — "claimed" marks one mid-execution (see approve_action).
+# "denied" is forward-reserved for a future reject flow — no code path
+# writes it today (there is no /deny endpoint), but it's included here so
+# archival/filtering already treat it as terminal once one exists.
 _RESOLVED_STATUSES = ("approved", "denied", "claimed")
 
 # Hive-Mind broker — the router-block dispatcher (#109). The agent runs in a slim
@@ -614,6 +617,21 @@ def _append_pending_action_locked(action: dict) -> None:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
 
+def _append_pending_action_or_warn(action: dict) -> None:
+    """_append_pending_action(), but a local queue-file I/O failure (disk
+    full, read-only filesystem) never crashes the caller (#214). By the time
+    execute_approved() writes these rows, the safety-critical work — the ES
+    claim, and possibly isolation itself — has already succeeded; a disk
+    hiccup writing the ops-visible audit mirror must not surface as an
+    unhandled 500 on top of that.
+    """
+    try:
+        _append_pending_action(action)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Failed to append approval-queue row "
+                     f"({action.get('status')}) for {action.get('id')}: {e}")
+
+
 def _read_queue():
     """Read every action from the append-only approval queue (oldest first).
 
@@ -849,6 +867,25 @@ def _write_audit_health_marker(action, tenant, error):
         logger.warning("Failed to write audit-write-failure health marker: %s", e)
 
 
+def _checkpoint_or_warn(tenant_id: str, alert_id: str, phase: str, context: Optional[dict] = None) -> None:
+    """write_checkpoint(), but an ES hiccup never breaks the caller (#214).
+
+    Checkpoint durability matters (crash recovery, is_duplicate/
+    is_awaiting_approval read from it), but on the Phase 1 intake and
+    post-action record-keeping paths a missing write is not a reason to drop
+    an alert or fail a request that already completed — the #184
+    dashboard-visible health marker makes the failure visible instead of
+    silent. This leniency is intake/record-keeping only: the /approve
+    execution gate (claim_approval, in execute_approved) fails closed on the
+    same class of error, since duplicate isolation is worse than a delayed one.
+    """
+    try:
+        write_checkpoint(tenant_id, alert_id, phase, context=context)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Failed to write {phase} checkpoint for {alert_id}: {e}")
+        _write_audit_health_marker(f"checkpoint_write_{phase.lower()}", tenant_id, e)
+
+
 # =============================================================================
 
 
@@ -872,52 +909,128 @@ class Agent:
         if not ctx:
             return AgentResult(400, {"status": "error", "message": "Invalid input"})
             
-        if is_duplicate(ctx.tenant_id, ctx.alert_id):
+        # An ES hiccup here must not drop the alert either — same intake
+        # leniency as the checkpoint write below. Failing open (treat as
+        # "not a duplicate") is safe: a duplicate *draft* is harmless, and
+        # duplicate *execution* is independently blocked by claim_approval().
+        try:
+            duplicate = is_duplicate(ctx.tenant_id, ctx.alert_id)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Duplicate-check failed for {ctx.alert_id}, proceeding: {e}")
+            _write_audit_health_marker("duplicate_check_failed", ctx.tenant_id, e)
+            duplicate = False
+
+        if duplicate:
             logger.info(f"Idempotency: Alert {ctx.alert_id} already processed or in progress.")
             return AgentResult(200, {"status": "ignored", "message": "duplicate or in-progress alert"})
             
-        # Write initial checkpoint
-        write_checkpoint(ctx.tenant_id, ctx.alert_id, "PERCEIVING", context=ctx.raw_payload)
-        
+        # Write initial checkpoint. A failed write must not drop the alert —
+        # intake tolerates an ES hiccup (the #184 health marker makes the
+        # failure visible instead); only /approve execution fails closed.
+        _checkpoint_or_warn(ctx.tenant_id, ctx.alert_id, "PERCEIVING", context=ctx.raw_payload)
+
         # Think
         analysis, case_id = self.think(ctx)
         
         # Act
         phase, detail, ok, action_id = self.act(ctx, analysis, case_id)
         
-        # Check
-        self.check(ctx, phase)  # type: ignore
-        
+        # Check. Persist case_id alongside the raw payload so a later
+        # execute_approved() (which re-reads this checkpoint's context) can
+        # report it — case_id doesn't exist until think() runs, so it can't
+        # have been in the initial PERCEIVING checkpoint's context.
+        self.check(ctx, phase, context={**ctx.raw_payload, "case_id": case_id})  # type: ignore
+
+        # PENDING_APPROVAL is the internal checkpoint phase (is_awaiting_approval
+        # gates on this exact string) — the external status word for that phase
+        # is "drafted" (evidence-verified: evidence/README.md, section_a_evidence.sh).
         resp = {
-            "status": phase.lower(),
+            "status": "drafted" if phase == "PENDING_APPROVAL" else phase.lower(),
             "detail": detail,
             "ai_analysis": analysis,
             "case_id": case_id,
         }
         if action_id:
             resp["action_id"] = action_id
-            
+
         return AgentResult(200, resp)
 
     def execute_approved(self, tenant_id: str, alert_id: str, approver: str = "human") -> AgentResult:
-        if not is_awaiting_approval(tenant_id, alert_id):
-            logger.warning(f"Rejecting execute for {alert_id}: not in PENDING_APPROVAL state.")
-            return AgentResult(409, {"status": "error", "message": "Alert not pending approval"})
-            
-        ckpt = read_checkpoint(tenant_id, alert_id)
+        # is_awaiting_approval / claim_approval / read_checkpoint are all
+        # ES-backed; any of them failing means we can't safely tell "pending"
+        # from "already executed" — fail closed (503) rather than risk a
+        # duplicate isolation (#214). This is deliberately stricter than
+        # run()'s intake path: a delayed approval is fine, a doubled one isn't.
+        try:
+            if not is_awaiting_approval(tenant_id, alert_id):
+                logger.warning(f"Rejecting execute for {alert_id}: not in PENDING_APPROVAL state.")
+                return AgentResult(409, {"status": "error", "message": "Alert not pending approval"})
+
+            if not claim_approval(tenant_id, alert_id, approver):
+                logger.warning(f"Rejecting execute for {alert_id}: already claimed (replay or race).")
+                return AgentResult(409, {"status": "error", "message": "Already claimed or executed"})
+
+            # Audit/ops mirror only — claim_approval() above is the actual
+            # gate, already won by this point. Appended immediately, before
+            # any further validation can short-circuit, so a "claimed" row
+            # that's never followed by a resolution row (process crash, bad
+            # checkpoint context, mid-execution failure) unconditionally
+            # stays visible for a human to investigate
+            # (compact_agent_approval_queue.py never archives it).
+            _append_pending_action_or_warn({"id": alert_id, "ts": time.time(), "status": "claimed",
+                                             "tenant": tenant_id, "approver": approver})
+
+            ckpt = read_checkpoint(tenant_id, alert_id)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Approval store unavailable for {alert_id}: {e}")
+            return AgentResult(503, {"status": "error", "message": "Approval store unavailable, retry"})
+
         if not ckpt or 'context' not in ckpt:
             return AgentResult(500, {"status": "error", "message": "Checkpoint context missing"})
-            
+
         ctx = self.perceive(ckpt['context'])
-        
+        if ctx is None:
+            logger.error(f"Stored context for {alert_id} failed to re-perceive.")
+            return AgentResult(500, {"status": "error", "message": "Checkpoint context invalid"})
+        # perceive() recomputes alert_id from the payload's dedup key, which
+        # can drift from the id this call was actually claimed under (e.g. a
+        # new 5-minute bucket). Pin it back to the claimed id so the
+        # checkpoint and audit trail for this execution stay keyed correctly.
+        # Same reasoning for tenant_id: dispatch must use the tenant the claim
+        # was gated under, not whatever the re-perceived stored context says —
+        # a mismatch is a tamper signal (the checkpoint store isn't currently
+        # writable by anything but this agent, but the gate and the dispatch
+        # target must never be allowed to diverge regardless).
+        if ctx.tenant_id != tenant_id:
+            logger.error(f"Tenant mismatch for {alert_id}: claimed under "
+                         f"'{tenant_id}', stored context says '{ctx.tenant_id}'.")
+            write_audit("approve_tenant_mismatch", "soc-ai-agent", tenant_id,
+                        outcome="rejected", target=alert_id,
+                        detail=f"context_tenant={ctx.tenant_id}")
+            return AgentResult(500, {"status": "error", "message": "Tenant mismatch"})
+        ctx = replace(ctx, alert_id=alert_id)
+
         logger.info(f"Executing approved block for {alert_id} by {approver}")
-        
+
         ok, detail = _execute_isolation(ctx.target_mac, ctx.target_ip, ctx.tenant_id)  # type: ignore
-        
+
+        case_id = ckpt['context'].get('case_id', '')
         phase = "EXECUTED" if ok else "ESCALATED"
-        self.check(ctx, phase)  # type: ignore
-        
-        return AgentResult(200, {"status": phase.lower(), "detail": detail, "alert_id": alert_id})
+        # Preserve context (case_id included) through this transition too —
+        # see check()'s docstring on why omitting it would wipe it.
+        self.check(ctx, phase, context=ckpt['context'])  # type: ignore
+        if case_id:
+            add_case_comment(tenant_id, case_id,
+                              f"Human-approved isolation {'SUCCEEDED' if ok else 'FAILED'} "
+                              f"for `{ctx.target_ip}` / `{ctx.target_mac}` by {approver} — {detail}")
+            if ok:
+                close_case(tenant_id, case_id, "true_positive_contained")
+
+        _append_pending_action_or_warn({"id": alert_id, "ts": time.time(), "status": "approved",
+                                         "tenant": tenant_id, "approver": approver, "detail": detail})
+
+        return AgentResult(200, {"status": phase.lower(), "detail": detail,
+                                  "alert_id": alert_id, "case_id": case_id})
 
     def perceive(self, payload: dict) -> Optional[AlertContext]:
         try:
@@ -962,7 +1075,7 @@ class Agent:
             add_case_comment(ctx.tenant_id, case_id, f"§12.4: alert targets PROTECTED asset `{excluded}` — no action taken.")
             close_case(ctx.tenant_id, case_id, "no_action_protected_asset")
             write_audit("alert_excluded_asset", "soc-ai-agent", ctx.tenant_id, outcome="no_action", target=str(excluded), detail=f"case={case_id}")
-            return "NO_ACTION", str(excluded), True, ""
+            return "NO_ACTION_PROTECTED_ASSET", str(excluded), True, ""
 
         # Autonomous
         if AUTONOMOUS_ISOLATION and ctx.severity == "critical" and ctx.target_mac:
@@ -984,7 +1097,7 @@ class Agent:
             if ok:
                 close_case(ctx.tenant_id, case_id, "true_positive_contained")
             write_audit("autonomous_isolation", "soc-ai-agent", ctx.tenant_id, outcome="executed" if ok else "failed", target=ctx.target_ip, detail=detail)
-            return ("EXECUTED" if ok else "ESCALATED"), detail, ok, ""
+            return ("AUTO_ISOLATED" if ok else "ISOLATION_FAILED"), detail, ok, ""
 
         # Draft
         action = {
@@ -1010,6 +1123,18 @@ class Agent:
         log_soar_action("analyst_review", ctx.target_ip, ctx.target_mac, ai_summary, ctx.severity, tenant=ctx.tenant_id, latency_seconds=time.time() - _t0)
         return "PENDING_APPROVAL", "Response drafted", True, str(action["id"])
 
-    def check(self, ctx: AlertContext, phase: str):
-        write_checkpoint(ctx.tenant_id, ctx.alert_id, phase)
+    def check(self, ctx: AlertContext, phase: str, context: Optional[dict] = None):
+        # The claim doc (execute_approved) or the drafted queue row (run())
+        # is what actually blocks replay/duplication — this checkpoint is
+        # the durable record, not the gate, so a write failure here must not
+        # turn a completed action into a 500 that misleads the caller about
+        # work that already happened.
+        #
+        # write_checkpoint() is a full ES document PUT, not a partial update —
+        # a call that omits context WIPES whatever context a prior checkpoint
+        # for this alert_id had (e.g. run()'s initial PERCEIVING write). Every
+        # caller must pass the context it wants to persist through this phase
+        # transition; execute_approved() needs it to still be there afterward
+        # (case_id, target info) for crash-resume and its own response.
+        _checkpoint_or_warn(ctx.tenant_id, ctx.alert_id, phase, context=context)
 

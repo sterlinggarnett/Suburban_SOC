@@ -27,6 +27,7 @@ import types
 import hmac
 import hashlib
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -41,10 +42,61 @@ _stub.run_reporting_pipeline = lambda *a, **k: {"status": "stub"}  # type: ignor
 sys.modules["weekly_ciso_report"] = _stub
 
 import agent_app  # noqa: E402
+import agent  # noqa: E402
 
 # An IP guaranteed to be on the permanent exclusion list (governance/exclusion_list.txt).
 EXCLUDED_IP = "192.168.1.1"
 GOOD_MAC = "AA:BB:CC:DD:EE:FF"
+
+
+class FakeCheckpointStore:
+    """In-memory stand-in for checkpoints.py's ES-backed functions.
+
+    Phase H (#214) made the agent's request flow genuinely ES-dependent
+    (checkpoint read/write, the atomic approval claim) — these integration
+    tests drive real multi-request state transitions (draft -> approve ->
+    re-approve), so a fixed-return mock isn't enough; they need something
+    that actually behaves like the store. Thread-safe: the concurrency test
+    races two real threads against claim().
+    """
+    def __init__(self):
+        self._docs = {}
+        self._claims = set()
+        self._lock = threading.Lock()
+
+    def write_checkpoint(self, tenant_id, alert_id, phase, context=None):
+        # Mirrors real write_checkpoint()'s ES semantics: PUT _doc/{id} REPLACES
+        # the whole document. A call that omits context wipes any previously
+        # stored context — this fake must reproduce that, not paper over it,
+        # or callers that rely on context surviving would pass here and fail
+        # for real.
+        with self._lock:
+            doc = {"phase": phase}
+            if context is not None:
+                doc["context"] = context
+            self._docs[(tenant_id, alert_id)] = doc
+
+    def read_checkpoint(self, tenant_id, alert_id):
+        with self._lock:
+            doc = self._docs.get((tenant_id, alert_id))
+            return dict(doc) if doc else None
+
+    def is_duplicate(self, tenant_id, alert_id):
+        with self._lock:
+            return (tenant_id, alert_id) in self._docs
+
+    def is_awaiting_approval(self, tenant_id, alert_id):
+        with self._lock:
+            doc = self._docs.get((tenant_id, alert_id))
+            return bool(doc) and doc.get("phase") == "PENDING_APPROVAL"
+
+    def claim_approval(self, tenant_id, alert_id, approver):
+        key = (tenant_id, alert_id)
+        with self._lock:
+            if key in self._claims:
+                return False
+            self._claims.add(key)
+            return True
 
 
 def _sign(body: bytes, ts=None):
@@ -61,32 +113,43 @@ class AlertResponseTests(unittest.TestCase):
         self.client = agent_app.app.test_client()
         # The replay/nonce cache is module-level (audit P1-1); isolate it per test so
         # identical signed requests across tests don't trip replay rejection.
-        agent_app._seen_sigs.clear()
+        agent._seen_sigs.clear()
 
         # Isolate the approval queue to a throwaway file per test.
         self._qfile = tempfile.NamedTemporaryFile(
             mode="w", suffix=".jsonl", delete=False, encoding="utf-8")
         self._qfile.close()
-        self._qpatch = mock.patch.object(agent_app, "APPROVAL_QUEUE", self._qfile.name)
+        self._qpatch = mock.patch.object(agent, "APPROVAL_QUEUE", self._qfile.name)
         self._qpatch.start()
+
+        # Phase H (#214): /alert and /approve are now genuinely ES-checkpoint-
+        # backed. Route them through an in-memory fake so the real
+        # draft -> approve -> re-approve state machine (and the atomic claim)
+        # is exercised, without a live Elasticsearch.
+        self._store = FakeCheckpointStore()
+        mock.patch.object(agent, "write_checkpoint", side_effect=self._store.write_checkpoint).start()
+        mock.patch.object(agent, "read_checkpoint", side_effect=self._store.read_checkpoint).start()
+        mock.patch.object(agent, "is_duplicate", side_effect=self._store.is_duplicate).start()
+        mock.patch.object(agent, "is_awaiting_approval", side_effect=self._store.is_awaiting_approval).start()
+        mock.patch.object(agent, "claim_approval", side_effect=self._store.claim_approval).start()
 
         # Neutralize outbound side-effects. The broker dispatch is mocked to report
         # a successful block, so the autonomous/approve paths see containment succeed
         # without any real HTTP/SSH. Default return: (ok, detail).
         self.mock_dispatch = mock.patch.object(
-            agent_app, "dispatch_block_via_broker",
+            agent, "dispatch_block_via_broker",
             return_value=(True, "IP blocked on 1/1 router(s)")).start()
         for fn in ("analyze_alert_with_ai", "send_soc_alert",
                    "send_discord_alert", "log_soar_action"):
-            mock.patch.object(agent_app, fn, return_value="stub").start()
+            mock.patch.object(agent, fn, return_value="stub").start()
         # WS2.3: stub Kibana Cases — create returns a fake id; comment/close are
         # tracked so tests can assert the case lifecycle without a live Kibana.
         self.mock_create_case = mock.patch.object(
-            agent_app, "create_case", return_value="case-abc123").start()
-        self.mock_case_comment = mock.patch.object(agent_app, "add_case_comment").start()
-        self.mock_close_case = mock.patch.object(agent_app, "close_case").start()
+            agent, "create_case", return_value="case-abc123").start()
+        self.mock_case_comment = mock.patch.object(agent, "add_case_comment").start()
+        self.mock_close_case = mock.patch.object(agent, "close_case").start()
         # WS3.3: audit writes go to ES — stub them out for unit tests.
-        self.mock_audit = mock.patch.object(agent_app, "write_audit").start()
+        self.mock_audit = mock.patch.object(agent, "write_audit").start()
         self.addCleanup(mock.patch.stopall)
         self.addCleanup(lambda: os.unlink(self._qfile.name))
 
@@ -157,7 +220,7 @@ class AlertResponseTests(unittest.TestCase):
 
     def test_stale_timestamp_rejected(self):
         # A correctly-signed request with a timestamp outside the window is refused.
-        old = str(int(time.time()) - (agent_app.HMAC_REPLAY_WINDOW + 60))
+        old = str(int(time.time()) - (agent.HMAC_REPLAY_WINDOW + 60))
         r = self._post({"severity": "critical", "source_mac": GOOD_MAC}, ts=old)
         self.assertEqual(r.status_code, 401)
         self.mock_dispatch.assert_not_called()
@@ -194,7 +257,7 @@ class AlertResponseTests(unittest.TestCase):
 
     # --- §12.3 autonomous path (opt-in) --------------------------------------
     def test_autonomous_flag_dispatches_to_broker(self):
-        with mock.patch.object(agent_app, "AUTONOMOUS_ISOLATION", True):
+        with mock.patch.object(agent, "AUTONOMOUS_ISOLATION", True):
             r = self._post({"severity": "critical", "source_ip": "1.2.3.4",
                             "source_mac": GOOD_MAC})
         self.assertEqual(r.status_code, 200)
@@ -204,7 +267,7 @@ class AlertResponseTests(unittest.TestCase):
         self.assertEqual(self.mock_dispatch.call_args[0][0], "1.2.3.4")
 
     def test_autonomous_flag_still_blocks_invalid_mac(self):
-        with mock.patch.object(agent_app, "AUTONOMOUS_ISOLATION", True):
+        with mock.patch.object(agent, "AUTONOMOUS_ISOLATION", True):
             r = self._post({"severity": "critical", "source_ip": "1.2.3.4",
                             "source_mac": "not-a-mac"})
         self.assertEqual(r.status_code, 200)
@@ -212,7 +275,7 @@ class AlertResponseTests(unittest.TestCase):
 
     # --- §12.4 exclusion list ------------------------------------------------
     def test_excluded_asset_never_acted_on(self):
-        with mock.patch.object(agent_app, "AUTONOMOUS_ISOLATION", True):
+        with mock.patch.object(agent, "AUTONOMOUS_ISOLATION", True):
             r = self._post({"severity": "critical", "source_ip": EXCLUDED_IP,
                             "source_mac": GOOD_MAC})
         self.assertEqual(r.status_code, 200)
@@ -243,10 +306,11 @@ class AlertResponseTests(unittest.TestCase):
                                     path="/approve").status_code, 200)
         self.mock_dispatch.assert_called_once()
         # Second approval of the same id (different approver -> distinct signature, so
-        # it passes replay/auth and reaches the dedup): now resolved -> 404, no
-        # second dispatch.
+        # it passes replay/auth and reaches the dedup): now resolved -> 409 (#214:
+        # the ES checkpoint phase is no longer PENDING_APPROVAL, so
+        # is_awaiting_approval rejects it before claim_approval is even reached).
         second = self._post({"id": action_id, "approver": "a2"}, path="/approve")
-        self.assertEqual(second.status_code, 404)
+        self.assertEqual(second.status_code, 409)
         self.mock_dispatch.assert_called_once()    # still exactly one dispatch
 
     def test_concurrent_approve_of_same_id_dispatches_only_once(self):
@@ -279,12 +343,12 @@ class AlertResponseTests(unittest.TestCase):
             t.join(timeout=5)
 
         self.mock_dispatch.assert_called_once()
-        self.assertEqual(sorted(results.values()), [200, 404])
+        self.assertEqual(sorted(results.values()), [200, 409])
 
     # --- WS0.3 tenant-scoped routing (the broker owns router resolution) ------
     def test_named_tenant_passed_to_broker_on_autonomous(self):
         # The agent forwards the tenant; the broker maps it to that tenant's routers.
-        with mock.patch.object(agent_app, "AUTONOMOUS_ISOLATION", True):
+        with mock.patch.object(agent, "AUTONOMOUS_ISOLATION", True):
             r = self._post({"severity": "critical", "source_ip": "1.2.3.4",
                             "source_mac": GOOD_MAC, "tenant_id": "home-smith"})
         self.assertEqual(r.get_json()["status"], "auto_isolated")
@@ -316,7 +380,7 @@ class AlertResponseTests(unittest.TestCase):
         # When the broker reports no routers for the tenant (it owns inventory),
         # the agent reports isolation_failed — never a silent success.
         self.mock_dispatch.return_value = (False, "no routers for tenant 'neighbor-jones'")
-        with mock.patch.object(agent_app, "AUTONOMOUS_ISOLATION", True):
+        with mock.patch.object(agent, "AUTONOMOUS_ISOLATION", True):
             r = self._post({"severity": "critical", "source_ip": "1.2.3.4",
                             "source_mac": GOOD_MAC, "tenant_id": "neighbor-jones"})
         self.assertEqual(r.get_json()["status"], "isolation_failed")
@@ -327,23 +391,23 @@ class TenantResolverTests(unittest.TestCase):
     """WS0.3 helper unit tests (no Flask client)."""
 
     def test_safe_tenant(self):
-        self.assertEqual(agent_app.safe_tenant("Home-Smith"), "home-smith")
-        self.assertEqual(agent_app.safe_tenant("bad slug!"), "unassigned")
-        self.assertEqual(agent_app.safe_tenant(None), "unassigned")
+        self.assertEqual(agent.safe_tenant("Home-Smith"), "home-smith")
+        self.assertEqual(agent.safe_tenant("bad slug!"), "unassigned")
+        self.assertEqual(agent.safe_tenant(None), "unassigned")
 
     def test_ip_excluded_cidr_and_ipv6(self):
         # audit P2-7: exclusion entries may be CIDR or IPv6, not just exact IPv4.
         entries = {"10.0.0.0/24", "2001:db8::/32", "8.8.8.8"}
-        self.assertTrue(agent_app._ip_excluded("10.0.0.5", entries))    # in /24
-        self.assertFalse(agent_app._ip_excluded("10.0.1.5", entries))   # outside
-        self.assertTrue(agent_app._ip_excluded("2001:db8::1", entries)) # IPv6 in /32
-        self.assertTrue(agent_app._ip_excluded("8.8.8.8", entries))     # exact
-        self.assertFalse(agent_app._ip_excluded("nonsense", entries))
+        self.assertTrue(agent._ip_excluded("10.0.0.5", entries))    # in /24
+        self.assertFalse(agent._ip_excluded("10.0.1.5", entries))   # outside
+        self.assertTrue(agent._ip_excluded("2001:db8::1", entries)) # IPv6 in /32
+        self.assertTrue(agent._ip_excluded("8.8.8.8", entries))     # exact
+        self.assertFalse(agent._ip_excluded("nonsense", entries))
 
     def test_dispatch_fails_closed_without_secret(self):
         # #109: no HIVE_MIND_SECRET => the agent never dispatches (fails closed).
-        with mock.patch.object(agent_app, "HIVE_MIND_SECRET", b""):
-            ok, detail = agent_app.dispatch_block_via_broker("1.2.3.4", "home-smith")
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b""):
+            ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
         self.assertFalse(ok)
         self.assertIn("HIVE_MIND_SECRET", detail)
 
@@ -351,16 +415,16 @@ class TenantResolverTests(unittest.TestCase):
         # WS1.1 regression: LLM_ALLOW_HOSTED was referenced but never defined, so
         # analyze_alert_with_ai raised NameError -> /alert 500 on every intel hit.
         # With hosted egress disabled it must return a string, never raise.
-        with mock.patch.object(agent_app, "LLM_ALLOW_HOSTED", False), \
-             mock.patch.object(agent_app, "LLM_API_URL",
+        with mock.patch.object(agent, "LLM_ALLOW_HOSTED", False), \
+             mock.patch.object(agent, "LLM_API_URL",
                                "https://api.openai.com/v1/chat/completions"):
-            out = agent_app.analyze_alert_with_ai("alert: conn to known-bad IP")
+            out = agent.analyze_alert_with_ai("alert: conn to known-bad IP")
         self.assertIsInstance(out, str)
         self.assertIn("skipped", out.lower())
 
     def test_notify_resolution_prefers_tenant_then_global(self):
         with mock.patch.dict(os.environ, {"NTFY_TOPIC_HOME_SMITH": "tenant-topic"}):
-            self.assertEqual(agent_app.ntfy_topic_for("home-smith"), "tenant-topic")
+            self.assertEqual(agent.ntfy_topic_for("home-smith"), "tenant-topic")
 
 
 if __name__ == "__main__":

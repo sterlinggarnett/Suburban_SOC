@@ -111,15 +111,31 @@ reviewed individually, no unattended multi-phase runs.
   (Winlogbeat/endpoint-Filebeat have no client cert minted — harmless
   today since no live endpoint is deployed yet, but will break onboarding
   until fixed).
-- [ ] **Phase 3 — #220** — extend alert dedup key to a sliding host+technique
-  suppression window.
+- [x] **Phase 3 — #220 — COMPLETE** — bounded sliding 15-min host+technique
+  suppression window (`should_suppress_technique` in checkpoints.py),
+  kept deliberately separate from `generate_dedup_key`'s 5-min tumbling
+  window (#214's load-bearing alert_id, required to stay unaffected).
+  [PR #268](https://github.com/voltron-1/Suburban_SOC/pull/268) merged
+  2026-08-04. Two review rounds on the first version found it was
+  non-functional end to end (strict ES mapping would have rejected every
+  suppression write, silently, forever) and had a real design flaw
+  (unbounded window refresh = permanent suppression during a sustained
+  attack — fixed with a 1h duration cap + severity-escalation bypass).
+  Also caught mid-review: the `technique` passthrough was first wired into
+  `rules/elastic_watcher/soar_quarantine_alert.json`, which turned out to
+  be dead code (superseded by `configs/logstash.conf`'s ingest-time HTTP
+  output per that file's own comment — missed during investigation);
+  rewired into the real live path. Follow-up filed:
+  [#267](https://github.com/voltron-1/Suburban_SOC/issues/267) (the
+  Watcher file has no HMAC auth and may not even install — unrelated
+  pre-existing gaps, found while fixing the above).
 - [ ] **Phase 3 — #221** — add live-fire Sigma detection tests against real
   Elasticsearch data.
 - [ ] **Phase 4 — #222** — expand threat-intel feed coverage, automate
   `refresh_intel.sh` cron install.
 
-Next unstarted item: **Phase 3 — #220** (extend alert dedup key to a sliding
-host+technique suppression window).
+Next unstarted item: **Phase 3 — #221** (add live-fire Sigma detection tests
+against real Elasticsearch data).
 
 ---
 

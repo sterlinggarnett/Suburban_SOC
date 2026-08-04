@@ -1,0 +1,20 @@
+# Fires intel-refresh.service every 6 hours — same cadence the old
+# intel-refresh.cron entry used (0 */6 * * *).
+[Unit]
+Description=Run Suburban-SOC threat-intel feed refresh every 6 hours
+Documentation=https://github.com/voltron-1/Suburban_SOC
+
+[Timer]
+# The actual reboot/outage catch-up comes from OnBootSec below (first run
+# shortly after boot, giving the stack time to come healthy), not from
+# Persistent= — that directive is a no-op for OnBootSec=/OnUnitActiveSec=
+# timers (systemd only honors it for OnCalendar= timers); kept set anyway
+# since it costs nothing and is harmless, but do not rely on it
+# (security-auditor review; same latent inaccuracy pre-existed in
+# slo-metrics.timer's comment, not touched here — out of scope for #222).
+OnBootSec=5min
+OnUnitActiveSec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -157,6 +157,7 @@ services:
       - SOC_AGENT_KIBANA_PASSWORD=${SOC_AGENT_KIBANA_PASSWORD:-}
       - SLO_METRICS_PASSWORD=${SLO_METRICS_PASSWORD:-}
       - AGENT_CHECKPOINTS_PASSWORD=${AGENT_CHECKPOINTS_PASSWORD:-}
+      - INTEL_WRITER_PASSWORD=${INTEL_WRITER_PASSWORD:-}
     volumes:
       - certs:/usr/share/elasticsearch/config/certs
     working_dir: /usr/share/elasticsearch
@@ -204,6 +205,19 @@ services:
           # literal ${...} for bash to expand from AGENT_CHECKPOINTS_PASSWORD
           # in this services own environment block instead, never touching argv.
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/agent_checkpoints -d "{\"password\":\"$${AGENT_CHECKPOINTS_PASSWORD}\",\"roles\":[\"agent_checkpoints\"],\"full_name\":\"SOC AI agent checkpoints (Suburban-SOC)\"}" > /dev/null;
+        fi;
+        if [ x$${INTEL_WRITER_PASSWORD} != x ]; then
+          echo "Provisioning intel_writer role + user (#222 — dedicated identity, refresh_intel.sh no longer runs as the elastic superuser now that it is a persistent scheduled service, not an occasional manual run)";
+          # Least privilege: create_index/index only, no read/delete - the
+          # script never reads threat-intel-indicators/threat-intel-meta back
+          # (Kibana dashboards/Watchers read them via their own access), and
+          # nothing needs to delete an indicator or the freshness heartbeat.
+          # configs/elasticsearch/roles/intel_writer.json is authoritative
+          # (re-applied by apply_roles.sh) - keep this inline copy in sync.
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/intel_writer -d "{\"indices\":[{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"auto_configure\",\"create_index\",\"index\"]}]}" > /dev/null;
+          # $$ (not $), same reasoning as AGENT_CHECKPOINTS_PASSWORD above:
+          # avoids splicing the cleartext password into this container's argv.
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/intel_writer -d "{\"password\":\"$${INTEL_WRITER_PASSWORD}\",\"roles\":[\"intel_writer\"],\"full_name\":\"Threat-intel feed refresh (Suburban-SOC)\"}" > /dev/null;
         fi;
         echo "Provisioning complete.";
       '

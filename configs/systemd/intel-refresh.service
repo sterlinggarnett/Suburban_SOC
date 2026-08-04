@@ -1,0 +1,131 @@
+# Suburban-SOC — refresh the Zeek threat-intel feed (WS1.3 / #222) and index it
+# into threat-intel-indicators + threat-intel-meta (the freshness heartbeat the
+# intel_feed_stale Watcher and the "Threat Intel Feed Health" dashboard read).
+# Triggered by intel-refresh.timer every 6 hours. Replaces the old manual
+# `crontab -l | cat - configs/intel/intel-refresh.cron | crontab -` install
+# step (configs/intel/intel-refresh.cron, removed) — #222's acceptance
+# criterion was that install stop being a manual runbook step.
+#
+# Install: scripts/setup/install_intel_refresh_timer.sh (idempotent, does the
+# cp/daemon-reload/enable --now below and runs the service once to verify).
+# Manual equivalent:
+#   sudo cp configs/systemd/intel-refresh.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now intel-refresh.timer
+# Run once now / check:  sudo systemctl start intel-refresh.service ; journalctl -u intel-refresh -n 30
+[Unit]
+Description=Suburban-SOC threat-intel feed refresh (Feodo Tracker + Emerging Threats)
+Documentation=https://github.com/voltron-1/Suburban_SOC
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as the repo owner so it can read scripts/setup/.env, write
+# configs/intel/intel.dat, and use the user's Docker context for the CA
+# extraction below — same posture as slo-metrics.service.
+User=tjlam
+# "-" prefix: do not fail the unit if .env is missing. refresh_intel.sh
+# already degrades gracefully with no ES creds at all (security-auditor
+# review) — this unit sets ES_USER/ES_PASS explicitly below regardless, so
+# .env is only needed here for INTEL_WRITER_PASSWORD's expansion.
+EnvironmentFile=-/home/tjlam/projects/Suburban-SOC/scripts/setup/.env
+Environment=ES_URL=https://localhost:9200
+# #222 (security-auditor review): dedicated least-privilege identity, NOT
+# the elastic superuser — refresh_intel.sh's own ES_USER default (elastic)
+# was fine for an occasional manual run, but this unit makes it a persistent
+# scheduled service, which is exactly the change apply_roles.sh:8's "no
+# service uses the elastic superuser in normal operation" control is meant
+# to prevent. configs/elasticsearch/roles/intel_writer.json /
+# scripts/setup/docker-compose.yml's provision step grant only
+# create_index/index on threat-intel-indicators + threat-intel-meta - no
+# read, no delete, nothing else.
+Environment=ES_USER=intel_writer
+Environment=ES_PASS=${INTEL_WRITER_PASSWORD}
+Environment=ES_CA=/run/suburban-soc-intel/ca.crt
+# /run/suburban-soc-intel, owned by the service user; auto-removed when the
+# unit stops. The stack CA lives only in a docker volume (no stable host path
+# under Docker Desktop/WSL), so pull it from the ES container each run,
+# matching slo-metrics.service's approach. Idempotent; a failed extract still
+# lets refresh_intel.sh run (it only needs ES_CA for the optional indexing
+# step, gated on ES_PASS being set — a missing/unreadable CA there fails
+# closed via es_common.sh's own check, not silently).
+RuntimeDirectory=suburban-soc-intel
+ExecStartPre=-/usr/bin/docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt /run/suburban-soc-intel/ca.crt
+# Invoked via `bash <path>`, not the script's own execute bit: this repo's
+# core.fileMode=false means no .sh file is git-tracked as executable (fresh
+# clone always yields 644) — caught by `systemd-analyze verify` failing with
+# "not executable" against a from-scratch checkout, a real latent bug the old
+# `./configs/intel/refresh_intel.sh` cron line already had.
+ExecStart=/usr/bin/bash /home/tjlam/projects/Suburban-SOC/configs/intel/refresh_intel.sh
+WorkingDirectory=/home/tjlam/projects/Suburban-SOC
+# refresh_intel.sh exits 2 when a feed fetch failed/was empty (status=stale) —
+# that is a successful run reporting degraded feed health, not a job failure;
+# the intel_feed_stale Watcher is what actually alerts on it. Treat 0 and 2 as
+# success so the timer is not marked failed (same convention as
+# slo-metrics.service's own breach-is-not-failure exit code).
+SuccessExitStatus=0 2
+# Default DefaultTimeoutStartSec (90s on stock systemd) can land mid-write
+# under worst-case latency: 2x `curl --max-time 30` feed fetches + two
+# `--max-time 60` ES calls (es_common.sh) is up to ~180s. A SIGTERM mid-write
+# to intel.dat while Zeek has it open in RERELOAD mode risks a truncated read
+# (security-auditor review) — generous headroom, not tuned to the worst case
+# exactly, since a slow run finishing late is far cheaper than one killed
+# mid-write.
+TimeoutStartSec=300
+# Bounds the two curl fetches, which read an entire third-party HTTP response
+# into a bash variable with no size limit of its own (security-auditor
+# review) — a compromised/misbehaving feed endpoint serving many hundreds of
+# MB would otherwise pressure host memory hard enough to threaten ES,
+# without ever showing up as an "intel job" alert. 256M is comfortably above
+# the largest feed observed live (Emerging Threats compromised-ips.txt, ~25KB).
+MemoryMax=256M
+
+# --- Sandboxing (audit #167 / NIST CM-7) ---------------------------------------
+# Outbound HTTPS to two intel feeds + Elasticsearch, reads .env, writes only to
+# its own repo subdirectory and (if present) the live-capture intel dir — no
+# special Linux capabilities, kernel access, or namespace privileges needed.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/tjlam/projects/Suburban-SOC/configs/intel
+# "-" prefix: do not fail the unit if this path does not exist on this host
+# (refresh_intel.sh itself already handles that gracefully — see its
+# `if [[ -d "$LIVE_DIR" ]]` check).
+ReadWritePaths=-/storage/PCAP/intel
+PrivateTmp=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+# Deliberately NOT RemoveIPC=true (security-auditor review): that directive
+# removes ALL System V/POSIX IPC objects owned by the unit's UID when the
+# unit stops. User=tjlam is the interactive login account (same as
+# slo-metrics.service), and Type=oneshot means this unit stops after every
+# single run - every 6h it would be eligible to tear down IPC objects
+# belonging to other tjlam-owned processes (desktop session, Docker Desktop
+# helpers) that have nothing to do with this service. refresh_intel.sh uses
+# no IPC of any kind, so the directive would protect nothing here anyway.
+UMask=0077
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+# AF_NETLINK is required, not optional: glibc's getaddrinfo() (used by curl
+# for the two feed URLs and by the ES calls) enumerates local addresses over
+# netlink - omitting it breaks DNS resolution outright (security-auditor
+# review, verified against this exact directive set working for
+# slo-metrics.service in production).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+PrivateDevices=true
+ProtectProc=invisible
+ProcSubset=pid
+
+[Install]
+WantedBy=multi-user.target

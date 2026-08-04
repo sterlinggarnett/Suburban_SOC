@@ -1,8 +1,0 @@
-#fields	indicator	indicator_type	meta.source	meta.desc
-162.243.103.246	Intel::ADDR	abuse.ch/Feodo	Botnet C2 IP (auto)
-178.62.3.223	Intel::ADDR	abuse.ch/Feodo	Botnet C2 IP (auto)
-198.51.100.66	Intel::ADDR	suburban-soc/test	TEST C2 indicator (RFC-5737 TEST-NET-2) — WS1.1 simulation
-27.133.154.218	Intel::ADDR	abuse.ch/Feodo	Botnet C2 IP (auto)
-34.204.119.63	Intel::ADDR	abuse.ch/Feodo	Botnet C2 IP (auto)
-50.16.16.211	Intel::ADDR	abuse.ch/Feodo	Botnet C2 IP (auto)
-malware-c2.suburban-soc.invalid	Intel::DOMAIN	suburban-soc/test	TEST malicious domain (.invalid) — WS1.1 simulation

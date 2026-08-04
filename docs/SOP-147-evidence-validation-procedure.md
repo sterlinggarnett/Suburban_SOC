@@ -101,7 +101,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 source .venv/bin/activate
 ./preflight.sh                                     # every prereq must PASS
 # refresh real intel (shipped feed is TEST placeholders) OR use seeded 198.51.100.66
-../../configs/intel/refresh_intel.sh
+# (bash, not direct execution — this repo's core.fileMode=false means no .sh
+# file is git-tracked as executable, so ./refresh_intel.sh fails "Permission
+# denied" on a fresh clone; caught while automating this via systemd, #222)
+bash ../../configs/intel/refresh_intel.sh
 WINDOW_START="$(date -u +%FT%TZ)"
 ./run_all.sh                                       # portscan + ssh brute + EICAR, then verify_detections.py
 ./sim_intel_match.sh                               # live intel → ingest-time alert → agent draft

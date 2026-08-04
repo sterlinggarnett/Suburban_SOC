@@ -1,0 +1,6 @@
+{
+  "indices": [
+    {"names": ["threat-intel-indicators", "threat-intel-meta"],
+     "privileges": ["auto_configure","create_index","index"]}
+  ]
+}

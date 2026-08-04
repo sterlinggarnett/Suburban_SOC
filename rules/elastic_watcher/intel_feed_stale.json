@@ -1,7 +1,7 @@
 {
   "metadata": {
     "_meta": {
-      "description": "WS1.3 stale threat-intel-feed alert. Fires when refresh_intel.sh has not recorded a successful (status=ok) heartbeat in threat-intel-meta within the window — i.e. the cron refresh died or every feed fetch is failing. Refresh cadence is 6h; window is 8h to tolerate one missed run.",
+      "description": "WS1.3 stale threat-intel-feed alert. Fires when refresh_intel.sh has not recorded a successful (status=ok) heartbeat in threat-intel-meta within the window — i.e. the intel-refresh.timer systemd job (#222 — was cron, see configs/systemd/intel-refresh.{service,timer}) died, or at least one of the two live feeds (abuse.ch Feodo Tracker, Emerging Threats compromised-ips) is failing, or an ES write itself failed. Refresh cadence is 6h; window is 8h to tolerate one missed run. Per-feed counts (feeds.feodo.count / feeds.et_compromised.count) are on the heartbeat doc itself if you need to tell which cause it was without checking the journal first.",
       "managed_by": "scripts/setup/deploy_dashboards.sh"
     }
   },
@@ -43,7 +43,7 @@
     "log_stale_feed": {
       "logging": {
         "level": "warn",
-        "text": "STALE THREAT-INTEL FEED: no successful refresh_intel.sh run (status=ok) in threat-intel-meta within the last 8h. Detections are running on a stale indicator set — check the cron job / feed source (abuse.ch)."
+        "text": "STALE THREAT-INTEL FEED: no successful refresh_intel.sh run (status=ok) in threat-intel-meta within the last 8h. Detections are running on a stale indicator set — check `systemctl status intel-refresh.timer` / `journalctl -u intel-refresh -n 50` first (the journal names which of the two feeds, abuse.ch Feodo Tracker or Emerging Threats compromised-ips, or which ES write, actually failed)."
       }
     }
   }

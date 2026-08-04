@@ -70,9 +70,14 @@ reviewed individually, no unattended multi-phase runs.
   verify `CommandLine → process.args` semantics against live data before
   patching the `-enc` rule (the fix direction is ambiguous and the two
   candidate fixes are opposite).
-- [ ] **Phase 2 — #218** — exclude the mesh router from the Zeek PortScan
-  false-positive (evidence: `evidence/README.md:23`, 60-port legitimate trip
-  vs 20-port threshold) without raising the threshold itself.
+- [!] **Phase 2 — #218 — CLOSED, invalid** — the "60-port legitimate trip"
+  cited from `evidence/README.md:23` was a mis-transcription: that event is
+  the deliberately-run A.1 port-scan simulation
+  (`docs/SOP-147-evidence-validation-runbook.md:127-133`), not organic
+  router chatter. Implementing the exclusion as scoped would have suppressed
+  the repo's only verified real-telemetry T1046 detection — caught by a
+  security-auditor pass during implementation. Branch deleted, no code
+  change to `scan-detection.zeek`.
 - [ ] **Phase 3 — #219** — verify/enforce Logstash Beats-input mTLS
   client-cert requirement (`ssl_client_authentication` may not actually be
   `required`).

@@ -229,13 +229,21 @@ problem for a coverage hole. Instead demote the existing single-event rules to `
 (kept for hunting and correlation) and add threshold companions at `medium`/`high`. Net
 alert-noise reduction with no loss of visibility.
 
-**Zeek PortScan threshold** — `scripts/setup/configs/zeek/scan-detection.zeek:28,31,36`
-currently `port_scan_threshold = 20` / `5 min`. `evidence/README.md:23` records the real mesh
-router `10.18.81.1` legitimately tripping it with 60 distinct ports — 3x the threshold, so this
-fires on normal mesh behavior. Fix by excluding the router's mesh role, not by raising the
-threshold: raising it past 60 to accommodate one known-benign host would blind the sensor to
-every genuine 20-60 port scan on the segment. Scope the exclusion to that host's mesh interface
-so scans *from* it are still detected on other paths.
+**Zeek PortScan threshold — CORRECTED, was a mis-transcription (#218 closed invalid).**
+The line below originally claimed `evidence/README.md:23`'s 60-port event from the mesh router
+`10.18.81.1` was "normal mesh behavior" tripping a false positive. It is not: that entry
+documents the deliberately-run A.1 port-scan simulation
+(`docs/SOP-147-evidence-validation-runbook.md:127-133`, a scripted 60-port sweep run over SSH
+from the router specifically to validate this detector), not organic chatter. A
+security-auditor pass during #218's implementation traced this and found implementing the
+exclusion below would have suppressed the repo's only verified real-telemetry T1046 detection.
+No code change was made; `scan-detection.zeek` remains as it was. If genuine non-simulation
+router-to-mesh chatter is later observed tripping this detector *outside* the recorded evidence
+window (2026-06-20T22:50–22:54Z), that needs its own evidence and a new issue — and per the
+#218 code review, should be scoped by destination fan-out (many peers, few ports each), not by
+source identity, since an identity-based exclusion at this capture vantage point is close to a
+blanket exemption for the router (it only ever originates traffic into the mesh subnet from
+here).
 
 ---
 

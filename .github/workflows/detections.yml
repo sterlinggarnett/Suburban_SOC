@@ -11,6 +11,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   detections:
     runs-on: ubuntu-latest
@@ -78,3 +81,46 @@ jobs:
           assert not bad, "malformed hunts: " + "; ".join(bad)
           print(f"OK: {len(hunts)} hunts well-formed.")
           PY
+
+  # #221: separate job, not a step in `detections` above — that job is a
+  # required, no-path-filter merge gate (see the comment at the top of this
+  # file) and must never fail because of Elasticsearch container-pull/OOM/
+  # health-check flakiness rather than an actual detection-logic regression.
+  # This job can go red on infra without blocking any PR until it is
+  # deliberately added to branch protection's required checks.
+  live-fire:
+    runs-on: ubuntu-latest
+    # Ephemeral, unauthenticated single-node ES for test_live_fire.py — NOT
+    # the production stack (that runs TLS + xpack security; this container
+    # exists only for the lifetime of this job and is discarded after). GH
+    # Actions waits for the service's health check before running any step,
+    # so no manual polling loop is needed here.
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:9.3.2
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -sf http://localhost:9200/_cluster/health"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install the Sigma toolchain
+        run: pip install --quiet sigma-cli pysigma-backend-elasticsearch pytest "requests==2.33.0" pyyaml
+
+      - name: Live-fire detection tests against a real Elasticsearch (issue #221)
+        # GitHub Actions sets CI=true by default on every runner — test_live_fire.py's
+        # _sigma_binary() relies on that to skip its local-dev-only .venv-detections
+        # fallback path here, using only the pip-installed sigma-cli on PATH.
+        run: python -m pytest tests/detections/test_live_fire.py -v

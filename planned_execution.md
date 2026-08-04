@@ -148,11 +148,54 @@ reviewed individually, no unattended multi-phase runs.
   setup-failure bug, and a PATH-hijack guard that failed even against the
   real `sigma` binary (verified and fixed empirically, not just by
   inspection).
-- [ ] **Phase 4 — #222** — expand threat-intel feed coverage, automate
-  `refresh_intel.sh` cron install.
+- [x] **Phase 4 — #222 — COMPLETE** — added a second keyless feed (Emerging
+  Threats compromised-ips.txt, alongside abuse.ch Feodo Tracker) and
+  replaced the manual cron-install step with a systemd timer
+  (`intel-refresh.{service,timer}`, matching the existing `slo-metrics`
+  pattern) + an idempotent installer script.
+  [PR #272](https://github.com/voltron-1/Suburban_SOC/pull/272) merged
+  2026-08-04. Largest review cycle of the six M12 issues: a code-reviewer
+  pass empirically reproduced a real bug (untracking the fully-regenerated
+  `intel.dat` from git — needed so the new 6h timer stops leaving a
+  permanent uncommitted diff — could hang Zeek's packet processing
+  indefinitely on a fresh host, since `config.zeek` suspends processing
+  until that exact file's `Input::end_of_data` fires, which never happens
+  if the file does not exist at all); a security-auditor pass then found 1
+  HIGH (the new persistent service would have held the `elastic` superuser
+  password, violating this repo's own documented "no service uses elastic
+  in normal operation" control — fixed with a dedicated `intel_writer`
+  least-privilege role, matching the `slo_metrics`/`agent_checkpoints`
+  pattern) and 8 MEDIUMs (unverified ES writes, non-atomic file writes, no
+  bogon-address filter, unbounded feed-response size, a destructive
+  `RemoveIPC=true` on the shared login account, missing timeout, and a
+  stale-Watcher-alert-text/per-feed-visibility gap). One more bug found
+  empirically while live-verifying the HIGH fix (not in either review):
+  `/storage/PCAP/intel` was `root:root` on this exact host, so the
+  live-capture sync had been silently failing the whole time — fixed with
+  a self-healing `chown` in `zeek-host-capture.service`. Every fix
+  empirically re-verified against the real running stack (not mocks) —
+  created the `intel_writer` role/user live, ran the full script against
+  it, reproduced and confirmed-fixed the Zeek hang via a real `zeek/zeek`
+  container. Follow-ups filed for what was deliberately deferred:
+  [#270](https://github.com/voltron-1/Suburban_SOC/issues/270)
+  (`configs/intel/` mixes data with code Zeek executes as root; CA
+  fingerprint pinning) and
+  [#271](https://github.com/voltron-1/Suburban_SOC/issues/271) (ES
+  indicator index never retracts a removed indicator).
 
-Next unstarted item: **Phase 4 — #222** (expand threat-intel feed coverage,
-automate `refresh_intel.sh` cron install).
+M12's own issue sequence (#214-#222) is now fully complete. The milestone
+itself has 2 open issues left — [#246](https://github.com/voltron-1/Suburban_SOC/issues/246)
+(priority:critical — `/approve` and `/alert` share Logstash's HMAC secret,
+so anything that can sign an `/alert` webhook can also forge an `/approve`
+call) and [#247](https://github.com/voltron-1/Suburban_SOC/issues/247) (a
+claim is never released on execution failure, permanently stranding the
+alert) — both pre-existing architectural follow-ups filed during #214's
+review (2026-08-02), not part of the #214-#222 sequence but tagged to this
+milestone; #213 (the umbrella user story) stays open until both close too.
+
+Next unstarted item: **#246** (split `/approve`'s HMAC secret from
+`/alert`'s — priority:critical, the higher-severity of the two remaining
+M12 issues).
 
 ---
 

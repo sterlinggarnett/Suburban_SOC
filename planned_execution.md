@@ -129,13 +129,30 @@ reviewed individually, no unattended multi-phase runs.
   [#267](https://github.com/voltron-1/Suburban_SOC/issues/267) (the
   Watcher file has no HMAC auth and may not even install — unrelated
   pre-existing gaps, found while fixing the above).
-- [ ] **Phase 3 — #221** — add live-fire Sigma detection tests against real
-  Elasticsearch data.
+- [x] **Phase 3 — #221 — COMPLETE** — `tests/detections/test_live_fire.py`
+  runs the real `sigma convert` CLI, translates fixtures through the real
+  pipeline mapping table, indexes them into a throwaway index carrying the
+  real production index template, and fires the compiled query against a
+  real Elasticsearch — one rule per category (process_creation, network,
+  threshold) per the issue's acceptance criteria.
+  [PR #269](https://github.com/voltron-1/Suburban_SOC/pull/269) merged
+  2026-08-04. New, separate `live-fire` CI job (ephemeral, unauthenticated
+  ES service container) — deliberately not folded into the required
+  `detections` job, so ES infra flakiness can never block an unrelated PR.
+  Two review rounds found the original network exemplar
+  (`net_zeek_port_scan.yml`) exercised zero field-mapping translation — the
+  one thing this module exists to catch — swapped for
+  `net_zeek_executable_download.yml`, the exact rule #217's MEDIUM-4
+  finding was about. Also fixed: a skip-vs-error bug for auth-protected ES,
+  a missing time-range filter on the threshold test, an index-leak-on-
+  setup-failure bug, and a PATH-hijack guard that failed even against the
+  real `sigma` binary (verified and fixed empirically, not just by
+  inspection).
 - [ ] **Phase 4 — #222** — expand threat-intel feed coverage, automate
   `refresh_intel.sh` cron install.
 
-Next unstarted item: **Phase 3 — #221** (add live-fire Sigma detection tests
-against real Elasticsearch data).
+Next unstarted item: **Phase 4 — #222** (expand threat-intel feed coverage,
+automate `refresh_intel.sh` cron install).
 
 ---
 

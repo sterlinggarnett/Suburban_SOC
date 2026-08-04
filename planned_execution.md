@@ -58,18 +58,34 @@ reviewed individually, no unattended multi-phase runs.
   diff. **Fixed 2026-08-02 via [PR #255](https://github.com/voltron-1/Suburban_SOC/pull/255)**
   (pinned to 0.15.15) — see LAST SESSION below for how this and #248/#253's
   merges depended on each other.
-- [ ] **Phase 1 — #215** — resolve the rest of the uncommitted working tree:
-  relocate SOP-022/SOP-147 operational content (dropped by an uncommitted
-  playbook-template refactor) into companion runbooks, repair 4 dangling
-  references, land the `inventory.py` path fix and README compliance-link
-  addition.
-- [ ] **Phase 3 (metric) — #216** — add a raw alert-volume SLO metric.
-  **Sequenced before #217** — Phase 2 tuning has no before/after signal
-  without it.
-- [ ] **Phase 2 — #217** (blocked-by #216) — Sigma false-positive tuning;
-  verify `CommandLine → process.args` semantics against live data before
-  patching the `-enc` rule (the fix direction is ambiguous and the two
-  candidate fixes are opposite).
+- [x] **Phase 1 — #215 — COMPLETE** — relocated SOP-022/SOP-147 operational
+  content (dropped by an earlier uncommitted playbook-template refactor)
+  into two new companion runbooks, repaired 4 dangling references, landed
+  the `inventory.py` fallback fix + `test_inventory.py` + README
+  compliance-link addition. [PR #262](https://github.com/voltron-1/Suburban_SOC/pull/262)
+  merged 2026-08-03. security-auditor caught a silently-reworded (not
+  verbatim-relocated) passage and 2 dropped links during review — fixed
+  before merge.
+- [x] **Phase 3 (metric) — #216 — COMPLETE** — added `raw_alert_volume` SLO
+  metric (Zeek notices + Sigma/Elastic rule hits, no target — pure
+  visibility). [PR #260](https://github.com/voltron-1/Suburban_SOC/pull/260)
+  merged 2026-08-03.
+- [x] **Phase 2 — #217 — COMPLETE** — Sigma false-positive/false-negative
+  tuning across 6 rules (`posh_ps_obfuscated_scriptblock`,
+  `proc_creation_win_powershell_encoded`, `system_win_service_installed`,
+  `net_zeek_executable_download`, `proc_creation_win_certutil_decode`, +3
+  discovery rules demoted to threshold companions).
+  [PR #264](https://github.com/voltron-1/Suburban_SOC/pull/264) merged
+  2026-08-03. Two independent security-auditor rounds — the second
+  specifically re-verifying the first round's fixes — each found real
+  gaps (missed pipeline-form `iwr | iex` cradle, unanchored `irm `
+  substring FP, `-Encoding:` colon-syntax bypass, `/enc` switch-prefix
+  bypass, `ImagePath` case-sensitivity); all fixed and re-verified via 10
+  combinatorial `sigma_eval.py` cases before merge. Follow-up filed:
+  [#263](https://github.com/voltron-1/Suburban_SOC/issues/263)
+  (`ignore_above:8191` lets both PowerShell rules be bypassed by payload
+  length — pipeline-wide, pre-existing, needs a live-cluster reindex plan,
+  out of scope for a rule-tuning issue).
 - [!] **Phase 2 — #218 — CLOSED, invalid** — the "60-port legitimate trip"
   cited from `evidence/README.md:23` was a mis-transcription: that event is
   the deliberately-run A.1 port-scan simulation
@@ -77,10 +93,24 @@ reviewed individually, no unattended multi-phase runs.
   router chatter. Implementing the exclusion as scoped would have suppressed
   the repo's only verified real-telemetry T1046 detection — caught by a
   security-auditor pass during implementation. Branch deleted, no code
-  change to `scan-detection.zeek`.
-- [ ] **Phase 3 — #219** — verify/enforce Logstash Beats-input mTLS
-  client-cert requirement (`ssl_client_authentication` may not actually be
-  `required`).
+  change to `scan-detection.zeek`. Docs corrected in commit `e6e309d`.
+- [x] **Phase 3 — #219 — COMPLETE** — enforced `ssl_client_authentication
+  => "required"` on the Logstash Beats input (:5044); `configs/network/filebeat.yml`
+  had asserted this for a while but nothing server-side actually enforced
+  it. [PR #266](https://github.com/voltron-1/Suburban_SOC/pull/266) merged
+  2026-08-04. Live-verified against the running stack, not just config
+  inspection: recreated the `logstash` container, confirmed a client-cert
+  connection succeeds and a certless one gets rejected
+  (`SSLHandshakeException: certificate_required`, confirmed via Logstash's
+  own log — the TLS client's own handshake summary turned out not to be a
+  reliable signal here under TLS 1.3). Also fixed 2 pre-existing bugs found
+  while live-verifying: `verify_encryption.sh`'s Beats check only proved
+  TLS worked, not that client auth was enforced, and its default
+  network/volume names were stale against the compose project's actual
+  name. Follow-up filed: [#265](https://github.com/voltron-1/Suburban_SOC/issues/265)
+  (Winlogbeat/endpoint-Filebeat have no client cert minted — harmless
+  today since no live endpoint is deployed yet, but will break onboarding
+  until fixed).
 - [ ] **Phase 3 — #220** — extend alert dedup key to a sliding host+technique
   suppression window.
 - [ ] **Phase 3 — #221** — add live-fire Sigma detection tests against real
@@ -88,10 +118,8 @@ reviewed individually, no unattended multi-phase runs.
 - [ ] **Phase 4 — #222** — expand threat-intel feed coverage, automate
   `refresh_intel.sh` cron install.
 
-Next unstarted item: **Phase 1 — #215** (resolve the uncommitted working
-tree — SOP-022/SOP-147 relocation, dangling references, `inventory.py` path
-fix — currently parked in a local stash, not yet executed as its own gated
-phase).
+Next unstarted item: **Phase 3 — #220** (extend alert dedup key to a sliding
+host+technique suppression window).
 
 ---
 
@@ -558,6 +586,64 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-04
+
+- Executed M12 Phases 1-3 (#215, #216, #217, #218, #219) unattended per
+  standing user authorization, pausing before #220 as instructed to present
+  a consolidated review. Each issue got its own branch/PR, `security-auditor`
+  + `code-reviewer` in parallel per standing rules, and independent
+  verification of every subagent finding before acting on it (never took a
+  "looks fixed" claim at face value).
+- **#218 turned out to be invalid.** The issue's own evidence citation
+  (`evidence/README.md:23`) was traced back to its source during
+  implementation and found to describe the deliberately-run A.1 port-scan
+  simulation, not organic router chatter as both the plan doc and the issue
+  had transcribed it. Implementing the fix as scoped would have suppressed
+  the repo's only verified real-telemetry T1046 detection. Closed with the
+  evidence citation, branch deleted, `plans/20260801-...` and this file
+  corrected in the same commit (`e6e309d`, pushed directly to `main` — docs
+  bookkeeping, not code, consistent with this file's own auto-update rule).
+- **#219's own verification method turned out to be wrong**, caught by
+  re-testing rather than trusting the first live result: a certless TLS
+  handshake against the Beats input completes cleanly from the *client's*
+  side under TLS 1.3 regardless of whether the server ends up rejecting it a
+  moment later, so the original `openssl s_client`-output-based check (and
+  the pre-existing `verify_encryption.sh` check it was modeled on) wasn't
+  proof of anything. Fixed by checking Logstash's own log output instead —
+  reproduced the exact `SSLHandshakeException: certificate_required`
+  rejection live, both before and after comparison.
+- Mid-session infra incident: a `docker restart` (approved, to pick up the
+  #219 config change) hit a stale WSL bind-mount and killed the running
+  Logstash container; the documented recovery
+  ([[ingest-pipeline-restart-recovery]]) itself turned out to be blocked by
+  an unrelated `docker compose` v5.1.0 incompatibility with this file's
+  `$$` password-escaping (likely a Compose version bump during an earlier
+  Docker Desktop restart this same session). `docker desktop restart` then
+  failed too (missing backend binary). User restarted Docker Desktop
+  manually; `docker compose` remained broken afterward (confirmed a Compose
+  file issue, not a Desktop backend issue) — recovered by reconstructing the
+  `logstash` container directly via `docker run` (secrets via a short-lived
+  0600 env file, not the command line) after explicit user approval.
+  **`docker compose` itself is still broken for this repo** — worth a
+  dedicated fix before the next person needs to bring the stack up the
+  normal way.
+- All four PRs — [#260](https://github.com/voltron-1/Suburban_SOC/pull/260)
+  (#216), [#262](https://github.com/voltron-1/Suburban_SOC/pull/262)
+  (#215), [#264](https://github.com/voltron-1/Suburban_SOC/pull/264)
+  (#217), [#266](https://github.com/voltron-1/Suburban_SOC/pull/266)
+  (#219) — went fully green on CI and were merged on explicit user
+  go-ahead ("Merge all four PRs", same standing review-bypass confirmation
+  pattern). User merged them directly (the `gh pr merge` action was blocked
+  by the local auto-mode permission classifier); confirmed via `gh pr list`
+  rather than assumed, since the user's own phrasing suggested they thought
+  only one had merged.
+- Two follow-up issues filed for gaps found but out of scope for the issue
+  being worked: [#263](https://github.com/voltron-1/Suburban_SOC/issues/263)
+  (`ignore_above:8191` payload-length bypass on both PowerShell rules,
+  pipeline-wide/pre-existing), [#265](https://github.com/voltron-1/Suburban_SOC/issues/265)
+  (Winlogbeat/endpoint-Filebeat need client certs before real endpoint
+  onboarding, harmless today since none is deployed).
 
 ## LAST SESSION — 2026-08-03
 

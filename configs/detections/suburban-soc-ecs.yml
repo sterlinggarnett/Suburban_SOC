@@ -71,11 +71,19 @@ transformations:
 
   # Windows System channel (issue #192 rules 2b/3a/3b) — no logstash.conf handling
   # at all for this channel; fields stay under winlog.event_data.
+  # ImagePath added #217 (security-auditor review): system_win_service_installed.yml's
+  # filter_common_dirs referenced bare `ImagePath`, which had no mapping here — the
+  # compiled query filtered a field that doesn't exist in the real data, making that
+  # rule's whole FP-reduction fix a silent no-op in production despite passing the
+  # fixture-based test (sigma_eval.py evaluates raw Sigma field names directly, not
+  # through this ECS pipeline — exactly the divergence its own module docstring warns
+  # about). Confirmed no other rule in the corpus references System-channel ImagePath.
   - id: field-mapping-windows-system
     type: field_name_mapping
     mapping:
       EventID: winlog.event_id
       param1: winlog.event_data.param1
+      ImagePath: winlog.event_data.ImagePath
     rule_conditions:
       - type: logsource
         product: windows
@@ -102,3 +110,22 @@ transformations:
       - type: logsource
         product: windows
         service: powershell
+
+  # Zeek files.log (#217, security-auditor review): configs/logstash.conf
+  # unconditionally renames Zeek's native string `source` field to
+  # `zeek.source` for EVERY zeek_logs-sourced event, to avoid a string-vs-
+  # object mapping collision with ECS `source.*` (see that file's Category 0
+  # comment). net_zeek_executable_download.yml's `source: 'HTTP'` selection
+  # referenced the pre-rename field name, so the compiled query filtered on a
+  # field that never exists in the real data - the rule could not fire at
+  # all, independent of and worse than the severity-tuning this issue was
+  # actually about. mime_type is untouched by the pipeline and needs no
+  # mapping here.
+  - id: field-mapping-zeek-files
+    type: field_name_mapping
+    mapping:
+      source: zeek.source
+    rule_conditions:
+      - type: logsource
+        product: zeek
+        service: files

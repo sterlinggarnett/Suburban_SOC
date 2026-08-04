@@ -51,7 +51,8 @@
 
         "winlog": { "properties": {
           "event_data": { "properties": {
-            "ScriptBlockText": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 }
+            "ScriptBlockText": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 },
+            "ImagePath": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 }
           }}
         }},
 

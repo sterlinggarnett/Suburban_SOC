@@ -6,16 +6,61 @@ description: >
     the Service Control Manager for every new service registration regardless
     of the installing tool. Complements proc_creation_win_service_creation_sc.yml
     (which only catches sc.exe) with native, tool-agnostic coverage.
+    #217: excludes services whose binary lives under the standard OS/program
+    directories - most routine installer/patch/agent noise installs there.
+    This is a volume heuristic ONLY, not a hardening guarantee, and the
+    bypass is not a hypothetical edge case: registering a service already
+    requires the same admin/SYSTEM privilege needed to write to these exact
+    directories, so any attacker capable of triggering this event at all can
+    trivially place their binary in one of the excluded paths for free and
+    generate zero alert from this rule. It exists purely to cut noise from
+    the routine installers named in falsepositives below; it must not be
+    relied on as evasion-resistant, and does not replace behavioral
+    detections (or a first-seen-binary/file-integrity approach) on the
+    resulting process. Includes the quoted-path form for each directory
+    (`"C:\...`) since a Windows service ImagePath containing a space - which
+    "Program Files" always has - is commonly registered with surrounding
+    quotes; matching only the bare form would silently fail to suppress a
+    large fraction of real installers and undercut this rule's own purpose.
+    3rd-pass security-auditor findings: (1) ImagePath had no explicit index
+    mapping with a lowercase normalizer, so this startswith filter - despite
+    now resolving to a real field (see the field-mapping-windows-system
+    comment in suburban-soc-ecs.yml) - was still case-sensitive against
+    literal-cased Sigma text while real 7045 events routinely log lowercase
+    (C:\Windows\system32\...); fixed by adding an explicit
+    winlog.event_data.ImagePath mapping with lowercase_normalizer in
+    logstash-security-template.json, matching every other command/path field
+    in that template. (2) Real ImagePath values also commonly use
+    %SystemRoot%, the bare \SystemRoot\ NT path, or the \??\ NT device
+    prefix instead of C:\Windows - added those forms below.
 logsource:
     product: windows
     service: system
 detection:
     selection:
         EventID: 7045
-    condition: selection
+    filter_common_dirs:
+        ImagePath|startswith:
+            - 'C:\Windows\System32\'
+            - '"C:\Windows\System32\'
+            - 'C:\Windows\SysWOW64\'
+            - '"C:\Windows\SysWOW64\'
+            - 'C:\Program Files\'
+            - '"C:\Program Files\'
+            - 'C:\Program Files (x86)\'
+            - '"C:\Program Files (x86)\'
+            - '%SystemRoot%\'
+            - '"%SystemRoot%\'
+            - '\SystemRoot\'
+            - '\??\C:\Windows\'
+            - '"\??\C:\Windows\'
+            - '\??\C:\Program Files\'
+            - '"\??\C:\Program Files\'
+    condition: selection and not filter_common_dirs
 falsepositives:
     - Legitimate software installers, patch management, and endpoint agents
-      routinely install services.
+      that install services outside the standard OS/program directories
+      (e.g. a vendor tool that installs to a user profile or a custom drive).
 level: medium
 tags:
     - attack.persistence

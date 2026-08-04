@@ -2,42 +2,114 @@ title: Obfuscated or Encoded PowerShell Script Block
 id: f715bab5-0604-4629-8016-66f02096e164
 status: stable
 description: >
-    Detects obfuscation/encoded-execution indicators in the reconstructed
-    script content of a PowerShell/Operational 4104 (script-block logging)
-    event. Improves on proc_creation_win_powershell_encoded.yml, which only
-    catches the literal -enc/-EncodedCommand command-line flag: 4104 logs
-    PowerShell's own deobfuscated script-block text, so this also catches
-    base64/bitwise obfuscation and IEX-based download cradles that never pass
-    an encoding flag on the command line at all. Requires the "Turn on
-    PowerShell Script Block Logging" Group Policy (Administrative Templates >
-    Windows Components > Windows PowerShell). Known scope limit: this is
-    substring matching (sigma_eval.py / this stack's Lucene target support
-    contains/endswith/startswith/all, not regex), so trivial string
-    reconstruction (e.g. splitting 'Net.WebClient' across concatenated
-    string literals) evades it — treat as a tripwire to complement, not
-    replace, behavioral detections.
+    Detects at least two of three co-occurring indicator categories (execute /
+    download / encode) in the reconstructed script content of a
+    PowerShell/Operational 4104 (script-block logging) event. Improves on
+    proc_creation_win_powershell_encoded.yml, which only catches the literal
+    -enc/-EncodedCommand command-line flag: 4104 logs PowerShell's own
+    deobfuscated script-block text, so this also catches base64/bitwise
+    obfuscation and IEX-based download cradles that never pass an encoding
+    flag on the command line at all. Requires the "Turn on PowerShell Script
+    Block Logging" Group Policy (Administrative Templates > Windows
+    Components > Windows PowerShell).
+    #217: previously any ONE of ten indicators fired at level: high, which the
+    rule's own falsepositives field already conceded was noisy ("scripts that
+    use Base64 encoding OR dynamic invocation for non-malicious reasons") -
+    e.g. bare '[Convert]::' matches ANY .NET type conversion
+    ([Convert]::ToInt32 etc.), not just FromBase64String, and a script that
+    merely instantiates Net.WebClient for a benign HTTP call matched too.
+    Regrouped into three categories - execute (IEX/Invoke-Expression),
+    download (DownloadString/Net.WebClient), encode (base64/bitwise/-enc) -
+    and now requires at least two together. This still catches both classic
+    attacker shapes without regressing coverage: IEX+WebClient download
+    cradles with no encoding at all (execute+download - the existing true-
+    positive fixture), and IEX+FromBase64String with no network call
+    (execute+encode). A single bare indicator with nothing corroborating it
+    (just '[Convert]::', just a WebClient reference, just Invoke-Expression
+    alone) no longer fires. Also dropped the bare '[Convert]::' entry
+    entirely - FromBase64String already covers the specific decode operation
+    without the class-reference false-positive surface.
+    Known scope limit: this is substring matching (sigma_eval.py / this
+    stack's Lucene target support contains/endswith/startswith/all, not
+    regex), so trivial string reconstruction (e.g. splitting 'Net.WebClient'
+    across concatenated string literals) evades it — treat as a tripwire to
+    complement, not replace, behavioral detections.
+    security-auditor review of the first version of this redesign (2nd pass)
+    found it missed the single most canonical form of the cradle -
+    'IEX (New-Object Net.WebClient).DownloadString(...)' with a space before
+    the paren - since selection_execute only had 'IEX(' with no space
+    variant. Broadened both categories: execute now also matches 'IEX ' (a
+    trailing space, which covers both the spaced-paren form and the
+    variable-argument form 'IEX $x'), '[scriptblock]::Create', and
+    '.Invoke()'; download now also matches DownloadFile/DownloadData,
+    Invoke-WebRequest/Invoke-RestMethod (and their iwr/irm aliases, since
+    4104 logs the literal text as typed), and Start-BitsTransfer.
+    Follow-up security-auditor pass (3rd) on that same broadening found two
+    more gaps: (1) the pipeline-terminal cradle form 'iwr <url> | iex' (IEX
+    as the LAST token, no trailing space/paren) matched neither original
+    'IEX(' nor 'IEX ' - added '|IEX'/'| IEX'/';IEX'/'; IEX' boundary forms;
+    (2) the unanchored 'iwr '/'irm ' entries matched inside ordinary English
+    words like "confirm " (Write-Host "Confirm the deletion") or
+    "$Confirm" - re-anchored both aliases to require a preceding
+    space/pipe/semicolon/equals so they only match where they're actually
+    invoked as a command, not as a word-internal substring. That anchoring
+    initially missed the case where iwr/irm is the very FIRST token in the
+    whole script block (nothing precedes it, so no preceding-boundary
+    character exists to match against) - caught by re-running the exact
+    combinatorial cases the earlier passes used before considering this
+    done, not by the auditor. Added selection_download_alias_start below
+    (startswith, OR'd into the condition) to cover that position.
 logsource:
     product: windows
     service: powershell
 detection:
     selection:
         EventID: 4104
-    selection_obfuscation:
+    selection_execute:
+        ScriptBlockText|contains:
+            - 'IEX('
+            - 'IEX '
+            - '|IEX'
+            - '| IEX'
+            - ';IEX'
+            - '; IEX'
+            - 'Invoke-Expression'
+            - '[scriptblock]::Create'
+            - '.Invoke()'
+    selection_download:
+        ScriptBlockText|contains:
+            - 'DownloadString'
+            - 'DownloadFile'
+            - 'DownloadData'
+            - 'Net.WebClient'
+            - 'Invoke-WebRequest'
+            - 'Invoke-RestMethod'
+            - 'Start-BitsTransfer'
+            - ' iwr '
+            - '|iwr '
+            - ';iwr '
+            - '=iwr '
+            - ' irm '
+            - '|irm '
+            - ';irm '
+            - '=irm '
+    selection_download_alias_start:
+        ScriptBlockText|startswith:
+            - 'iwr '
+            - 'irm '
+    selection_encode:
         ScriptBlockText|contains:
             - '-bxor'
             - '-bnot'
             - 'FromBase64String'
-            - '[Convert]::'
-            - 'IEX('
-            - 'Invoke-Expression'
             - '-EncodedCommand'
             - '-enc '
-            - 'DownloadString'
-            - 'Net.WebClient'
-    condition: selection and selection_obfuscation
+    condition: selection and ((selection_execute and (selection_download or selection_download_alias_start)) or (selection_execute and selection_encode) or ((selection_download or selection_download_alias_start) and selection_encode))
 falsepositives:
-    - Legitimate administrative or deployment scripts that use Base64 encoding
-      or dynamic invocation for non-malicious reasons.
+    - Legitimate administrative or deployment scripts that combine two of
+      these categories for non-malicious reasons (rare, but e.g. a bootstrap
+      script that both downloads AND dynamically invokes trusted, signed
+      local content).
 level: high
 tags:
     - attack.execution

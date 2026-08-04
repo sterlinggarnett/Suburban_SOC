@@ -52,4 +52,4 @@ jobs:
           # The real inventory.yaml is gitignored; the committed template carries the
           # `home-smith` tenant + router the tests assert against.
           cp inventory.example.yaml inventory.yaml
-          python -m pytest test_app.py -q
+          python -m pytest test_app.py test_inventory.py -q

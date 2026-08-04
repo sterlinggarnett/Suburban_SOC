@@ -13,7 +13,7 @@ CISO reporting pipeline (weekly_ciso_report.py).
 from dataclasses import dataclass, replace
 from typing import Optional
 from flask import request, jsonify
-from checkpoints import write_checkpoint, read_checkpoint, is_duplicate, is_awaiting_approval, generate_dedup_key, claim_approval
+from checkpoints import write_checkpoint, read_checkpoint, is_duplicate, is_awaiting_approval, generate_dedup_key, claim_approval, should_suppress_technique
 from retry import retry
 
 import os
@@ -155,6 +155,12 @@ _seen_sigs_lock = threading.Lock()
 
 # Validation patterns for anything that reaches the broker / response path.
 _MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$")
+# #220: MITRE ATT&CK technique ID (e.g. "T1046", "T1110.001"). Rejecting
+# anything else at the perceive() boundary — same posture as _MAC_RE/IP
+# validation just below — closes off an unvalidated-free-text field before
+# it reaches a log line (logger.info in run()'s suppression branch) or gets
+# hashed into an ES doc id.
+_TECHNIQUE_RE = re.compile(r"^T\d{4}(\.\d{3})?$")
 
 
 def _signed_payload(timestamp: str, raw_body: bytes) -> bytes:
@@ -897,6 +903,7 @@ class AlertContext:
     severity: str
     raw_payload: dict
     alert_id: str
+    technique: str = ""
 
 @dataclass
 class AgentResult:
@@ -923,7 +930,32 @@ class Agent:
         if duplicate:
             logger.info(f"Idempotency: Alert {ctx.alert_id} already processed or in progress.")
             return AgentResult(200, {"status": "ignored", "message": "duplicate or in-progress alert"})
-            
+
+        # #220: sliding 15-min host+technique suppression window, independent
+        # of the 5-min tenant/IP/MAC/severity dedup above. Same intake
+        # leniency as the duplicate check: an ES hiccup here must not drop a
+        # real alert, so fail open (treat as "not suppressed") on error.
+        # MAC preferred and normalized (matches the exclusion-list's own
+        # host-identity convention — persists across IP/DHCP changes); an
+        # unresolved IP ("unknown", perceive()'s own sentinel for "no valid
+        # IP") must never become a suppression key, or every host on the
+        # tenant that lacks a valid MAC/IP collapses into one shared bucket
+        # (security-auditor finding).
+        host = _normalize_mac(ctx.target_mac) or (ctx.target_ip if ctx.target_ip != "unknown" else "")
+        try:
+            suppressed = should_suppress_technique(ctx.tenant_id, host, ctx.technique, ctx.severity)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Technique-suppression check failed for {ctx.alert_id}, proceeding: {e}")
+            _write_audit_health_marker("technique_suppression_check_failed", ctx.tenant_id, e)
+            suppressed = False
+
+        if suppressed:
+            logger.info(f"Suppressing repeated '{ctx.technique}' against {host} within the suppression window.")
+            write_audit("alert_suppressed", "soc-ai-agent", ctx.tenant_id, outcome="suppressed",
+                        target=host, detail=f"technique={ctx.technique} severity={ctx.severity}")
+            return AgentResult(200, {"status": "ignored",
+                                      "message": f"suppressed: repeated {ctx.technique} against {host} within window"})
+
         # Write initial checkpoint. A failed write must not drop the alert —
         # intake tolerates an ES hiccup (the #184 health marker makes the
         # failure visible instead); only /approve execution fails closed.
@@ -1041,9 +1073,20 @@ class Agent:
             
             target_ip = target_ip if is_valid_ip(target_ip) else "unknown"
             target_mac = target_mac if is_valid_mac(target_mac) else ""
-            
+            # #220: MITRE ATT&CK technique ID, e.g. "T1046" - optional, populated
+            # by configs/logstash.conf's zeek.intel HMAC-signed webhook body (the
+            # actual live /alert trigger - NOT rules/elastic_watcher/
+            # soar_quarantine_alert.json, which that Ruby block's own comment
+            # documents as superseded). Absent from most callers today, including
+            # the manual SOP-022 Step 7 curl and any endpoint-side trigger, which
+            # is fine - should_suppress_technique() treats a missing technique as
+            # "never suppress", not an error. Rejected (treated as absent) if it
+            # doesn't look like a technique ID, rather than trusted as free text.
+            technique = str(payload.get("technique", "")).strip()
+            technique = technique if _TECHNIQUE_RE.match(technique) else ""
+
             alert_id = generate_dedup_key(tenant_id, target_ip, target_mac, severity)
-            return AlertContext(tenant_id, target_ip, target_mac, severity, payload, alert_id)
+            return AlertContext(tenant_id, target_ip, target_mac, severity, payload, alert_id, technique)
         except Exception as e:
             logger.error(f"Perceive failed: {e}")
             return None

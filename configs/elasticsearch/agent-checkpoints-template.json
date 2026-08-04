@@ -2,7 +2,7 @@
   "index_patterns": ["agent-checkpoints-*"],
   "priority": 200,
   "_meta": {
-    "description": "Suburban-SOC Agent Orchestration Checkpoints. Stores phase transitions (PENDING_APPROVAL, EXECUTED) to enable idempotency and crash recovery for the agent loop, keyed by alert_id (checkpoints.py does upsert-by-id GET/PUT plus an op_type=create claim doc). #245: NOT a data stream - a data stream only accepts op_type=create writes and has no GET-by-id, which write_checkpoint()/read_checkpoint() both need. No ILM policy: ILM ages out whole indices, not individual documents, and agent-checkpoints-<tenant> is a single always-growing index keyed by alert_id, not time-series data - retention needs a per-document TTL mechanism (tracked separately, see the compact_agent_approval_queue.py precedent for the same class of problem).",
+    "description": "Suburban-SOC Agent Orchestration Checkpoints. Stores phase transitions (PENDING_APPROVAL, EXECUTED) to enable idempotency and crash recovery for the agent loop, keyed by alert_id (checkpoints.py does upsert-by-id GET/PUT plus an op_type=create claim doc). #245: NOT a data stream - a data stream only accepts op_type=create writes and has no GET-by-id, which write_checkpoint()/read_checkpoint() both need. No ILM policy: ILM ages out whole indices, not individual documents, and agent-checkpoints-<tenant> is a single always-growing index keyed by alert_id, not time-series data - retention needs a per-document TTL mechanism (tracked separately, see the compact_agent_approval_queue.py precedent for the same class of problem). #220: host/technique/last_seen/first_seen/suppressed_count/max_severity back should_suppress_technique()'s bounded sliding suppression-window docs (doc id \"suppress:<sha256(host|technique)>\", same index, different id shape from a bare alert_id or an \"<alert_id>.claim\" claim doc) - dynamic is strict, so these were added deliberately rather than left to fail every write with strict_dynamic_mapping_exception (caught in code review before this ever hit a real cluster: the fail-open error handling in agent.py would have silently absorbed that exception forever, making the whole feature a permanent no-op). last_seen/first_seen are `double`, not `date`: the code writes raw time.time() (float epoch-seconds), which is neither valid ISO date text nor valid epoch_millis (an integer).",
     "managed_by": "configs/elasticsearch/apply-templates.sh"
   },
   "template": {
@@ -19,7 +19,13 @@
         "alert_id":   { "type": "keyword" },
         "phase":      { "type": "keyword" },
         "approver":   { "type": "keyword" },
-        "context":    { "type": "object", "enabled": false }
+        "context":    { "type": "object", "enabled": false },
+        "host":             { "type": "keyword" },
+        "technique":        { "type": "keyword" },
+        "last_seen":        { "type": "double" },
+        "first_seen":       { "type": "double" },
+        "suppressed_count": { "type": "long" },
+        "max_severity":     { "type": "keyword" }
       }
     }
   }

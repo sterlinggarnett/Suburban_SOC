@@ -59,9 +59,74 @@ def test_phase_1_draft_human_gate(mock_case, mock_ai, mock_append, mock_excluded
 def test_idempotency_duplicate_rejected(mock_dup, agent, payload):
     mock_dup.return_value = True
     result = agent.run(payload)
-    
+
     assert result.status_code == 200
     assert result.response['status'] == 'ignored'
+
+@patch('agent.write_audit')
+@patch('agent.should_suppress_technique')
+@patch('agent.is_duplicate')
+def test_repeated_technique_within_window_suppressed(mock_dup, mock_suppress, mock_audit, agent, payload):
+    """#220: a host+technique repeat within the sliding window is suppressed
+    before any checkpoint/case is created — independent of the 5-min
+    tenant/IP/MAC/severity dedup above, which this test proves isn't what's
+    gating here (mock_dup is False)."""
+    mock_dup.return_value = False
+    mock_suppress.return_value = True
+    payload = {**payload, "technique": "T1046"}
+
+    result = agent.run(payload)
+
+    assert result.status_code == 200
+    assert result.response['status'] == 'ignored'
+    # target_mac is present, normalized (matches the exclusion-list's own
+    # host-identity convention), and preferred as the suppression "host" key
+    # (persists across IP/DHCP changes). severity is passed through too, so
+    # a later escalation can break a window opened at a lower severity.
+    mock_suppress.assert_called_once_with("test-tenant", "001122334455", "T1046", "critical")
+    mock_audit.assert_called_once()
+    assert mock_audit.call_args[0][0] == "alert_suppressed"
+
+@patch('agent.write_audit')
+@patch('agent.should_suppress_technique')
+@patch('agent.is_duplicate')
+def test_malformed_technique_treated_as_absent(mock_dup, mock_suppress, mock_audit, agent, payload):
+    """#220: technique is validated at the perceive() boundary the same way
+    MAC/IP already are — free text that doesn't look like a MITRE technique
+    ID (e.g. attacker-controlled log-injection payload, or just a typo) is
+    dropped rather than trusted, which also means it can never trigger
+    suppression on an unintended shared bucket. mock_suppress=True here just
+    to short-circuit before the unmocked think/act pipeline — the thing
+    under test is the sanitized argument it's called with, not the result."""
+    mock_dup.return_value = False
+    mock_suppress.return_value = True
+    payload = {**payload, "technique": "not-a-technique\nfake log line"}
+
+    agent.run(payload)
+
+    mock_suppress.assert_called_once_with("test-tenant", "001122334455", "", "critical")
+
+@patch('agent.write_checkpoint')
+@patch('agent.is_excluded')
+@patch('agent._append_pending_action')
+@patch('agent.analyze_alert_with_ai')
+@patch('agent.create_case')
+@patch('agent.should_suppress_technique')
+@patch('agent.is_duplicate')
+def test_technique_suppression_check_failure_fails_open(mock_dup, mock_suppress, mock_case, mock_ai,
+                                                          mock_append, mock_excluded, mock_write, agent, payload):
+    """An ES error on the suppression check must not drop a real alert —
+    same intake leniency as the duplicate check's own failure handling."""
+    mock_dup.return_value = False
+    mock_suppress.side_effect = ConnectionError("ES unreachable")
+    mock_excluded.return_value = False
+    mock_ai.return_value = "AI summary"
+    mock_case.return_value = "case-123"
+
+    result = agent.run(payload)
+
+    assert result.status_code == 200
+    assert result.response['status'] == 'drafted'
 
 @patch('agent._append_pending_action')
 @patch('agent.is_awaiting_approval')

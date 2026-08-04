@@ -1,5 +1,5 @@
 {
-  "_comment": "soar_quarantine_alert v2 — fires on three distinct detection paths",
+  "_comment": "soar_quarantine_alert v2 — fires on three distinct detection paths. #220: superseded as the LIVE /alert trigger by configs/logstash.conf's ingest-time HMAC-signed http output (see that file's own 'Watcher-free replacement' comment) - this file's technique passthrough (added #220) is kept correct/current but has no live effect until this watch is actually the thing dispatching to /alert. Known pre-existing gaps if it ever is revived: no HMAC signing (agent's /alert requires one - see #245/soar-trigger-not-wired-network precedent) and possibly-invalid installation (Watcher's watch parser may reject the _comment/_comment_paths top-level keys below; unconfirmed, needs a live PUT against a real cluster to verify).",
   "_comment_paths": [
     "1. zeek.conn: threat.indicator.domain hit (IOC C2 comms)",
     "2. zeek.notice: Scan::Port_Scan notice fired by Zeek's scan detection policy",
@@ -16,7 +16,7 @@
         "indices": ["logstash-security-*"],
         "body": {
           "size": 1,
-          "_source": ["source.ip", "source.mac", "event.dataset", "note", "threat.indicator.domain"],
+          "_source": ["source.ip", "source.mac", "event.dataset", "note", "threat.indicator.domain", "threat.technique.id"],
           "query": {
             "bool": {
               "filter": [
@@ -80,7 +80,7 @@
   "transform": {
     "script": {
       "lang": "painless",
-      "source": "// Prefer the top document hit (IOC or port-scan path); fall back to the top SSH brute-force IP if hits are zero. def ip = 'unknown'; def mac = ''; def dataset = 'unknown'; if (ctx.payload.hits.total.value > 0) { def src = ctx.payload.hits.hits[0]._source; if (src.containsKey('source')) { if (src.source.containsKey('ip'))  { ip  = src.source.ip; } if (src.source.containsKey('mac')) { mac = src.source.mac; } } if (src.containsKey('event') && src.event.containsKey('dataset')) { dataset = src.event.dataset; } } else { def buckets = ctx.payload.aggregations.ssh_brute_force_candidates.by_source_ip.buckets; if (buckets.size() > 0) { ip = buckets[0].key; dataset = 'zeek.ssh (brute-force)'; } } ctx.payload.soar_ip = ip; ctx.payload.soar_mac = mac; ctx.payload.soar_dataset = dataset; return ctx.payload;"
+      "source": "// Prefer the top document hit (IOC or port-scan path); fall back to the top SSH brute-force IP if hits are zero. #220: also carry the MITRE technique ID through, for the agent's sliding host+technique suppression window - logstash.conf pipeline-tags Scan::Port_Scan as T1046 and the ssh_brute_force_candidates aggregation is definitionally always T1110 (there is no source doc to read a tag from in that branch, so it's set directly); the IOC (zeek.conn threat.indicator.domain) path has no pipeline technique tag today and is left '' - should_suppress_technique() treats an empty technique as never-suppress. def ip = 'unknown'; def mac = ''; def dataset = 'unknown'; def technique = ''; if (ctx.payload.hits.total.value > 0) { def src = ctx.payload.hits.hits[0]._source; if (src.containsKey('source')) { if (src.source.containsKey('ip'))  { ip  = src.source.ip; } if (src.source.containsKey('mac')) { mac = src.source.mac; } } if (src.containsKey('event') && src.event.containsKey('dataset')) { dataset = src.event.dataset; } if (src.containsKey('threat') && src.threat.containsKey('technique') && src.threat.technique.containsKey('id')) { technique = src.threat.technique.id; } } else { def buckets = ctx.payload.aggregations.ssh_brute_force_candidates.by_source_ip.buckets; if (buckets.size() > 0) { ip = buckets[0].key; dataset = 'zeek.ssh (brute-force)'; technique = 'T1110'; } } ctx.payload.soar_ip = ip; ctx.payload.soar_mac = mac; ctx.payload.soar_dataset = dataset; ctx.payload.soar_technique = technique; return ctx.payload;"
     }
   },
   "actions": {
@@ -94,7 +94,7 @@
         "headers": {
           "Content-Type": "application/json"
         },
-        "body": "{\"severity\": \"critical\", \"source_ip\": \"{{ctx.payload.soar_ip}}\", \"source_mac\": \"{{ctx.payload.soar_mac}}\", \"detection_source\": \"{{ctx.payload.soar_dataset}}\", \"raw_log\": {{ctx.payload.hits.hits.0._source}}}"
+        "body": "{\"severity\": \"critical\", \"source_ip\": \"{{ctx.payload.soar_ip}}\", \"source_mac\": \"{{ctx.payload.soar_mac}}\", \"detection_source\": \"{{ctx.payload.soar_dataset}}\", \"technique\": \"{{ctx.payload.soar_technique}}\", \"raw_log\": {{#toJson}}ctx.payload.hits.hits.0._source{{/toJson}}}"
       }
     }
   }

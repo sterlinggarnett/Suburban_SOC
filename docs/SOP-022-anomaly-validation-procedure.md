@@ -136,9 +136,24 @@ curl -X POST http://localhost:5000/alert \
         "severity": "critical",
         "source_ip": "192.168.1.42",
         "source_mac": "AA:BB:CC:DD:EE:FF",
+        "technique": "T1046",
         "raw_log": {"test": "synthetic"}
       }'
 ```
+
+`technique` (a MITRE ATT&CK ID, e.g. `T1046`) is optional — omit it to skip the
+bounded sliding host+technique suppression window entirely (#220). If set and
+this exact host+technique combination fired within the last 15 minutes, the
+agent returns `{"status": "ignored", "message": "suppressed: ...", ...}`
+instead of drafting a new case.
+
+To see this specific path fire (not the older 5-minute tenant/IP/MAC/severity
+dedup, which a byte-identical repeat within 5 minutes hits first and which
+returns a different message, `"duplicate or in-progress alert"`): re-run the
+command above **twice, more than 5 minutes but less than 15 minutes apart**,
+keeping `severity`/`source_ip`/`source_mac`/`technique` identical — a
+severity change on the second call is read as an escalation and
+intentionally bypasses suppression rather than demonstrating it.
 
 Expected:
 - AI Agent log: `Quarantine by MAC address (persists across IP/DHCP changes)`

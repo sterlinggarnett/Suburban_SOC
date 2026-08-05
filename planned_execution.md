@@ -183,19 +183,51 @@ reviewed individually, no unattended multi-phase runs.
   [#271](https://github.com/voltron-1/Suburban_SOC/issues/271) (ES
   indicator index never retracts a removed indicator).
 
-M12's own issue sequence (#214-#222) is now fully complete. The milestone
-itself has 2 open issues left — [#246](https://github.com/voltron-1/Suburban_SOC/issues/246)
-(priority:critical — `/approve` and `/alert` share Logstash's HMAC secret,
-so anything that can sign an `/alert` webhook can also forge an `/approve`
-call) and [#247](https://github.com/voltron-1/Suburban_SOC/issues/247) (a
-claim is never released on execution failure, permanently stranding the
-alert) — both pre-existing architectural follow-ups filed during #214's
-review (2026-08-02), not part of the #214-#222 sequence but tagged to this
-milestone; #213 (the umbrella user story) stays open until both close too.
+M12's own issue sequence (#214-#222) is complete, and so is one of the two
+architectural follow-ups #214's review filed:
 
-Next unstarted item: **#246** (split `/approve`'s HMAC secret from
-`/alert`'s — priority:critical, the higher-severity of the two remaining
-M12 issues).
+- [x] **#246 — COMPLETE** (priority:critical) — `/approve` (executes
+  isolation) and `/pending` (discloses the drafted-action queue) shared
+  Logstash's `SOC_AGENT_HMAC_SECRET` with `/alert`, so a Logstash compromise
+  (RCE, container escape, a crafted Ruby filter) could both draft AND
+  approve/execute containment end-to-end; the recorded `approver` was also
+  an unauthenticated, self-asserted request-body field. Fixed with a second,
+  independent `SOC_APPROVER_HMAC_SECRET` provisioned to the agent container
+  only (never Logstash), and the recorded `approver` now derives from the
+  operator-configured `SOC_APPROVER_IDENTITY` bound to that credential, not
+  the request body. [PR #274](https://github.com/voltron-1/Suburban_SOC/pull/274)
+  merged 2026-08-05. security-auditor (no CRITICAL/HIGH) + code-reviewer
+  (approved outright) ran in parallel; 3 MEDIUM/LOW findings fixed before
+  merge: no runtime guard stopped an operator from setting both secrets
+  equal, silently reverting the whole fix (added `_resolve_approver_secret()`,
+  fails closed on `/approve`+`/pending` if they match); the SOP-147
+  evidence-collection scripts (`section_a_evidence.sh`, `sim_intel_match.sh`)
+  still signed `/pending` with the old secret, which would have silently
+  reported "0 pending" every run instead of failing loudly — the same
+  false-negative shape as the earlier "SOAR trigger not wired" issue; and a
+  set-but-empty `SOC_APPROVER_IDENTITY` fell through past its intended
+  default. CI also caught a CodeQL false positive post-review (a
+  `secret_name` parameter tripped the clear-text-logging heuristic purely on
+  naming, never held actual secret bytes — renamed to `hmac_env_var`,
+  fixed). Follow-up filed for what's out of scope:
+  [#273](https://github.com/voltron-1/Suburban_SOC/issues/273)
+  (hive-mind-broker runs its own separate `/approve` with the same
+  unauthenticated-approver defect on a different trust boundary —
+  `HIVE_MIND_SECRET`, not `SOC_AGENT_HMAC_SECRET`, so criterion 1 already
+  holds there; criterion 2 does not).
+
+The milestone has 1 open issue left —
+[#247](https://github.com/voltron-1/Suburban_SOC/issues/247) (a claim is
+never released on execution failure, permanently stranding the alert),
+a pre-existing architectural follow-up filed during #214's review
+(2026-08-02), not part of the #214-#222 sequence but tagged to this
+milestone; #213 (the umbrella user story) stays open until it closes too.
+(#273 above is tagged to M12 as well but is a new finding from #246's
+review, not part of #213's original scope — it does not block M12/#213
+completion.)
+
+Next unstarted item: **#247** (release approval claims on execution
+failure — the last open M12 issue).
 
 ---
 
@@ -660,6 +692,15 @@ are implemented in code; checked off with that one caveat noted inline.
   Resolved Architecture Decisions:
   - Alert ID sourcing: uses a Semantic Deduplication Key (hash of tenant+IP+severity+5m_bucket)
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
+
+---
+
+## LAST SESSION — 2026-08-05
+
+- Closed **#246** (priority:critical) — split `/approve`+`/pending`'s HMAC
+  credential from `/alert`'s. [PR #274](https://github.com/voltron-1/Suburban_SOC/pull/274)
+  merged. See NEXT UP for full detail (findings, fixes, follow-up #273).
+  M12 now has exactly one open issue left: #247.
 
 ---
 

@@ -3,7 +3,7 @@
     {"names": [".alerts-security.alerts-*", "soar-actions-*", "logstash-security-*"],
      "privileges": ["read", "view_index_metadata"]},
     {"names": ["agent-checkpoints-*"],
-     "privileges": ["read", "view_index_metadata"]},
+     "privileges": ["read"]},
     {"names": ["soc-slo-metrics"],
      "privileges": ["create_index", "create"]}
   ],

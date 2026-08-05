@@ -61,8 +61,10 @@ TARGETS = {
     "ingest_lag_seconds":  float(os.environ.get("SLO_INGEST_LAG_MAX_S", "300")),
     "parse_error_pct":     float(os.environ.get("SLO_PARSE_ERR_MAX_PCT", "1")),
     "audit_write_failures": float(os.environ.get("SLO_AUDIT_WRITE_FAIL_MAX", "2")),
-    # #247: any claim that outlives SLO_STUCK_CLAIM_MAX_MIN with no EXECUTED
-    # resolution is a stranded alert, not a routine condition — target is 0.
+    # #247: any claim still open past SLO_STUCK_CLAIM_MAX_MIN (the AGE window,
+    # read inside metric_stuck_approval_claims() below — not this one, which is
+    # the COUNT threshold) is a stranded alert, not a routine condition —
+    # target is 0.
     "stuck_approval_claims": float(os.environ.get("SLO_STUCK_CLAIM_MAX", "0")),
 }
 # Comparator per metric: True = lower is better (value <= target).
@@ -241,57 +243,32 @@ def metric_stuck_approval_claims():
     """Count of approval claims stuck with no resolution (#247).
 
     checkpoints.claim_approval() writes a `{alert_id}.claim` marker doc
-    (`phase: "CLAIMED"`) to win the at-most-once execution race; a normal run
-    resolves within seconds either to the main checkpoint's `phase: EXECUTED`
-    (success) or, since #247, back to `phase: PENDING_APPROVAL` with the claim
-    released (execute_approved() caught a confirmed failure and freed it for
-    retry). A claim doc older than SLO_STUCK_CLAIM_MAX_MIN whose paired
-    checkpoint is STILL neither of those (most likely: still PENDING_APPROVAL
-    because a process crash hit between the claim succeeding and either
-    resolution running, or the checkpoint doc is simply gone) represents
-    exactly the "permanently stranded, invisible" gap #247 exists to close —
-    #247's own release-on-failure fix only handles the failures it can
-    observe; this catches what it can't.
-
-    Two-step because ES can't join `{alert_id}.claim` against `{alert_id}` in
-    one query: list claim docs past the window (bounded, `size=200` — this
-    deployment's claim volume is nowhere near that), then look up each one's
-    paired checkpoint individually. Fine for a periodic metric; would not
-    scale to a request-path check, which is why this lives here and not in
-    agent.py's hot path.
+    (`phase: "CLAIMED"`) to win the at-most-once execution race. A normal run
+    resolves it within seconds: agent.execute_approved() transitions that SAME
+    doc to `phase: "RESOLVED"` (confirmed success) or `phase: "RELEASED"`
+    (confirmed failure, freed for retry) — see checkpoints.resolve_claim() /
+    release_claim(). Only a genuinely stuck claim — most likely a process
+    crash between the claim succeeding and either resolution running, or an
+    execution whose outcome was UNKNOWN (agent.IsolationOutcomeUnknown; #247
+    deliberately never auto-releases those, since a retry could double-
+    dispatch) — is left at `phase: "CLAIMED"` past SLO_STUCK_CLAIM_MAX_MIN.
+    No other doc in this index ever uses "CLAIMED", so a plain count is exact
+    and requires no join against the paired checkpoint doc.
     """
-    cutoff_min = float(os.environ.get("SLO_STUCK_CLAIM_MAX_MIN", "30"))
-    body = {"size": 200, "query": {"bool": {"filter": [
+    # A malformed override (e.g. "30m" instead of "30") must degrade to this ONE
+    # metric being unmeasurable, not take down the whole run — main()'s per-metric
+    # loop only catches MetricUnavailable, so float()'s ValueError needs converting
+    # here rather than being allowed to escape uncaught (would silence every other
+    # metric's ntfy alerting too, including ingest-lag's — security-auditor review).
+    try:
+        cutoff_min = float(os.environ.get("SLO_STUCK_CLAIM_MAX_MIN", "30"))
+    except ValueError as e:
+        raise MetricUnavailable(f"invalid SLO_STUCK_CLAIM_MAX_MIN: {e}") from e
+    query = {"bool": {"filter": [
         {"term": {"phase": "CLAIMED"}},
         {"range": {"@timestamp": {"lte": f"now-{cutoff_min:g}m"}}},
-    ]}}}
-    try:
-        r = es("POST", "/agent-checkpoints-*/_search", body)
-        if r.status_code != 200:
-            raise MetricUnavailable(f"agent-checkpoints-* claim search returned HTTP {r.status_code}")
-        hits = r.json().get("hits", {}).get("hits", [])
-
-        stuck = 0
-        for hit in hits:
-            src = hit.get("_source", {})
-            alert_id = src.get("alert_id")
-            tenant = src.get("tenant", {}).get("id")
-            if not alert_id or not tenant:
-                continue  # malformed claim doc — not this metric's problem to fix
-            ckpt = es("GET", f"/agent-checkpoints-{tenant}/_doc/{alert_id}")
-            if ckpt.status_code == 404:
-                stuck += 1  # claimed, but the paired checkpoint is gone entirely
-                continue
-            if ckpt.status_code != 200:
-                raise MetricUnavailable(
-                    f"checkpoint lookup for {alert_id} (tenant {tenant}) returned HTTP {ckpt.status_code}")
-            if ckpt.json().get("_source", {}).get("phase") != "EXECUTED":
-                stuck += 1
-        return stuck
-    except MetricUnavailable:
-        raise
-    except Exception as e:
-        raise MetricUnavailable(f"stuck approval claim check failed: {e}") from e
+    ]}}
+    return _count("agent-checkpoints-*", query)
 
 
 def metric_raw_alert_volume():

@@ -108,8 +108,19 @@ class FakeCheckpointStore:
             return True
 
     def release_claim(self, tenant_id, alert_id):
-        # Mirrors the real DELETE's idempotency: freeing an already-free (or
-        # never-claimed) key is still success, not an error (#247).
+        # The real checkpoints.release_claim() marks the claim doc RELEASED
+        # (never deletes — agent_checkpoints's ES role has no delete
+        # privilege by design, #245/#247) so claim_approval() can re-win it.
+        # Freeing an already-free (or never-claimed) key is still success,
+        # not an error, matching the real idempotent-on-404 behavior.
+        with self._lock:
+            self._claims.discard((tenant_id, alert_id))
+            return True
+
+    def resolve_claim(self, tenant_id, alert_id):
+        # The real checkpoints.resolve_claim() marks the claim doc RESOLVED
+        # after a confirmed success — never re-winnable. This fake models
+        # that the same way it models release: just no longer a live claim.
         with self._lock:
             self._claims.discard((tenant_id, alert_id))
             return True
@@ -151,6 +162,7 @@ class AlertResponseTests(unittest.TestCase):
         mock.patch.object(agent, "is_awaiting_approval", side_effect=self._store.is_awaiting_approval).start()
         mock.patch.object(agent, "claim_approval", side_effect=self._store.claim_approval).start()
         mock.patch.object(agent, "release_claim", side_effect=self._store.release_claim).start()
+        mock.patch.object(agent, "resolve_claim", side_effect=self._store.resolve_claim).start()
 
         # Neutralize outbound side-effects. The broker dispatch is mocked to report
         # a successful block, so the autonomous/approve paths see containment succeed

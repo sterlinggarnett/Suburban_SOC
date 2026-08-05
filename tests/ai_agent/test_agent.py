@@ -12,7 +12,7 @@ os.environ.setdefault("SOC_APPROVER_HMAC_SECRET", "unit_test_approver_secret")
 
 import pytest
 from unittest.mock import patch
-from agent import Agent
+from agent import Agent, IsolationOutcomeUnknown
 
 @pytest.fixture
 def agent():
@@ -138,7 +138,8 @@ def test_technique_suppression_check_failure_fails_open(mock_dup, mock_suppress,
 @patch('agent._execute_isolation')
 @patch('agent.write_checkpoint')
 @patch('agent.claim_approval')
-def test_phase_2_execution(mock_claim, mock_write, mock_exec, mock_read, mock_awaiting, mock_append, agent, payload):
+@patch('agent.resolve_claim')
+def test_phase_2_execution(mock_resolve, mock_claim, mock_write, mock_exec, mock_read, mock_awaiting, mock_append, agent, payload):
     # Setup mocks
     mock_awaiting.return_value = True
     mock_claim.return_value = True
@@ -147,12 +148,15 @@ def test_phase_2_execution(mock_claim, mock_write, mock_exec, mock_read, mock_aw
 
     # Run Phase 2
     result = agent.execute_approved("test-tenant", "fake-alert-id", "human")
-    
+
     # Verify execution and final checkpoint
     assert result.status_code == 200
     assert result.response['status'] == 'executed'
     mock_exec.assert_called_once_with("00:11:22:33:44:55", "192.168.1.10", "test-tenant")
     mock_write.assert_called_once_with("test-tenant", "fake-alert-id", "EXECUTED", context=payload)
+    # #247: a successful execution must mark the claim RESOLVED (never
+    # re-winnable, and correctly excluded from metric_stuck_approval_claims()).
+    mock_resolve.assert_called_once_with("test-tenant", "fake-alert-id")
 
 @patch('agent.is_awaiting_approval')
 def test_phase_2_state_rejection(mock_awaiting, agent):
@@ -239,7 +243,8 @@ def test_phase_2_awaiting_check_store_unavailable_fails_closed(mock_awaiting, mo
 @patch('agent._execute_isolation')
 @patch('agent.write_checkpoint')
 @patch('agent.claim_approval')
-def test_phase_2_writes_claimed_then_approved_queue_rows(mock_claim, mock_write, mock_exec, mock_read, mock_awaiting, mock_append, agent, payload):
+@patch('agent.resolve_claim')
+def test_phase_2_writes_claimed_then_approved_queue_rows(mock_resolve, mock_claim, mock_write, mock_exec, mock_read, mock_awaiting, mock_append, agent, payload):
     mock_awaiting.return_value = True
     mock_claim.return_value = True
     mock_read.return_value = {"context": payload}
@@ -294,13 +299,17 @@ def test_phase_2_release_claim_failure_does_not_crash_the_response(
     mock_awaiting.return_value = True
     mock_claim.return_value = True
     mock_read.return_value = {"context": payload}
-    mock_exec.return_value = (False, "broker unreachable")
+    # A CONFIRMED failure (a normal (False, detail) return — not the raised
+    # IsolationOutcomeUnknown exception the broker's own connection-failure
+    # path uses, which is a distinct, deliberately-not-retryable case below).
+    mock_exec.return_value = (False, "no routers for tenant 'test-tenant'")
 
     with patch('agent.release_claim', side_effect=RuntimeError("ES down")):
         result = agent.execute_approved("test-tenant", "fake-alert-id", "human")
 
     assert result.status_code == 200
     assert result.response["status"] == "isolation_failed"
+    assert result.response["retryable"] is False
 
 
 @patch('agent._append_pending_action')
@@ -309,7 +318,43 @@ def test_phase_2_release_claim_failure_does_not_crash_the_response(
 @patch('agent._execute_isolation')
 @patch('agent.write_checkpoint')
 @patch('agent.claim_approval')
-def test_phase_2_uses_the_claimed_alert_id_not_a_recomputed_one(mock_claim, mock_write, mock_exec, mock_read, mock_awaiting, mock_append, agent, payload):
+@patch('agent.release_claim')
+@patch('agent.resolve_claim')
+def test_phase_2_unknown_outcome_never_releases_the_claim(
+        mock_resolve, mock_release, mock_claim, mock_write, mock_exec, mock_read, mock_awaiting, mock_append, agent, payload):
+    """#247 security-auditor review: an execution whose outcome is genuinely
+    UNKNOWN (e.g. the broker connection dropped after the request may already
+    have been applied) must NEVER be treated the same as a confirmed failure —
+    releasing the claim here risks a real second dispatch if a human retries.
+    The claim must stay held; the checkpoint still returns to PENDING_APPROVAL
+    (so the id doesn't vanish from is_awaiting_approval()'s view), but neither
+    release_claim() nor resolve_claim() may be called."""
+    mock_awaiting.return_value = True
+    mock_claim.return_value = True
+    mock_read.return_value = {"context": payload}
+    mock_exec.side_effect = IsolationOutcomeUnknown(
+        "broker unreachable/timed out — outcome unknown: connection reset")
+
+    result = agent.execute_approved("test-tenant", "fake-alert-id", "human")
+
+    mock_release.assert_not_called()
+    mock_resolve.assert_not_called()
+    mock_write.assert_called_once_with("test-tenant", "fake-alert-id", "PENDING_APPROVAL", context=payload)
+    statuses = [call.args[0]['status'] for call in mock_append.call_args_list]
+    assert statuses == ["claimed", "isolation_unknown"]
+    assert result.status_code == 200
+    assert result.response["status"] == "isolation_unknown"
+    assert result.response["retryable"] is False
+
+
+@patch('agent._append_pending_action')
+@patch('agent.is_awaiting_approval')
+@patch('agent.read_checkpoint')
+@patch('agent._execute_isolation')
+@patch('agent.write_checkpoint')
+@patch('agent.claim_approval')
+@patch('agent.resolve_claim')
+def test_phase_2_uses_the_claimed_alert_id_not_a_recomputed_one(mock_resolve, mock_claim, mock_write, mock_exec, mock_read, mock_awaiting, mock_append, agent, payload):
     """perceive() recomputes alert_id from the payload's dedup key, which can
     drift from the id this call was actually claimed under (e.g. a new
     5-minute bucket). The checkpoint written for THIS execution must key on

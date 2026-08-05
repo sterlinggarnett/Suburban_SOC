@@ -16,6 +16,8 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
                                                   hits over the window (#216), no
                                                   target — a before/after baseline
                                                   for detection tuning, not a target
+  Stuck approval claims            == 0        — /approve claims older than 30 min
+                                                  with no EXECUTED resolution (#247)
 
 Pure stdlib (requests). Env (auto-loaded from scripts/setup/.env):
   ES_URL, ES_USER, ES_PASS/ELASTIC_PASSWORD, KIBANA_URL, NTFY_TOPIC.
@@ -59,12 +61,17 @@ TARGETS = {
     "ingest_lag_seconds":  float(os.environ.get("SLO_INGEST_LAG_MAX_S", "300")),
     "parse_error_pct":     float(os.environ.get("SLO_PARSE_ERR_MAX_PCT", "1")),
     "audit_write_failures": float(os.environ.get("SLO_AUDIT_WRITE_FAIL_MAX", "2")),
+    # #247: any claim still open past SLO_STUCK_CLAIM_MAX_MIN (the AGE window,
+    # read inside metric_stuck_approval_claims() below — not this one, which is
+    # the COUNT threshold) is a stranded alert, not a routine condition —
+    # target is 0.
+    "stuck_approval_claims": float(os.environ.get("SLO_STUCK_CLAIM_MAX", "0")),
 }
 # Comparator per metric: True = lower is better (value <= target).
 LOWER_BETTER = {
     "mttd_minutes": True, "mttr_minutes": True, "coverage_techniques": False,
     "false_positive_pct": True, "ingest_lag_seconds": True, "parse_error_pct": True,
-    "audit_write_failures": True,
+    "audit_write_failures": True, "stuck_approval_claims": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
 # not a benign "n/a". A dead/unreachable pipeline produces no fresh docs, so
@@ -232,6 +239,38 @@ def metric_audit_write_failures():
     return _count("soc-agent-health-*", win)
 
 
+def metric_stuck_approval_claims():
+    """Count of approval claims stuck with no resolution (#247).
+
+    checkpoints.claim_approval() writes a `{alert_id}.claim` marker doc
+    (`phase: "CLAIMED"`) to win the at-most-once execution race. A normal run
+    resolves it within seconds: agent.execute_approved() transitions that SAME
+    doc to `phase: "RESOLVED"` (confirmed success) or `phase: "RELEASED"`
+    (confirmed failure, freed for retry) — see checkpoints.resolve_claim() /
+    release_claim(). Only a genuinely stuck claim — most likely a process
+    crash between the claim succeeding and either resolution running, or an
+    execution whose outcome was UNKNOWN (agent.IsolationOutcomeUnknown; #247
+    deliberately never auto-releases those, since a retry could double-
+    dispatch) — is left at `phase: "CLAIMED"` past SLO_STUCK_CLAIM_MAX_MIN.
+    No other doc in this index ever uses "CLAIMED", so a plain count is exact
+    and requires no join against the paired checkpoint doc.
+    """
+    # A malformed override (e.g. "30m" instead of "30") must degrade to this ONE
+    # metric being unmeasurable, not take down the whole run — main()'s per-metric
+    # loop only catches MetricUnavailable, so float()'s ValueError needs converting
+    # here rather than being allowed to escape uncaught (would silence every other
+    # metric's ntfy alerting too, including ingest-lag's — security-auditor review).
+    try:
+        cutoff_min = float(os.environ.get("SLO_STUCK_CLAIM_MAX_MIN", "30"))
+    except ValueError as e:
+        raise MetricUnavailable(f"invalid SLO_STUCK_CLAIM_MAX_MIN: {e}") from e
+    query = {"bool": {"filter": [
+        {"term": {"phase": "CLAIMED"}},
+        {"range": {"@timestamp": {"lte": f"now-{cutoff_min:g}m"}}},
+    ]}}
+    return _count("agent-checkpoints-*", query)
+
+
 def metric_raw_alert_volume():
     """Raw detection signal volume in the window, independent of whether a case
     was ever opened (#216) — metric_false_positive_pct() only sees analyst-
@@ -283,6 +322,7 @@ def main():
         "ingest_lag_seconds": metric_ingest_lag_seconds,
         "parse_error_pct": metric_parse_error_pct,
         "audit_write_failures": metric_audit_write_failures,
+        "stuck_approval_claims": metric_stuck_approval_claims,
         "raw_alert_volume": metric_raw_alert_volume,
     }
     values, errors = {}, {}

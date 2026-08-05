@@ -164,12 +164,27 @@ def claim_approval(tenant_id: str, alert_id: str, approver: str) -> bool:
     threading.Lock: a lock only protects a single process, and the agent's
     gunicorn --workers 1 pin is itself a fragile constraint this claim
     shouldn't depend on staying true. First writer gets 201 and wins; every
-    other writer for the same alert_id gets 409 and loses. Any other error
-    (ES unreachable, 5xx) propagates — callers must fail closed on a lost or
-    unconfirmed claim, since duplicate isolation is worse than a delayed one.
+    other writer for the same alert_id gets 409 and loses.
+
+    #247: a 409 doesn't necessarily mean this alert is genuinely still
+    claimed — release_claim() (a confirmed-failed execution) marks the claim
+    doc "RELEASED" rather than deleting it (agent_checkpoints's ES role
+    deliberately has no delete privilege — #245 — so a compromised agent
+    credential can't erase a claim to reopen the at-most-once gate). On a
+    409, re-read the existing doc: if it's RELEASED, attempt to re-win it via
+    a conditional PUT keyed on if_seq_no/if_primary_term — optimistic
+    concurrency gives the SAME "exactly one winner" guarantee op_type=create
+    gave the first time, even with several retriers racing. A doc that's
+    still CLAIMED (execution in flight, or outcome unknown — #247 never
+    releases those) or RESOLVED (already succeeded) correctly loses the race,
+    same as before.
+
+    Any other error (ES unreachable, 5xx) propagates — callers must fail
+    closed on a lost or unconfirmed claim, since duplicate isolation is worse
+    than a delayed one.
     """
     index = f"agent-checkpoints-{tenant_id}"
-    url = f"{ES_HOST}/{index}/_create/{alert_id}.claim"
+    doc_id = f"{alert_id}.claim"
     doc = {
         "@timestamp": datetime.now(timezone.utc).isoformat(),
         "tenant": {"id": tenant_id},
@@ -177,8 +192,82 @@ def claim_approval(tenant_id: str, alert_id: str, approver: str) -> bool:
         "approver": approver,
         "phase": "CLAIMED",
     }
-    res = requests.put(url, json=doc, auth=_get_auth(), verify=ES_VERIFY, timeout=5)
-    if res.status_code == 409:
-        return False
+    res = requests.put(f"{ES_HOST}/{index}/_create/{doc_id}", json=doc,
+                       auth=_get_auth(), verify=ES_VERIFY, timeout=5)
+    if res.status_code != 409:
+        res.raise_for_status()
+        return True
+
+    get_res = requests.get(f"{ES_HOST}/{index}/_doc/{doc_id}",
+                           auth=_get_auth(), verify=ES_VERIFY, timeout=5)
+    get_res.raise_for_status()
+    existing = get_res.json()
+    if existing.get("_source", {}).get("phase") != "RELEASED":
+        return False  # genuinely still claimed (or already resolved) — lose the race
+
+    reclaim_res = requests.put(
+        f"{ES_HOST}/{index}/_doc/{doc_id}"
+        f"?if_seq_no={existing['_seq_no']}&if_primary_term={existing['_primary_term']}",
+        json=doc, auth=_get_auth(), verify=ES_VERIFY, timeout=5)
+    if reclaim_res.status_code == 409:
+        return False  # another retrier won the re-claim race first
+    reclaim_res.raise_for_status()
+    return True
+
+
+def _transition_claim(tenant_id: str, alert_id: str, phase: str) -> bool:
+    """Marks a claim doc RELEASED (confirmed non-dispatch, #247) or RESOLVED
+    (confirmed success) via a partial update — never delete (see
+    claim_approval()'s docstring for why: agent_checkpoints's ES role has no
+    delete privilege, and that's deliberate, not an oversight).
+
+    A 404 (claim doc already gone — shouldn't normally happen, since nothing
+    deletes these, but tolerate it) is treated as success: the goal state
+    (this id is no longer a live, retryable-into CLAIMED claim) already holds.
+    Any other error propagates — callers decide how to surface a transition
+    that could not be recorded (the claim stays CLAIMED, visibly so — see
+    slo_metrics.metric_stuck_approval_claims(), which counts exactly that).
+    """
+    index = f"agent-checkpoints-{tenant_id}"
+    url = f"{ES_HOST}/{index}/_update/{alert_id}.claim"
+    res = requests.post(url, json={"doc": {"phase": phase}},
+                        auth=_get_auth(), verify=ES_VERIFY, timeout=5)
+    if res.status_code == 404:
+        return True
     res.raise_for_status()
     return True
+
+
+def release_claim(tenant_id: str, alert_id: str) -> bool:
+    """Frees a claim so a CONFIRMED-failed-but-not-executed action can be
+    retried (#247).
+
+    claim_approval()'s at-most-once guarantee is a one-way door by design — but
+    that also means an execution that fails AFTER winning the claim (broker
+    outage, no routers configured, etc.) permanently strands the alert: every
+    retried /approve loses the claim race forever, even though nothing was
+    actually dispatched. Callers use this ONLY after confirming execution did
+    NOT happen — never on an ambiguous outcome (e.g. the broker call timed out
+    AFTER it may have already applied the block; see agent.py's
+    IsolationOutcomeUnknown) — the at-most-once invariant still holds, since
+    marking the claim RELEASED just returns the alert to the same "no live
+    claim, PENDING_APPROVAL" state it was in before the failed attempt, not to
+    some new state a real dispatch could race against.
+    """
+    return _transition_claim(tenant_id, alert_id, "RELEASED")
+
+
+def resolve_claim(tenant_id: str, alert_id: str) -> bool:
+    """Marks a claim doc RESOLVED after a CONFIRMED successful execution (#247).
+
+    Without this, a successful claim's doc stays phase=CLAIMED forever (it's
+    never deleted), which would make metric_stuck_approval_claims() flag every
+    successful approval ever made as "stuck" once it ages past the window —
+    and would let claim_approval() try to re-win it (RESOLVED, like a still-
+    CLAIMED doc, always loses the race — this alert is done, not retryable).
+    Best-effort from the caller's side (agent.py wraps this in try/except): if
+    it fails, the claim stays CLAIMED and surfaces as a false "stuck" claim —
+    noisy, but never a security issue, and consistent with this module's
+    fail-closed-into-visibility posture elsewhere.
+    """
+    return _transition_claim(tenant_id, alert_id, "RESOLVED")

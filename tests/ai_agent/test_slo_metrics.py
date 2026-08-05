@@ -164,6 +164,60 @@ class MetricFunctionTests(unittest.TestCase):
                                return_value=_FakeResponse(200, {"count": 0})):
             self.assertEqual(slo_metrics.metric_audit_write_failures(), 0)
 
+    # --- #247: stuck approval claims -----------------------------------------
+    # A stuck claim is exactly a `phase: "CLAIMED"` doc older than the window —
+    # since #247, both resolution paths (checkpoints.resolve_claim() on
+    # success, release_claim() on a confirmed failure) transition the SAME
+    # claim doc away from "CLAIMED", so a plain count needs no second lookup.
+    def test_stuck_approval_claims_raises_on_es_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_stuck_approval_claims()
+
+    def test_stuck_approval_claims_raises_on_non_200(self):
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(503)):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_stuck_approval_claims()
+
+    def test_stuck_approval_claims_returns_count_on_success(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 3})):
+            self.assertEqual(slo_metrics.metric_stuck_approval_claims(), 3)
+
+    def test_stuck_approval_claims_returns_zero_when_healthy(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 0})):
+            self.assertEqual(slo_metrics.metric_stuck_approval_claims(), 0)
+
+    def test_stuck_approval_claims_queries_only_claimed_phase_past_the_window(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 0})) as mock_es:
+            slo_metrics.metric_stuck_approval_claims()
+        query = mock_es.call_args[0][2]["query"]
+        filters = query["bool"]["filter"]
+        self.assertIn({"term": {"phase": "CLAIMED"}}, filters)
+        self.assertTrue(any("range" in f and "@timestamp" in f["range"] for f in filters))
+        index = mock_es.call_args[0][1]
+        self.assertIn("agent-checkpoints-*", index)
+
+    def test_stuck_approval_claims_window_is_configurable(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 0})) as mock_es, \
+             mock.patch.dict(os.environ, {"SLO_STUCK_CLAIM_MAX_MIN": "45"}):
+            slo_metrics.metric_stuck_approval_claims()
+        query = mock_es.call_args[0][2]["query"]
+        filters = query["bool"]["filter"]
+        self.assertIn({"range": {"@timestamp": {"lte": "now-45m"}}}, filters)
+
+    def test_stuck_approval_claims_invalid_window_raises_not_crashes(self):
+        # A malformed override must degrade to THIS metric being unmeasurable,
+        # not raise ValueError uncaught (which would silence every other
+        # metric's ntfy alerting too — main()'s loop only catches
+        # MetricUnavailable).
+        with mock.patch.dict(os.environ, {"SLO_STUCK_CLAIM_MAX_MIN": "not-a-number"}):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_stuck_approval_claims()
+
     def test_raw_alert_volume_raises_on_es_failure(self):
         with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
             with self.assertRaises(slo_metrics.MetricUnavailable):

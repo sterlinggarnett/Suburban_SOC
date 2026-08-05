@@ -643,7 +643,9 @@ are implemented in code; checked off with that one caveat noted inline.
   - [x] `act()` — §12.3/§12.4 decision gate: DRAFTED (default), EXECUTED
         (autonomous only), or NO_ACTION (excluded asset)
   - [x] `check()` — verify outcome, set terminal state (PENDING_APPROVAL,
-        CLOSED, or ESCALATED)
+        EXECUTED, or CLOSED — not ESCALATED, removed by #247: a confirmed
+        execution failure now reverts to PENDING_APPROVAL so a retry is
+        possible, rather than dead-ending in a state nothing ever leaves)
   - [x] `execute_approved()` — Phase 2 entry point: Act(execute) → Check(verify)
   - [x] `AlertContext` frozen dataclass — typed, immutable between phases
   - [x] `AgentResult` dataclass — status code + serialisable response

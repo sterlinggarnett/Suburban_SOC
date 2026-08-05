@@ -13,7 +13,7 @@ CISO reporting pipeline (weekly_ciso_report.py).
 from dataclasses import dataclass, replace
 from typing import Optional
 from flask import request, jsonify
-from checkpoints import write_checkpoint, read_checkpoint, is_duplicate, is_awaiting_approval, generate_dedup_key, claim_approval, should_suppress_technique
+from checkpoints import write_checkpoint, read_checkpoint, is_duplicate, is_awaiting_approval, generate_dedup_key, claim_approval, release_claim, resolve_claim, should_suppress_technique
 from retry import retry
 
 import os
@@ -120,11 +120,16 @@ APPROVAL_QUEUE = os.environ.get(
 _QUEUE_LOCK_PATH = APPROVAL_QUEUE + ".lock"
 _queue_lock = threading.Lock()
 # audit #172: any status other than "pending" means the action is no longer
-# awaiting approval — "claimed" marks one mid-execution (see approve_action).
-# "denied" is forward-reserved for a future reject flow — no code path
-# writes it today (there is no /deny endpoint), but it's included here so
-# archival/filtering already treat it as terminal once one exists.
-_RESOLVED_STATUSES = ("approved", "denied", "claimed")
+# AWAITING ITS FIRST APPROVAL — but only "approved"/"denied" are truly
+# terminal. #247: "claimed" (execution in progress) and "isolation_failed"
+# (execution failed and the claim was released — see execute_approved())
+# deliberately stay OUT of this set: both mean the id is still actionable —
+# a human needs to see it in /pending, either because it's stuck mid-run or
+# because a retry can still succeed — not silently disappear. "denied" is
+# forward-reserved for a future reject flow — no code path writes it today
+# (there is no /deny endpoint), but it's included here so archival/filtering
+# already treat it as terminal once one exists.
+_RESOLVED_STATUSES = ("approved", "denied")
 
 # Hive-Mind broker — the router-block dispatcher (#109). The agent runs in a slim
 # container with no ssh/sudo, so it can't run isolate.sh against a router itself.
@@ -315,6 +320,23 @@ def _tenant_env_suffix(tenant: str) -> str:
     return tenant.upper().replace("-", "_")
 
 
+class IsolationOutcomeUnknown(Exception):
+    """Raised when dispatch_block_via_broker() cannot determine whether the
+    broker actually applied a block — e.g. the connection timed out or dropped
+    AFTER the request reached the broker, which may already have run nft
+    before the response was lost. #247 security-auditor review: this is
+    deliberately NOT the same as a normal (False, detail) return. A normal
+    False means something (the agent's own pre-flight checks, or the broker
+    itself) EXPLICITLY confirmed nothing was dispatched — safe to release the
+    approval claim and let a retry try again. An outcome we genuinely don't
+    know is NOT safe to release: doing so and then retrying risks a second
+    real dispatch for an isolation that already happened. Callers must leave
+    the claim untouched on this exception — it stays visibly stuck (see
+    slo_metrics.metric_stuck_approval_claims()) for a human to reconcile
+    against actual router state, not silently retried.
+    """
+
+
 def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = ""):
     """Route an approved containment to the hive-mind-broker (#109).
 
@@ -324,7 +346,10 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
     /alert) and POST it to the broker's authenticated /webhook/dispatch — which
     executes immediately because the agent already performed the §12.3 approval gate.
 
-    Fails CLOSED: with no secret configured we never dispatch. Returns (ok, detail).
+    Fails CLOSED: with no secret configured we never dispatch. Returns (ok, detail)
+    when the outcome is CONFIRMED (either way); raises IsolationOutcomeUnknown when
+    it genuinely isn't (see that class's docstring) — #247 callers must handle the
+    two cases differently, not collapse them into one.
     """
     if not HIVE_MIND_SECRET:
         return False, "HIVE_MIND_SECRET unset — refusing to dispatch (broker unreachable/unsigned)"
@@ -341,20 +366,77 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
             data=body,
             headers={"Content-Type": "application/json",
                      HMAC_HEADER: sig, HMAC_TS_HEADER: ts},
-            timeout=15,
+            # #247 security-auditor review (round 3): 20s, not 15s — the
+            # broker's own SSH connect+command budget is 5s+5s=10s worst case
+            # per router (dispatcher.py's SSH_CONNECT_TIMEOUT/SSH_COMMAND_TIMEOUT),
+            # and this must stay comfortably above that or a merely-slow (not
+            # ambiguous) router would make the AGENT time out first, raising
+            # IsolationOutcomeUnknown for what would have been a clean answer.
+            timeout=20,
         )
     except Exception as exc:  # noqa: BLE001 - never let response handling crash
-        logger.error("broker dispatch failed: %s", exc)
-        return False, f"broker unreachable: {exc}"
+        logger.error("broker dispatch outcome UNKNOWN (request failed after send): %s", exc)
+        raise IsolationOutcomeUnknown(f"broker unreachable/timed out — outcome unknown: {exc}") from exc
 
     detail = resp.text[:300]
+    data = {}
     try:
-        data = resp.json()
-        detail = data.get("message", detail)
+        parsed = resp.json()
+        if isinstance(parsed, dict):
+            data = parsed
+            detail = data.get("message", detail)
     except Exception:
-        data = {}
-    # The block actually happened only if the broker reached >=1 router.
-    ok = resp.status_code == 200 and bool(data.get("executed")) and data.get("success_count", 0) >= 1
+        pass
+
+    # #247 security-auditor review: a broker-side failure is not automatically
+    # a CONFIRMED non-dispatch — the broker's dispatcher already distinguishes
+    # per-router "failed" (command confirmed not applied) from "unknown"
+    # (connection lost/timed out after the command was sent — nft may already
+    # have run); this must not get re-collapsed into a blanket False here.
+    #
+    # Only 500 (the broker's OWN handler code failed partway through — e.g. an
+    # exception raised while recording the audit row, AFTER dispatch_block_to_all()
+    # already ran) and 504 (an intermediary gave up waiting while the broker may
+    # still have been mid-dispatch) are genuinely ambiguous. Every other non-200 —
+    # 4xx (rejected before dispatch: auth/validation), or 502/503 (the request
+    # never reached, or was refused by, the broker's dispatch logic at all — e.g.
+    # the broker's own 503 for "HMAC secret not configured" fires before any
+    # dispatch attempt is even possible) — is a confirmed non-dispatch.
+    if resp.status_code in (500, 504):
+        logger.error("broker dispatch outcome UNKNOWN (broker returned HTTP %s): %s",
+                    resp.status_code, detail)
+        raise IsolationOutcomeUnknown(
+            f"broker returned HTTP {resp.status_code} — outcome unknown: {detail}")
+    if resp.status_code != 200:
+        return False, detail
+    if not data:
+        # A 200 with an unparseable/non-object body shouldn't happen in practice
+        # (the handler always returns a well-formed JSON object) — if it somehow
+        # does, don't assume it's a confirmed non-dispatch either.
+        logger.error("broker dispatch outcome UNKNOWN (unparseable 200 response): %s", detail)
+        raise IsolationOutcomeUnknown(f"unparseable broker response — outcome unknown: {detail}")
+
+    try:
+        success_count = int(data.get("success_count", 0))
+        unknown_count = int(data.get("unknown_count", 0))
+    except (TypeError, ValueError):
+        # A non-integer count is as unreadable as no body at all — don't
+        # guess which way it leans.
+        logger.error("broker dispatch outcome UNKNOWN (non-integer counts in "
+                     "response): %s", detail)
+        raise IsolationOutcomeUnknown(f"malformed broker response counts — outcome unknown: {detail}")
+    if bool(data.get("executed")) and success_count == 0 and unknown_count > 0:
+        # No router confirmed success, but at least one router's own outcome
+        # could not be confirmed — the block may already be live there.
+        logger.error("broker dispatch outcome UNKNOWN (%d router(s) unconfirmed): %s",
+                    unknown_count, detail)
+        raise IsolationOutcomeUnknown(
+            f"{unknown_count} router(s) had an unconfirmed outcome — not safe to retry: {detail}")
+
+    # The block actually happened only if the broker reached >=1 router
+    # (confirmed — a router-side ProcessError, "no routers", or an exclusion
+    # refusal are all confirmed non-dispatches, never ambiguous).
+    ok = bool(data.get("executed")) and success_count >= 1
     return ok, detail
 
 
@@ -724,6 +806,12 @@ def _execute_isolation(mac: str, ip: str = "", tenant: str = "unassigned"):
     tenant scoping (which routers get the block) is enforced by the broker from its
     own per-tenant inventory; a NAMED tenant with no router yields a clean refusal
     rather than touching another tenant's router.
+
+    Both early-return paths below are CONFIRMED non-dispatches (nothing was even
+    attempted) — returned as normal (False, detail) tuples. May raise
+    IsolationOutcomeUnknown (propagated from dispatch_block_via_broker) when the
+    outcome genuinely can't be determined; callers must not treat that the same
+    as a confirmed False (#247).
     """
     excluded = is_excluded(mac=mac, ip=ip)
     if excluded:
@@ -1094,25 +1182,91 @@ class Agent:
 
         logger.info(f"Executing approved block for {alert_id} by {approver}")
 
-        ok, detail = _execute_isolation(ctx.target_mac, ctx.target_ip, ctx.tenant_id)  # type: ignore
+        # #247: an execution attempt has three possible outcomes, not two —
+        # CONFIRMED success, CONFIRMED non-dispatch (safe to release the claim
+        # for retry), or UNKNOWN (e.g. the broker connection dropped after the
+        # request may already have been applied — releasing here risks a real
+        # second dispatch on retry, so the claim must stay held). Collapsing
+        # "unknown" into "failed" was a security-auditor-caught bug in an
+        # earlier version of this fix.
+        try:
+            ok, detail = _execute_isolation(ctx.target_mac, ctx.target_ip, ctx.tenant_id)  # type: ignore
+            outcome_known = True
+        except IsolationOutcomeUnknown as e:
+            ok, detail, outcome_known = False, str(e), False
+            logger.error(f"Execution outcome for {alert_id} is UNKNOWN — the claim "
+                        f"will NOT be released (a retry could double-dispatch); "
+                        f"manual verification against actual router state required.")
 
         case_id = ckpt['context'].get('case_id', '')
-        phase = "EXECUTED" if ok else "ESCALATED"
+        if ok:
+            phase, queue_status, response_status, comment_verb = (
+                "EXECUTED", "approved", "executed", "SUCCEEDED")
+        elif outcome_known:
+            phase, queue_status, response_status, comment_verb = (
+                "PENDING_APPROVAL", "isolation_failed", "isolation_failed", "FAILED")
+        else:
+            phase, queue_status, response_status, comment_verb = (
+                "PENDING_APPROVAL", "isolation_unknown", "isolation_unknown",
+                "outcome UNKNOWN — verify manually before retrying")
+
         # Preserve context (case_id included) through this transition too —
         # see check()'s docstring on why omitting it would wipe it.
         self.check(ctx, phase, context=ckpt['context'])  # type: ignore
         if case_id:
             add_case_comment(tenant_id, case_id,
-                              f"Human-approved isolation {'SUCCEEDED' if ok else 'FAILED'} "
+                              f"Human-approved isolation {comment_verb} "
                               f"for `{ctx.target_ip}` / `{ctx.target_mac}` by {approver} — {detail}")
             if ok:
                 close_case(tenant_id, case_id, "true_positive_contained")
 
-        _append_pending_action_or_warn({"id": alert_id, "ts": time.time(), "status": "approved",
+        # #247: a failed/unknown attempt must be visibly distinct from a real
+        # success in the approval-queue audit trail, not recorded as "approved"
+        # either way — and must NOT land in _RESOLVED_STATUSES, so it keeps
+        # showing in /pending as actionable instead of silently vanishing the
+        # moment it's claimed.
+        _append_pending_action_or_warn({"id": alert_id, "ts": time.time(), "status": queue_status,
                                          "tenant": tenant_id, "approver": approver, "detail": detail})
 
-        return AgentResult(200, {"status": phase.lower(), "detail": detail,
-                                  "alert_id": alert_id, "case_id": case_id})
+        # Claim-state transition happens LAST, after every other write for this
+        # request is durable (security-auditor review): transitioning first
+        # risks a concurrent retry finishing and writing ITS resolution before
+        # this (slower) request's own bookkeeping above, which would then
+        # clobber the retry's newer state with this request's stale one.
+        retryable = False  # ok (nothing to retry) or outcome unknown (deliberately untouched)
+        if ok:
+            try:
+                resolve_claim(tenant_id, alert_id)
+            except Exception as e:  # noqa: BLE001
+                # Best-effort: if this fails, the claim stays CLAIMED forever and
+                # will incorrectly surface as a "stuck" claim later — noisy, but
+                # never a security issue (this alert already succeeded; nothing
+                # can accidentally re-claim/re-dispatch it while it's PENDING_
+                # APPROVAL's phase was already overwritten to EXECUTED above).
+                logger.error(f"Failed to resolve claim for {alert_id} after a "
+                             f"successful execution — it will incorrectly surface "
+                             f"as a stuck claim until manually cleared: {e}")
+        elif outcome_known:
+            try:
+                release_claim(tenant_id, alert_id)
+                retryable = True
+            except Exception as e:  # noqa: BLE001
+                # Best-effort: a failed release leaves this claim stuck rather
+                # than retryable. Never silently — metric_stuck_approval_claims()
+                # (slo_metrics.py) surfaces a claim that outlives its window
+                # with no EXECUTED resolution, which this now is.
+                logger.error(f"Failed to release claim for {alert_id} after a "
+                             f"failed execution — it will stay stuck until "
+                             f"manually cleared: {e}")
+
+        # #247 security-auditor review: "retryable" is always present (a total
+        # field, not omitted on success) so callers never have to treat a
+        # missing key as an implicit answer.
+        response = {"status": response_status, "detail": detail,
+                    "alert_id": alert_id, "case_id": case_id, "retryable": retryable}
+        if not ok and not retryable:
+            response["detail"] += " — not retryable yet; see /pending or contact an operator"
+        return AgentResult(200, response)
 
     def perceive(self, payload: dict) -> Optional[AlertContext]:
         try:
@@ -1172,7 +1326,16 @@ class Agent:
 
         # Autonomous
         if AUTONOMOUS_ISOLATION and ctx.severity == "critical" and ctx.target_mac:
-            ok, detail = _execute_isolation(ctx.target_mac, ctx.target_ip, ctx.tenant_id)  # type: ignore
+            # #247: the autonomous path has no claim/retry concept to protect (it
+            # dispatches at most once, inline, no separate approval step) — an
+            # ambiguous outcome is handled the same as a confirmed failure here,
+            # just with an honest detail message; only execute_approved() (the
+            # human-approval path, which DOES gate a retry on this) needs to treat
+            # "unknown" as distinct from "confirmed failed".
+            try:
+                ok, detail = _execute_isolation(ctx.target_mac, ctx.target_ip, ctx.tenant_id)  # type: ignore
+            except IsolationOutcomeUnknown as e:
+                ok, detail = False, str(e)
             notify_detail = detail
             if not NOTIFY_INCLUDE_RAW_IOCS:
                 if ctx.target_ip and ctx.target_ip != "unknown":

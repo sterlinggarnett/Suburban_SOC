@@ -130,55 +130,116 @@ def build_nft_command(attacker_ip: str) -> str:
     validate_ip(attacker_ip)  # raises ValueError for malformed input (audit #164 / NIST SI-10)
     return f"nft add rule inet fw4 input ip saddr {attacker_ip} drop"
 
-async def block_ip_on_router(router: dict, attacker_ip: str):
+# #247 security-auditor review (round 3): the ORIGINAL 10s/10s defaults gave a
+# 20s worst case per router (connect + command), exceeding the agent's own 15s
+# HTTP read timeout to /webhook/dispatch — meaning an ordinary slow-but-working
+# router could make the AGENT time out and raise IsolationOutcomeUnknown before
+# the broker ever got a chance to answer cleanly, turning routine latency into
+# a stuck claim instead of a genuine ambiguity. Lowered to 5s/5s (agent.py's
+# timeout was raised to 20s for headroom on top of that) and made
+# env-overridable in case a real deployment's routers need more.
+SSH_CONNECT_TIMEOUT = float(os.environ.get("SSH_CONNECT_TIMEOUT", "5"))  # seconds
+SSH_COMMAND_TIMEOUT = float(os.environ.get("SSH_COMMAND_TIMEOUT", "5"))  # seconds
+
+
+async def block_ip_on_router(router: dict, attacker_ip: str) -> str:
     """
     Connects to a single router and executes the block command. (Task 2.1.1 & 2.2.2)
+
+    Returns "success" (command confirmed applied), "failed" (command confirmed
+    NOT applied — the connection was never established, the router dict itself
+    was malformed, or the remote command ran and reported a non-zero exit with
+    no signal involved), or "unknown" (the SSH session was lost, or the command
+    timed out, AFTER the command was sent but before its exit status could be
+    confirmed — nft may already have run on the router). #247 security-auditor
+    review: the agent-side caller MUST NEVER treat "unknown" the same as
+    "failed" — releasing an approval claim on an unconfirmed outcome risks
+    dispatching the same block twice on retry.
     """
-    ip = router.get("ip_address")
-    username = router.get("username", "root")
-    key_path = os.path.expanduser(router.get("ssh_key_path", "~/.ssh/id_ed25519_hivemind"))
-    
-    command = build_nft_command(attacker_ip)
-    
     try:
-        # Connect asynchronously
-        async with asyncssh.connect(
+        ip = router.get("ip_address")
+        username = router.get("username", "root")
+        key_path = os.path.expanduser(router.get("ssh_key_path", "~/.ssh/id_ed25519_hivemind"))
+        command = build_nft_command(attacker_ip)
+    except Exception as exc:
+        # A malformed inventory entry — nothing was ever sent to any router,
+        # confirmed non-dispatch (round-3 security-auditor review: this used
+        # to run outside any try, so one bad entry could crash the whole
+        # asyncio.gather() and silently drop every sibling router's outcome).
+        logger.error("Malformed router entry %r: %s", router, exc)
+        return "failed"
+
+    try:
+        conn = await asyncssh.connect(
             host=ip,
             username=username,
             client_keys=[key_path],
-            known_hosts=_resolve_known_hosts()  # strict by default (audit P1-3)
-        ) as conn:
-            
-            # Execute command
-            await conn.run(command, check=True)
-            logger.info("Successfully blocked %s on %s", attacker_ip, ip)
-            return True
-
-    except asyncssh.Error as exc:
+            known_hosts=_resolve_known_hosts(),  # strict by default (audit P1-3)
+            connect_timeout=SSH_CONNECT_TIMEOUT,
+            login_timeout=SSH_CONNECT_TIMEOUT,  # bounds auth/KEX too, not just TCP connect
+        )
+    except Exception as exc:
+        # Never connected — the command never even attempted to run.
         logger.error("SSH connection failed to %s: %s", ip, exc)
-        return False
-    except Exception as e:
-        logger.error("Error executing on %s: %s", ip, e)
-        return False
+        return "failed"
+
+    try:
+        async with conn:
+            await asyncio.wait_for(conn.run(command, check=True), timeout=SSH_COMMAND_TIMEOUT)
+        logger.info("Successfully blocked %s on %s", attacker_ip, ip)
+        return "success"
+    except asyncssh.ProcessError as exc:
+        if exc.exit_signal is not None:
+            # The remote process was KILLED (e.g. an OOM kill on a small
+            # router), not a clean non-zero exit — it may have already issued
+            # its netlink call before being signaled. Not confirmed.
+            logger.error("Outcome UNKNOWN on %s (command was signaled, not a "
+                         "clean exit): %s", ip, exc)
+            return "unknown"
+        # A clean non-zero exit — the command ran ON THE ROUTER and nft itself
+        # reported failure. Confirmed NOT applied.
+        logger.error("Block command failed on %s: %s", ip, exc)
+        return "failed"
+    except Exception as exc:
+        # Connection lost, or the command timed out, at some point after being
+        # sent (including during connection teardown) — nft may have already
+        # run before we lost the ability to confirm it. Not confirmed either way.
+        logger.error("Outcome UNKNOWN executing on %s (connection lost/timed out "
+                     "mid-command): %s", ip, exc)
+        return "unknown"
+
 
 async def dispatch_block_to_all(routers: list, attacker_ip: str):
     """
     Loops through the inventory and fires concurrent SSH block commands. (Task 2.1.2)
+
+    Returns (success_count, unknown_count) out of len(routers). #247: callers
+    must treat unknown_count > 0 as "some routers' outcome could not be
+    confirmed" — NOT folded into either success or failure, since collapsing
+    it into failure is exactly what let an agent-side retry risk a real
+    double-dispatch (security-auditor review).
     """
     # §12.4: never push a block for a protected asset, even if an alert demands it.
     if is_excluded_ip(attacker_ip):
         logger.warning("REFUSED: %s is on the permanent exclusion list — no block dispatched.",
                         attacker_ip)
-        return 0
+        return 0, 0
 
     logger.info("Dispatching block for %s to %d routers...", attacker_ip, len(routers))
 
     # Create a list of async tasks for all routers
     tasks = [block_ip_on_router(r, attacker_ip) for r in routers]
-    
-    # Run them concurrently (acting as a parallel connection pool)
-    results = await asyncio.gather(*tasks)
-    
-    success_count = sum(1 for r in results if r)
-    logger.info("Immunization complete: %d/%d routers updated.", success_count, len(routers))
-    return success_count
+
+    # Run them concurrently (acting as a parallel connection pool).
+    # return_exceptions=True (round-3 security-auditor review): block_ip_on_router()
+    # already catches everything it can classify, but a truly unexpected exception
+    # escaping it must not take down every OTHER router's already-in-flight result
+    # — an unclassifiable outcome is exactly what "unknown" exists for.
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = ["unknown" if isinstance(r, BaseException) else r for r in results]
+
+    success_count = sum(1 for r in results if r == "success")
+    unknown_count = sum(1 for r in results if r == "unknown")
+    logger.info("Immunization complete: %d/%d routers confirmed updated, %d unknown.",
+                success_count, len(routers), unknown_count)
+    return success_count, unknown_count

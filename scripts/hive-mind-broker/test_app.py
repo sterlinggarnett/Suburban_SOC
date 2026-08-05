@@ -69,8 +69,9 @@ def _no_real_ssh():
     broker_app._seen_sigs.clear()   # isolate the replay/nonce cache per test (P1-1)
     if os.path.exists(broker_app.APPROVAL_QUEUE):
         os.remove(broker_app.APPROVAL_QUEUE)
+    # #247: dispatch_block_to_all() returns (success_count, unknown_count).
     with mock.patch.object(broker_app, "dispatch_block_to_all",
-                           new=AsyncMock(return_value=1)) as m:
+                           new=AsyncMock(return_value=(1, 0))) as m:
         yield m
     if os.path.exists(broker_app.APPROVAL_QUEUE):
         os.remove(broker_app.APPROVAL_QUEUE)

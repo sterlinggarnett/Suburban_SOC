@@ -519,6 +519,88 @@ class TenantResolverTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("HIVE_MIND_SECRET", detail)
 
+    # --- #247 security-auditor review: the broker's own outcome must not be
+    # collapsed into a blanket confirmed-false — a genuinely ambiguous result
+    # (the broker itself unsure, or a mid-dispatch failure) must raise
+    # IsolationOutcomeUnknown, never return (False, ...) ---------------------
+    def _fake_response(self, status_code, json_body=None, text=""):
+        resp = mock.Mock()
+        resp.status_code = status_code
+        resp.text = text or str(json_body or "")
+        if json_body is not None:
+            resp.json.return_value = json_body
+        else:
+            resp.json.side_effect = ValueError("no JSON")
+        return resp
+
+    def test_dispatch_confirmed_success_when_broker_reports_it(self):
+        resp = self._fake_response(200, {"executed": True, "success_count": 1,
+                                          "unknown_count": 0, "message": "blocked"})
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+        self.assertTrue(ok)
+
+    def test_dispatch_confirmed_failure_on_4xx(self):
+        # The broker rejected the request BEFORE ever attempting dispatch
+        # (auth/validation) — confirmed non-dispatch, safe to release+retry.
+        resp = self._fake_response(422, {"message": "no routers for tenant"})
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+        self.assertFalse(ok)
+
+    def test_dispatch_unknown_on_broker_5xx(self):
+        # The broker's own processing failed — possibly AFTER it already
+        # dispatched to routers. Must raise, never return a confirmed False.
+        resp = self._fake_response(500, {"message": "internal error"})
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_unknown_when_no_router_confirmed_but_some_unconfirmed(self):
+        # success_count=0 AND unknown_count>0: at least one router's outcome
+        # could not be confirmed — the block may already be live there.
+        resp = self._fake_response(200, {"executed": True, "success_count": 0,
+                                          "unknown_count": 1, "message": "1 unconfirmed"})
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_confirmed_success_ignores_a_coexisting_unknown_router(self):
+        # At least one router IS confirmed blocked — the overall containment
+        # goal is met even if a different router's outcome is unconfirmed.
+        resp = self._fake_response(200, {"executed": True, "success_count": 1,
+                                          "unknown_count": 1, "message": "1 ok, 1 unconfirmed"})
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+        self.assertTrue(ok)
+
+    def test_dispatch_confirmed_failure_when_zero_routers_succeed_and_none_unknown(self):
+        resp = self._fake_response(200, {"executed": True, "success_count": 0,
+                                          "unknown_count": 0, "message": "no routers"})
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+        self.assertFalse(ok)
+
+    def test_dispatch_unknown_on_unparseable_200_body(self):
+        resp = self._fake_response(200, json_body=None, text="not json")
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_unknown_on_connection_exception(self):
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post",
+                               side_effect=ConnectionError("refused")):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
     # --- #246: an operator misconfiguring the two secrets to be equal must not
     # silently revert the /alert-vs-/approve separation this issue introduced ---
     def test_resolve_approver_secret_rejects_equal_secrets(self):

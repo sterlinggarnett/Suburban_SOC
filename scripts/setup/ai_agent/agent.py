@@ -373,15 +373,51 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
         raise IsolationOutcomeUnknown(f"broker unreachable/timed out — outcome unknown: {exc}") from exc
 
     detail = resp.text[:300]
+    data = {}
     try:
         data = resp.json()
         detail = data.get("message", detail)
     except Exception:
-        data = {}
-    # The block actually happened only if the broker reached >=1 router. A non-200
-    # or malformed response IS a confirmed non-dispatch (the broker itself answered,
-    # just not with success) — not ambiguous the way a lost connection is.
-    ok = resp.status_code == 200 and bool(data.get("executed")) and data.get("success_count", 0) >= 1
+        pass
+
+    # #247 security-auditor review: a broker-side failure is not automatically
+    # a CONFIRMED non-dispatch — the broker's dispatcher already distinguishes
+    # per-router "failed" (command confirmed not applied) from "unknown"
+    # (connection lost/timed out after the command was sent — nft may already
+    # have run); this must not get re-collapsed into a blanket False here.
+    if resp.status_code >= 500:
+        # The broker's own processing failed, possibly AFTER it already
+        # dispatched to routers (e.g. an exception raised while recording the
+        # audit row, after dispatch_block_to_all() already ran). Not confirmed.
+        logger.error("broker dispatch outcome UNKNOWN (broker returned HTTP %s): %s",
+                    resp.status_code, detail)
+        raise IsolationOutcomeUnknown(
+            f"broker returned HTTP {resp.status_code} — outcome unknown: {detail}")
+    if resp.status_code != 200:
+        # A 4xx means the broker rejected the request BEFORE ever attempting
+        # dispatch (auth/validation) — confirmed non-dispatch.
+        return False, detail
+    if not data:
+        # A 200 with an unparseable/empty body shouldn't happen in practice
+        # (the handler always returns well-formed JSON) — if it somehow does,
+        # don't assume it's a confirmed non-dispatch either.
+        logger.error("broker dispatch outcome UNKNOWN (unparseable 200 response): %s", detail)
+        raise IsolationOutcomeUnknown(f"unparseable broker response — outcome unknown: {detail}")
+
+    success_count = data.get("success_count", 0)
+    unknown_count = data.get("unknown_count", 0)
+    if bool(data.get("executed")) and success_count == 0 and unknown_count > 0:
+        # No router confirmed success, but at least one router's own outcome
+        # could not be confirmed — the block may already be live there.
+        logger.error("broker dispatch outcome UNKNOWN (%d router(s) unconfirmed): %s",
+                    unknown_count, detail)
+        raise IsolationOutcomeUnknown(
+            f"{unknown_count} router(s) had an unconfirmed outcome — not safe to retry: {detail}")
+
+    # The block actually happened only if the broker reached >=1 router
+    # (confirmed — a router-side ProcessError, "no routers", or an exclusion
+    # refusal are all confirmed non-dispatches, never ambiguous).
+    ok = bool(data.get("executed")) and success_count >= 1
     return ok, detail
 
 
@@ -1178,7 +1214,7 @@ class Agent:
         # risks a concurrent retry finishing and writing ITS resolution before
         # this (slower) request's own bookkeeping above, which would then
         # clobber the retry's newer state with this request's stale one.
-        retryable = None
+        retryable = False  # ok (nothing to retry) or outcome unknown (deliberately untouched)
         if ok:
             try:
                 resolve_claim(tenant_id, alert_id)
@@ -1192,7 +1228,6 @@ class Agent:
                              f"successful execution — it will incorrectly surface "
                              f"as a stuck claim until manually cleared: {e}")
         elif outcome_known:
-            retryable = False
             try:
                 release_claim(tenant_id, alert_id)
                 retryable = True
@@ -1204,16 +1239,14 @@ class Agent:
                 logger.error(f"Failed to release claim for {alert_id} after a "
                              f"failed execution — it will stay stuck until "
                              f"manually cleared: {e}")
-        else:
-            retryable = False  # outcome unknown — claim deliberately left untouched
 
+        # #247 security-auditor review: "retryable" is always present (a total
+        # field, not omitted on success) so callers never have to treat a
+        # missing key as an implicit answer.
         response = {"status": response_status, "detail": detail,
-                    "alert_id": alert_id, "case_id": case_id}
-        if retryable is False:
-            response["retryable"] = False
+                    "alert_id": alert_id, "case_id": case_id, "retryable": retryable}
+        if not ok and not retryable:
             response["detail"] += " — not retryable yet; see /pending or contact an operator"
-        elif retryable is True:
-            response["retryable"] = True
         return AgentResult(200, response)
 
     def perceive(self, payload: dict) -> Optional[AlertContext]:

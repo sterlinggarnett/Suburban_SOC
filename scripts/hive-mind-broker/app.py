@@ -305,18 +305,23 @@ async def dispatch_block(request: Request):
         return {"status": "no_routers", "executed": False,
                 "message": f"No routers configured for tenant '{tenant}' — nothing to block."}
 
-    count = await dispatch_block_to_all(routers, attacker_ip)
+    count, unknown_count = await dispatch_block_to_all(routers, attacker_ip)
     _append_action({
         "id": uuid.uuid4().hex[:12], "ts": time.time(), "status": "executed",
         "approver": approver, "tenant": tenant, "attacker_ip": attacker_ip,
-        "result": f"{count}/{len(routers)} routers",
+        "result": f"{count}/{len(routers)} routers ({unknown_count} unknown)",
     })
-    logger.info("Dispatched block for %s on tenant '%s' (%d/%d routers) — approver=%s.",
-                attacker_ip, tenant, count, len(routers), approver)
+    logger.info("Dispatched block for %s on tenant '%s' (%d/%d routers, %d unknown) — approver=%s.",
+                attacker_ip, tenant, count, len(routers), unknown_count, approver)
+    # #247 security-auditor review: unknown_count is surfaced separately from
+    # success_count, never folded into it — a caller (agent.py's
+    # dispatch_block_via_broker) that treated an unconfirmed router the same as
+    # a confirmed failure would risk a real double-dispatch on retry.
     return {"status": "executed", "executed": True, "tenant": tenant,
             "router_count": len(routers), "success_count": count,
+            "unknown_count": unknown_count,
             "message": f"IP {attacker_ip} blocked on {count}/{len(routers)} "
-                       f"router(s) for tenant '{tenant}'."}
+                       f"router(s) for tenant '{tenant}' ({unknown_count} unknown)."}
 
 
 @app.get("/pending")
@@ -371,11 +376,11 @@ async def approve(request: Request):
                         "approver": approver, "result": f"no routers for tenant {tenant}"})
         raise HTTPException(status_code=422, detail=f"no routers for tenant '{tenant}'")
 
-    count = await dispatch_block_to_all(routers, attacker_ip)
+    count, unknown_count = await dispatch_block_to_all(routers, attacker_ip)
     _append_action({"id": action_id, "ts": time.time(), "status": "approved",
                     "approver": approver, "tenant": tenant,
-                    "result": f"{count}/{len(routers)} routers"})
-    return {"status": "executed", "approver": approver,
+                    "result": f"{count}/{len(routers)} routers ({unknown_count} unknown)"})
+    return {"status": "executed", "approver": approver, "unknown_count": unknown_count,
             "message": f"IP {attacker_ip} blocked on {count}/{len(routers)} "
                        f"router(s) for tenant '{tenant}'."}
 

@@ -187,10 +187,17 @@ services:
           # license: field/document-level security is a Gold+ feature and the PUT
           # 403s outright under Basic (security-auditor's suggested FLS grant would
           # have silently failed to apply — this compose block discards curl's
-          # output, so nothing would have surfaced the failure). Acceptable as
-          # plain read-only: metric_stuck_approval_claims() only ever runs a
-          # _count (never returns _source), so no document content reaches this
-          # identity regardless of the broader grant.
+          # output, so nothing would have surfaced the failure). Accepted residual
+          # risk (security-auditor review): the GRANT is plain read (indices:data/
+          # read/*), so a compromised slo_metrics credential could run a full
+          # _search here, not just the _count metric_stuck_approval_claims() itself
+          # issues — that would return full checkpoint docs (raw alert payloads,
+          # approver identities, live approval-gate state) across every tenant.
+          # Accepted because it's read-only (no write/delete, no gate bypass) and
+          # this identity already reads logstash-security-* — the incremental
+          # blast radius from a compromise is approval-workflow visibility, not a
+          # new capability class. Revisit with a filtered alias (defense-in-depth,
+          # not a real boundary) or FLS if this stack is ever licensed Gold+.
           # configs/elasticsearch/roles/slo_metrics_reader.json is authoritative, keep
           # this inline copy in sync.
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/slo_metrics_reader -d "{\"indices\":[{\"names\":[\".alerts-security.alerts-*\",\"soar-actions-*\",\"logstash-security-*\"],\"privileges\":[\"read\",\"view_index_metadata\"]},{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-slo-metrics\"],\"privileges\":[\"create_index\",\"create\"]}],\"applications\":[{\"application\":\"kibana-.kibana\",\"privileges\":[\"feature_generalCases.read\"],\"resources\":[\"*\"]}]}" > /dev/null;

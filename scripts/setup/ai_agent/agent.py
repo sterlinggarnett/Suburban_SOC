@@ -13,7 +13,7 @@ CISO reporting pipeline (weekly_ciso_report.py).
 from dataclasses import dataclass, replace
 from typing import Optional
 from flask import request, jsonify
-from checkpoints import write_checkpoint, read_checkpoint, is_duplicate, is_awaiting_approval, generate_dedup_key, claim_approval, should_suppress_technique
+from checkpoints import write_checkpoint, read_checkpoint, is_duplicate, is_awaiting_approval, generate_dedup_key, claim_approval, release_claim, should_suppress_technique
 from retry import retry
 
 import os
@@ -120,11 +120,16 @@ APPROVAL_QUEUE = os.environ.get(
 _QUEUE_LOCK_PATH = APPROVAL_QUEUE + ".lock"
 _queue_lock = threading.Lock()
 # audit #172: any status other than "pending" means the action is no longer
-# awaiting approval — "claimed" marks one mid-execution (see approve_action).
-# "denied" is forward-reserved for a future reject flow — no code path
-# writes it today (there is no /deny endpoint), but it's included here so
-# archival/filtering already treat it as terminal once one exists.
-_RESOLVED_STATUSES = ("approved", "denied", "claimed")
+# AWAITING ITS FIRST APPROVAL — but only "approved"/"denied" are truly
+# terminal. #247: "claimed" (execution in progress) and "isolation_failed"
+# (execution failed and the claim was released — see execute_approved())
+# deliberately stay OUT of this set: both mean the id is still actionable —
+# a human needs to see it in /pending, either because it's stuck mid-run or
+# because a retry can still succeed — not silently disappear. "denied" is
+# forward-reserved for a future reject flow — no code path writes it today
+# (there is no /deny endpoint), but it's included here so archival/filtering
+# already treat it as terminal once one exists.
+_RESOLVED_STATUSES = ("approved", "denied")
 
 # Hive-Mind broker — the router-block dispatcher (#109). The agent runs in a slim
 # container with no ssh/sudo, so it can't run isolate.sh against a router itself.
@@ -1097,7 +1102,25 @@ class Agent:
         ok, detail = _execute_isolation(ctx.target_mac, ctx.target_ip, ctx.tenant_id)  # type: ignore
 
         case_id = ckpt['context'].get('case_id', '')
-        phase = "EXECUTED" if ok else "ESCALATED"
+        if ok:
+            phase = "EXECUTED"
+        else:
+            # #247: nothing was actually dispatched, so the at-most-once
+            # invariant claim_approval() guards is not at risk — release the
+            # claim and put the checkpoint back in PENDING_APPROVAL so a
+            # retried /approve (e.g. once a broker outage clears) can win the
+            # claim race again instead of losing to a stale 409 forever.
+            phase = "PENDING_APPROVAL"
+            try:
+                release_claim(tenant_id, alert_id)
+            except Exception as e:  # noqa: BLE001
+                # Best-effort: a failed release leaves this claim stuck rather
+                # than retryable. Never silently — metric_stuck_approval_claims()
+                # (slo_metrics.py) surfaces a claim that outlives its window
+                # with no EXECUTED resolution, which this now is.
+                logger.error(f"Failed to release claim for {alert_id} after a "
+                             f"failed execution — it will stay stuck until "
+                             f"manually cleared: {e}")
         # Preserve context (case_id included) through this transition too —
         # see check()'s docstring on why omitting it would wipe it.
         self.check(ctx, phase, context=ckpt['context'])  # type: ignore
@@ -1108,10 +1131,17 @@ class Agent:
             if ok:
                 close_case(tenant_id, case_id, "true_positive_contained")
 
-        _append_pending_action_or_warn({"id": alert_id, "ts": time.time(), "status": "approved",
+        # #247: a failed attempt must be visibly distinct from a real success
+        # in the approval-queue audit trail, not recorded as "approved" either
+        # way — and must NOT land in _RESOLVED_STATUSES, so it keeps showing
+        # in /pending as actionable (a retry can still succeed) instead of
+        # silently vanishing the moment it's claimed.
+        queue_status = "approved" if ok else "isolation_failed"
+        _append_pending_action_or_warn({"id": alert_id, "ts": time.time(), "status": queue_status,
                                          "tenant": tenant_id, "approver": approver, "detail": detail})
 
-        return AgentResult(200, {"status": phase.lower(), "detail": detail,
+        response_status = "executed" if ok else "isolation_failed"
+        return AgentResult(200, {"status": response_status, "detail": detail,
                                   "alert_id": alert_id, "case_id": case_id})
 
     def perceive(self, payload: dict) -> Optional[AlertContext]:

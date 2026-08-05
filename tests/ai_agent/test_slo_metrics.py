@@ -164,6 +164,79 @@ class MetricFunctionTests(unittest.TestCase):
                                return_value=_FakeResponse(200, {"count": 0})):
             self.assertEqual(slo_metrics.metric_audit_write_failures(), 0)
 
+    # --- #247: stuck approval claims -----------------------------------------
+    def _claim_hit(self, alert_id="alert-1", tenant="tenant-a"):
+        return {"_source": {"alert_id": alert_id, "tenant": {"id": tenant}}}
+
+    def test_stuck_approval_claims_raises_on_search_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_stuck_approval_claims()
+
+    def test_stuck_approval_claims_raises_on_search_non_200(self):
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(500)):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_stuck_approval_claims()
+
+    def test_stuck_approval_claims_zero_when_no_old_claims(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})):
+            self.assertEqual(slo_metrics.metric_stuck_approval_claims(), 0)
+
+    def test_stuck_approval_claims_not_counted_when_executed(self):
+        # A claim whose paired checkpoint resolved to EXECUTED is a normal
+        # completed run, not a stuck one — even though the .claim doc itself
+        # is old (it's never deleted on success).
+        with mock.patch.object(slo_metrics, "es", side_effect=[
+            _FakeResponse(200, {"hits": {"hits": [self._claim_hit()]}}),
+            _FakeResponse(200, {"_source": {"phase": "EXECUTED"}}),
+        ]):
+            self.assertEqual(slo_metrics.metric_stuck_approval_claims(), 0)
+
+    def test_stuck_approval_claims_counted_when_still_pending_approval(self):
+        # #247's own release-on-failure path puts a released claim's checkpoint
+        # back at PENDING_APPROVAL — but the .claim doc itself is deleted at
+        # the same time, so it would never be found by the search above. A
+        # .claim doc that's STILL there with a PENDING_APPROVAL pair is the
+        # crash-mid-execution gap this metric exists to catch.
+        with mock.patch.object(slo_metrics, "es", side_effect=[
+            _FakeResponse(200, {"hits": {"hits": [self._claim_hit()]}}),
+            _FakeResponse(200, {"_source": {"phase": "PENDING_APPROVAL"}}),
+        ]):
+            self.assertEqual(slo_metrics.metric_stuck_approval_claims(), 1)
+
+    def test_stuck_approval_claims_counted_when_checkpoint_missing(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=[
+            _FakeResponse(200, {"hits": {"hits": [self._claim_hit()]}}),
+            _FakeResponse(404),
+        ]):
+            self.assertEqual(slo_metrics.metric_stuck_approval_claims(), 1)
+
+    def test_stuck_approval_claims_raises_on_checkpoint_lookup_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=[
+            _FakeResponse(200, {"hits": {"hits": [self._claim_hit()]}}),
+            _FakeResponse(500),
+        ]):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_stuck_approval_claims()
+
+    def test_stuck_approval_claims_skips_malformed_hits(self):
+        malformed = {"_source": {"tenant": {"id": "tenant-a"}}}  # no alert_id
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": [malformed]}})):
+            self.assertEqual(slo_metrics.metric_stuck_approval_claims(), 0)
+
+    def test_stuck_approval_claims_counts_multiple_tenants_independently(self):
+        hits = [self._claim_hit("alert-1", "tenant-a"), self._claim_hit("alert-2", "tenant-b")]
+        with mock.patch.object(slo_metrics, "es", side_effect=[
+            _FakeResponse(200, {"hits": {"hits": hits}}),
+            _FakeResponse(200, {"_source": {"phase": "PENDING_APPROVAL"}}),  # tenant-a: stuck
+            _FakeResponse(200, {"_source": {"phase": "EXECUTED"}}),          # tenant-b: fine
+        ]) as mock_es:
+            self.assertEqual(slo_metrics.metric_stuck_approval_claims(), 1)
+        self.assertIn("agent-checkpoints-tenant-a", mock_es.call_args_list[1].args[1])
+        self.assertIn("agent-checkpoints-tenant-b", mock_es.call_args_list[2].args[1])
+
     def test_raw_alert_volume_raises_on_es_failure(self):
         with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
             with self.assertRaises(slo_metrics.MetricUnavailable):

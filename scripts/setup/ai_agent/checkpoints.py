@@ -182,3 +182,31 @@ def claim_approval(tenant_id: str, alert_id: str, approver: str) -> bool:
         return False
     res.raise_for_status()
     return True
+
+
+def release_claim(tenant_id: str, alert_id: str) -> bool:
+    """Frees a claim so a failed-but-not-executed action can be retried (#247).
+
+    claim_approval()'s at-most-once guarantee is a one-way door by design — but
+    that also means an execution that fails AFTER winning the claim (broker
+    outage, no routers configured, etc.) permanently strands the alert: every
+    retried /approve loses the claim race forever, even though nothing was
+    actually dispatched. Callers use this ONLY after confirming execution did
+    NOT happen (ok == False from _execute_isolation) — the at-most-once
+    invariant still holds, since deleting the claim just returns the alert to
+    the same "unclaimed, PENDING_APPROVAL" state it was in before the failed
+    attempt, not to some new state a real dispatch could race against.
+
+    A 404 (already gone — a concurrent release, or it was never created) is
+    treated as success: the goal state ("no claim exists") is already true.
+    Any other error propagates so callers can decide how to surface a claim
+    that could not be released (it stays stuck, but at least visibly so — see
+    slo_metrics.metric_stuck_approval_claims()).
+    """
+    index = f"agent-checkpoints-{tenant_id}"
+    url = f"{ES_HOST}/{index}/_doc/{alert_id}.claim"
+    res = requests.delete(url, auth=_get_auth(), verify=ES_VERIFY, timeout=5)
+    if res.status_code in (200, 404):
+        return True
+    res.raise_for_status()
+    return True

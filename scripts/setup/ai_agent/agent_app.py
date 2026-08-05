@@ -52,10 +52,12 @@ def list_pending():
 
     try:
         # The queue is append-only (compact_agent_approval_queue.py archives
-        # resolved history separately) — an id can have multiple rows over
-        # its lifecycle (pending -> claimed -> approved). Show only ids whose
-        # LATEST row is still "pending"; a claimed-or-resolved id must not
-        # keep appearing here as if it were still awaiting approval.
+        # resolved history separately) — an id can have multiple rows over its
+        # lifecycle (pending -> claimed -> approved/isolation_failed). Show
+        # every id whose LATEST row is NOT a true terminal state (#247:
+        # "claimed" and "isolation_failed" both stay visible here on purpose —
+        # a stuck-mid-execution or failed-but-retryable id must not silently
+        # disappear the moment it's claimed, only once it actually resolves).
         latest_status = {}
         for action in _read_queue():
             latest_status[action.get("id")] = action

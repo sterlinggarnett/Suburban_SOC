@@ -16,6 +16,8 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
                                                   hits over the window (#216), no
                                                   target — a before/after baseline
                                                   for detection tuning, not a target
+  Stuck approval claims            == 0        — /approve claims older than 30 min
+                                                  with no EXECUTED resolution (#247)
 
 Pure stdlib (requests). Env (auto-loaded from scripts/setup/.env):
   ES_URL, ES_USER, ES_PASS/ELASTIC_PASSWORD, KIBANA_URL, NTFY_TOPIC.
@@ -59,12 +61,15 @@ TARGETS = {
     "ingest_lag_seconds":  float(os.environ.get("SLO_INGEST_LAG_MAX_S", "300")),
     "parse_error_pct":     float(os.environ.get("SLO_PARSE_ERR_MAX_PCT", "1")),
     "audit_write_failures": float(os.environ.get("SLO_AUDIT_WRITE_FAIL_MAX", "2")),
+    # #247: any claim that outlives SLO_STUCK_CLAIM_MAX_MIN with no EXECUTED
+    # resolution is a stranded alert, not a routine condition — target is 0.
+    "stuck_approval_claims": float(os.environ.get("SLO_STUCK_CLAIM_MAX", "0")),
 }
 # Comparator per metric: True = lower is better (value <= target).
 LOWER_BETTER = {
     "mttd_minutes": True, "mttr_minutes": True, "coverage_techniques": False,
     "false_positive_pct": True, "ingest_lag_seconds": True, "parse_error_pct": True,
-    "audit_write_failures": True,
+    "audit_write_failures": True, "stuck_approval_claims": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
 # not a benign "n/a". A dead/unreachable pipeline produces no fresh docs, so
@@ -232,6 +237,63 @@ def metric_audit_write_failures():
     return _count("soc-agent-health-*", win)
 
 
+def metric_stuck_approval_claims():
+    """Count of approval claims stuck with no resolution (#247).
+
+    checkpoints.claim_approval() writes a `{alert_id}.claim` marker doc
+    (`phase: "CLAIMED"`) to win the at-most-once execution race; a normal run
+    resolves within seconds either to the main checkpoint's `phase: EXECUTED`
+    (success) or, since #247, back to `phase: PENDING_APPROVAL` with the claim
+    released (execute_approved() caught a confirmed failure and freed it for
+    retry). A claim doc older than SLO_STUCK_CLAIM_MAX_MIN whose paired
+    checkpoint is STILL neither of those (most likely: still PENDING_APPROVAL
+    because a process crash hit between the claim succeeding and either
+    resolution running, or the checkpoint doc is simply gone) represents
+    exactly the "permanently stranded, invisible" gap #247 exists to close —
+    #247's own release-on-failure fix only handles the failures it can
+    observe; this catches what it can't.
+
+    Two-step because ES can't join `{alert_id}.claim` against `{alert_id}` in
+    one query: list claim docs past the window (bounded, `size=200` — this
+    deployment's claim volume is nowhere near that), then look up each one's
+    paired checkpoint individually. Fine for a periodic metric; would not
+    scale to a request-path check, which is why this lives here and not in
+    agent.py's hot path.
+    """
+    cutoff_min = float(os.environ.get("SLO_STUCK_CLAIM_MAX_MIN", "30"))
+    body = {"size": 200, "query": {"bool": {"filter": [
+        {"term": {"phase": "CLAIMED"}},
+        {"range": {"@timestamp": {"lte": f"now-{cutoff_min:g}m"}}},
+    ]}}}
+    try:
+        r = es("POST", "/agent-checkpoints-*/_search", body)
+        if r.status_code != 200:
+            raise MetricUnavailable(f"agent-checkpoints-* claim search returned HTTP {r.status_code}")
+        hits = r.json().get("hits", {}).get("hits", [])
+
+        stuck = 0
+        for hit in hits:
+            src = hit.get("_source", {})
+            alert_id = src.get("alert_id")
+            tenant = src.get("tenant", {}).get("id")
+            if not alert_id or not tenant:
+                continue  # malformed claim doc — not this metric's problem to fix
+            ckpt = es("GET", f"/agent-checkpoints-{tenant}/_doc/{alert_id}")
+            if ckpt.status_code == 404:
+                stuck += 1  # claimed, but the paired checkpoint is gone entirely
+                continue
+            if ckpt.status_code != 200:
+                raise MetricUnavailable(
+                    f"checkpoint lookup for {alert_id} (tenant {tenant}) returned HTTP {ckpt.status_code}")
+            if ckpt.json().get("_source", {}).get("phase") != "EXECUTED":
+                stuck += 1
+        return stuck
+    except MetricUnavailable:
+        raise
+    except Exception as e:
+        raise MetricUnavailable(f"stuck approval claim check failed: {e}") from e
+
+
 def metric_raw_alert_volume():
     """Raw detection signal volume in the window, independent of whether a case
     was ever opened (#216) — metric_false_positive_pct() only sees analyst-
@@ -283,6 +345,7 @@ def main():
         "ingest_lag_seconds": metric_ingest_lag_seconds,
         "parse_error_pct": metric_parse_error_pct,
         "audit_write_failures": metric_audit_write_failures,
+        "stuck_approval_claims": metric_stuck_approval_claims,
         "raw_alert_volume": metric_raw_alert_volume,
     }
     values, errors = {}, {}

@@ -107,6 +107,13 @@ class FakeCheckpointStore:
             self._claims.add(key)
             return True
 
+    def release_claim(self, tenant_id, alert_id):
+        # Mirrors the real DELETE's idempotency: freeing an already-free (or
+        # never-claimed) key is still success, not an error (#247).
+        with self._lock:
+            self._claims.discard((tenant_id, alert_id))
+            return True
+
 
 def _sign(body: bytes, ts=None, secret=None):
     """Return (timestamp, 'sha256=<hmac>') for the replay-protected scheme: the HMAC
@@ -143,6 +150,7 @@ class AlertResponseTests(unittest.TestCase):
         mock.patch.object(agent, "is_duplicate", side_effect=self._store.is_duplicate).start()
         mock.patch.object(agent, "is_awaiting_approval", side_effect=self._store.is_awaiting_approval).start()
         mock.patch.object(agent, "claim_approval", side_effect=self._store.claim_approval).start()
+        mock.patch.object(agent, "release_claim", side_effect=self._store.release_claim).start()
 
         # Neutralize outbound side-effects. The broker dispatch is mocked to report
         # a successful block, so the autonomous/approve paths see containment succeed
@@ -353,6 +361,38 @@ class AlertResponseTests(unittest.TestCase):
         self.assertEqual(r.get_json()["status"], "executed")
         self.mock_dispatch.assert_called_once()    # the human approval dispatches it
         self.assertEqual(self.mock_dispatch.call_args[0][0], "1.2.3.4")
+
+    def test_failed_execution_releases_claim_for_retry(self):
+        # #247: a failed dispatch (broker down, no routers configured, etc.)
+        # must not permanently strand the alert — the claim is released so a
+        # retried /approve can win the claim race again once the underlying
+        # problem clears, and the failure must be visibly distinct from a
+        # real success rather than silently recorded as "approved".
+        draft = self._post({"severity": "critical", "source_ip": "1.2.3.4",
+                            "source_mac": GOOD_MAC}).get_json()
+        action_id = draft["action_id"]
+
+        self.mock_dispatch.return_value = (False, "no routers for tenant 'home-smith'")
+        first = self._post({"id": action_id, "approver": "analyst1"}, path="/approve")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.get_json()["status"], "isolation_failed")
+        self.mock_dispatch.assert_called_once()
+
+        # Visible in /pending — not silently dropped the moment it was
+        # claimed, and distinguishable from an actual success.
+        pending = self._get_pending().get_json()["pending"]
+        failed_entry = next((a for a in pending if a["id"] == action_id), None)
+        self.assertIsNotNone(failed_entry)
+        self.assertEqual(failed_entry["status"], "isolation_failed")
+
+        # Retry once the underlying problem is fixed. Different approver
+        # string (fresh signature) — avoids the replay/nonce guard rejecting
+        # an otherwise byte-identical request signed within the same second.
+        self.mock_dispatch.return_value = (True, "IP blocked on 1/1 router(s)")
+        second = self._post({"id": action_id, "approver": "analyst2"}, path="/approve")
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.get_json()["status"], "executed")
+        self.assertEqual(self.mock_dispatch.call_count, 2)
 
     def test_approve_twice_does_not_double_execute(self):
         # audit P2-9: re-approving an already-resolved id must NOT dispatch again.

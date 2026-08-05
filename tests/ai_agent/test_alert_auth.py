@@ -32,8 +32,17 @@ import unittest
 from unittest import mock
 
 # The shared secret must be set BEFORE importing agent_app (it is read at import).
+# setdefault, not "=": agent.py's module-level constants are only computed on the
+# FIRST import within the pytest process — other test files in this dir may
+# collect first and already have set (and locked in) the same literal values.
 SECRET = "unit_test_secret"
-os.environ["SOC_AGENT_HMAC_SECRET"] = SECRET
+os.environ.setdefault("SOC_AGENT_HMAC_SECRET", SECRET)
+
+# #246: /approve and /pending are gated on a SEPARATE secret from /alert's — a
+# credential that signs /alert (Logstash's) must not also authorize/view
+# containment actions. Also set before import.
+APPROVER_SECRET = "unit_test_approver_secret"
+os.environ.setdefault("SOC_APPROVER_HMAC_SECRET", APPROVER_SECRET)
 
 # agent_app imports its sibling reporting module at load time; stub it so this
 # unit test doesn't pull in PDF/LLM dependencies.
@@ -99,11 +108,13 @@ class FakeCheckpointStore:
             return True
 
 
-def _sign(body: bytes, ts=None):
+def _sign(body: bytes, ts=None, secret=None):
     """Return (timestamp, 'sha256=<hmac>') for the replay-protected scheme: the HMAC
-    is over '<timestamp>.' + body (audit P1-1)."""
+    is over '<timestamp>.' + body (audit P1-1). `secret` defaults to SECRET
+    (/alert's); pass APPROVER_SECRET to sign as the /approve + /pending credential."""
     ts = ts or str(int(time.time()))
-    sig = "sha256=" + hmac.new(SECRET.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+    key = (secret if secret is not None else SECRET).encode()
+    sig = "sha256=" + hmac.new(key, f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
     return ts, sig
 
 
@@ -153,22 +164,28 @@ class AlertResponseTests(unittest.TestCase):
         self.addCleanup(mock.patch.stopall)
         self.addCleanup(lambda: os.unlink(self._qfile.name))
 
-    def _post(self, payload, sign=True, tamper=False, path="/alert", ts=None):
+    def _post(self, payload, sign=True, tamper=False, path="/alert", ts=None, secret=None):
         body = json.dumps(payload).encode()
         headers = {"Content-Type": "application/json"}
         if sign:
-            tstamp, sig = _sign(body, ts)
+            # #246: /approve is gated on APPROVER_SECRET, not /alert's SECRET —
+            # mirrors what a real operator's client would sign with. An explicit
+            # `secret` overrides this (used to prove cross-secret rejection).
+            use_secret = secret if secret is not None else (APPROVER_SECRET if path == "/approve" else SECRET)
+            tstamp, sig = _sign(body, ts, use_secret)
             if tamper:
                 sig = sig[:-1] + ("0" if sig[-1] != "0" else "1")
             headers["x-elastic-signature"] = sig
             headers["x-elastic-timestamp"] = tstamp
         return self.client.post(path, data=body, headers=headers)
 
-    def _get_pending(self, sign=True):
-        """GET /pending is HMAC-gated; sign the (empty) body like an operator would."""
+    def _get_pending(self, sign=True, secret=None):
+        """GET /pending is HMAC-gated on APPROVER_SECRET; sign the (empty) body
+        like an operator would."""
         headers = {}
         if sign:
-            tstamp, sig = _sign(b"")
+            use_secret = secret if secret is not None else APPROVER_SECRET
+            tstamp, sig = _sign(b"", secret=use_secret)
             headers["x-elastic-signature"] = sig
             headers["x-elastic-timestamp"] = tstamp
         return self.client.get("/pending", headers=headers)
@@ -206,6 +223,45 @@ class AlertResponseTests(unittest.TestCase):
     def test_pending_unsigned_rejected(self):
         r = self._get_pending(sign=False)
         self.assertEqual(r.status_code, 401)
+
+    # --- #246: /approve's credential is independent of /alert's --------------
+    def test_alert_secret_cannot_sign_approve(self):
+        # A credential that signs /alert (Logstash's) must NOT also authorize
+        # execution — the core property #246 exists to guarantee.
+        draft = self._post({"severity": "critical", "source_ip": "1.2.3.4",
+                            "source_mac": GOOD_MAC}).get_json()
+        r = self._post({"id": draft["action_id"], "approver": "attacker"},
+                       path="/approve", secret=SECRET)
+        self.assertEqual(r.status_code, 401)
+        self.mock_dispatch.assert_not_called()
+
+    def test_alert_secret_cannot_sign_pending(self):
+        r = self._get_pending(secret=SECRET)
+        self.assertEqual(r.status_code, 401)
+
+    def test_approver_secret_cannot_sign_alert(self):
+        # And the reverse: holding the approval credential must not let a
+        # caller forge /alert intake either.
+        body = json.dumps({"severity": "critical", "source_mac": GOOD_MAC}).encode()
+        ts, sig = _sign(body, secret=APPROVER_SECRET)
+        r = self.client.post("/alert", data=body,
+                             headers={"Content-Type": "application/json",
+                                      "x-elastic-signature": sig,
+                                      "x-elastic-timestamp": ts})
+        self.assertEqual(r.status_code, 401)
+
+    def test_approve_uses_configured_identity_not_body_field(self):
+        # The "approver" field in the request body is unauthenticated,
+        # caller-controlled input — the approver of record must come from the
+        # trusted, operator-configured identity bound to APPROVER_SECRET instead.
+        draft = self._post({"severity": "critical", "source_ip": "1.2.3.4",
+                            "source_mac": GOOD_MAC}).get_json()
+        r = self._post({"id": draft["action_id"], "approver": "attacker-supplied-name"},
+                       path="/approve")
+        self.assertEqual(r.status_code, 200)
+        comment_text = self.mock_case_comment.call_args[0][-1]
+        self.assertIn(agent.APPROVER_IDENTITY, comment_text)
+        self.assertNotIn("attacker-supplied-name", comment_text)
 
     # --- replay protection (audit P1-1) --------------------------------------
     def test_replayed_alert_rejected(self):
@@ -410,6 +466,21 @@ class TenantResolverTests(unittest.TestCase):
             ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
         self.assertFalse(ok)
         self.assertIn("HIVE_MIND_SECRET", detail)
+
+    # --- #246: an operator misconfiguring the two secrets to be equal must not
+    # silently revert the /alert-vs-/approve separation this issue introduced ---
+    def test_resolve_approver_secret_rejects_equal_secrets(self):
+        same = b"same_value_for_both"
+        self.assertEqual(agent._resolve_approver_secret(same, same), b"")
+
+    def test_resolve_approver_secret_keeps_distinct_secrets(self):
+        approver, alert = b"approver_secret", b"alert_secret"
+        self.assertEqual(agent._resolve_approver_secret(approver, alert), approver)
+
+    def test_resolve_approver_secret_leaves_unset_secret_unset(self):
+        # Empty approver secret is the ordinary "not configured" fail-closed case,
+        # not the equal-secrets case — must not be compared/misreported as such.
+        self.assertEqual(agent._resolve_approver_secret(b"", b"alert_secret"), b"")
 
     def test_hosted_llm_egress_disabled_degrades_gracefully(self):
         # WS1.1 regression: LLM_ALLOW_HOSTED was referenced but never defined, so

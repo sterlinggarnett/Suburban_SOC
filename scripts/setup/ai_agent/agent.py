@@ -149,6 +149,43 @@ HMAC_TS_HEADER     = "x-elastic-timestamp"
 HMAC_SECRET        = os.environ.get("SOC_AGENT_HMAC_SECRET", "").encode("utf-8")
 HMAC_REPLAY_WINDOW = int(os.environ.get("HMAC_REPLAY_WINDOW", "300"))  # seconds
 
+# #246: /approve executes a real isolation action and /pending discloses the
+# drafted-action queue — a materially higher-privilege operation than /alert
+# (Logstash's untrusted-input intake). Logstash holds HMAC_SECRET so it can sign
+# /alert; that made it, transitively, also able to sign /approve. Anyone who can
+# read HMAC_SECRET out of the Logstash container (RCE, container escape, a
+# crafted Ruby filter) could both draft AND approve containment end-to-end.
+# APPROVER_HMAC_SECRET is a second, independent secret — provisioned to the
+# agent container only, never to Logstash's environment — so a Logstash
+# compromise can forge alerts but cannot authorize their own execution.
+def _resolve_approver_secret(approver_secret: bytes, alert_secret: bytes) -> bytes:
+    """Security-auditor review (#246): an operator who (mis)configures
+    SOC_APPROVER_HMAC_SECRET to the same value as SOC_AGENT_HMAC_SECRET would
+    silently undo the separation above — every guarantee stays "true in the code"
+    while being false in practice, with nothing to signal it. Detect and fail
+    closed on /approve + /pending rather than serve a guarantee that no longer
+    holds; /alert is unaffected either way."""
+    if approver_secret and hmac.compare_digest(approver_secret, alert_secret):
+        logger.critical(
+            "SOC_APPROVER_HMAC_SECRET equals SOC_AGENT_HMAC_SECRET — the #246 "
+            "approval separation is void. Refusing to honor it: /approve and "
+            "/pending will fail closed until the two secrets are set to "
+            "different values.")
+        return b""
+    return approver_secret
+
+
+APPROVER_HMAC_SECRET = _resolve_approver_secret(
+    os.environ.get("SOC_APPROVER_HMAC_SECRET", "").encode("utf-8"), HMAC_SECRET)
+# The identity recorded as "approver" of record. A shared-secret HMAC scheme
+# cannot cryptographically distinguish which human holds APPROVER_HMAC_SECRET,
+# but it CAN prove *someone* holding it authenticated the request — so the
+# recorded identity is this trusted, operator-configured label, never the
+# unauthenticated "approver" field a caller can put in the request body.
+# `or` (not a two-arg .get default): a var that's SET but empty must still fall
+# back — os.environ.get(key, default) only applies default when the key is absent.
+APPROVER_IDENTITY = os.environ.get("SOC_APPROVER_IDENTITY") or "soc-analyst"
+
 # Replay/nonce cache: signature -> expiry epoch. Bounded by the window (pruned on use).
 _seen_sigs: dict[str, int] = {}
 _seen_sigs_lock = threading.Lock()
@@ -189,14 +226,19 @@ def sign_request(secret: bytes, raw_body: bytes, timestamp: str | None = None):
 
 
 def verify_signature(raw_body: bytes, signature_header: str | None,
-                     timestamp_header: str | None = None) -> bool:
+                     timestamp_header: str | None = None,
+                     secret: bytes = HMAC_SECRET,
+                     hmac_env_var: str = "SOC_AGENT_HMAC_SECRET") -> bool:
     """Constant-time HMAC verification with timestamp-freshness + replay protection.
 
     Verifies sha256=HMAC(secret, '<timestamp>.' + raw_body), requires the timestamp
     within +/- HMAC_REPLAY_WINDOW of now, and refuses a previously-seen signature.
+    `secret` defaults to HMAC_SECRET (/alert's, Logstash-held); callers gating a
+    different-trust-level endpoint (e.g. /approve) pass APPROVER_HMAC_SECRET (and
+    its name, for the log line below) instead — see _require_signature().
     """
-    if not HMAC_SECRET:
-        logger.critical("SOC_AGENT_HMAC_SECRET is not set — refusing all signed requests.")
+    if not secret:
+        logger.critical("%s is not set — refusing all signed requests.", hmac_env_var)
         return False
     if not signature_header or not timestamp_header:
         return False
@@ -208,32 +250,40 @@ def verify_signature(raw_body: bytes, signature_header: str | None,
     if abs(now - ts) > HMAC_REPLAY_WINDOW:
         logger.warning("Rejected request: timestamp outside the +/-%ss replay window.", HMAC_REPLAY_WINDOW)
         return False
-    expected = "sha256=" + hmac.new(HMAC_SECRET, _signed_payload(timestamp_header, raw_body), hashlib.sha256).hexdigest()
+    expected = "sha256=" + hmac.new(secret, _signed_payload(timestamp_header, raw_body), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, signature_header):
         return False
     # Consult/record the nonce cache only AFTER the signature is proven valid, so an
-    # attacker cannot poison it with forged signatures.
+    # attacker cannot poison it with forged signatures. The nonce cache is shared
+    # across both secrets (a raw signature string collision across two independent
+    # HMAC keys is cryptographically negligible), so this still can't be used to
+    # replay a /alert-signed request against /approve or vice versa — the earlier
+    # compare_digest against the endpoint's OWN secret already rejected it.
     if not _nonce_is_fresh(signature_header, now):
         logger.warning("Rejected request: replayed signature (already seen within the window).")
         return False
     return True
 
 
-def _require_signature():
+def _require_signature(secret: bytes = HMAC_SECRET, hmac_env_var: str = "SOC_AGENT_HMAC_SECRET"):
     """Fail-closed HMAC gate for privileged operator endpoints.
 
     Every endpoint that executes a destructive action (/approve), discloses the
     response queue (/pending), or spawns work (/weekly-report) MUST authenticate —
     not just /alert. Without this an unauthenticated caller could list drafted
     actions and approve (and thereby execute) router isolation, defeating the HMAC
-    gate on /alert entirely. Callers sign the RAW request body with
-    SOC_AGENT_HMAC_SECRET (same WS0.2 scheme as /alert; GET requests sign the empty
-    body). Returns a Flask (response, status) tuple to abort with on failure, or
-    None when the request is authenticated.
+    gate on /alert entirely. Callers sign the RAW request body (GET requests sign
+    the empty body) with `secret` — defaults to HMAC_SECRET (/alert's), but #246
+    callers gating /approve and /pending pass APPROVER_HMAC_SECRET so that holding
+    Logstash's /alert-signing credential is not sufficient to authorize or even
+    view containment actions. Returns a Flask (response, status) tuple to abort
+    with on failure, or None when the request is authenticated.
     """
     if not verify_signature(request.get_data(), request.headers.get(HMAC_HEADER),
-                            request.headers.get(HMAC_TS_HEADER)):
-        logger.warning("Rejected %s: missing/invalid/replayed HMAC signature.", request.path)
+                            request.headers.get(HMAC_TS_HEADER), secret=secret,
+                            hmac_env_var=hmac_env_var):
+        logger.warning("Rejected %s: missing/invalid/replayed HMAC signature (%s).",
+                       request.path, hmac_env_var)
         return jsonify({"status": "unauthorized"}), 401
     return None
 
@@ -987,7 +1037,7 @@ class Agent:
 
         return AgentResult(200, resp)
 
-    def execute_approved(self, tenant_id: str, alert_id: str, approver: str = "human") -> AgentResult:
+    def execute_approved(self, tenant_id: str, alert_id: str, approver: str) -> AgentResult:
         # is_awaiting_approval / claim_approval / read_checkpoint are all
         # ES-backed; any of them failing means we can't safely tell "pending"
         # from "already executed" — fail closed (503) rather than risk a

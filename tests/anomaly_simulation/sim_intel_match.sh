@@ -38,16 +38,28 @@ source "$HERE/../../scripts/setup/lib/es_common.sh"
 
 # /pending is HMAC-gated (audit P0-2) with replay protection (audit P1-1): sign
 # "<timestamp>." + empty-body and send both x-elastic-signature and
-# x-elastic-timestamp, using the same SOC_AGENT_HMAC_SECRET the agent uses.
+# x-elastic-timestamp. #246: gated on SOC_APPROVER_HMAC_SECRET, a SEPARATE secret
+# from /alert's SOC_AGENT_HMAC_SECRET (a Logstash compromise must not be able to
+# enumerate drafted containment actions) — sign with that one, not the agent's.
 agent_pending_count() {
-  local ts sig
-  if [[ -n "${SOC_AGENT_HMAC_SECRET:-}" ]]; then
+  local ts sig resp code body
+  if [[ -n "${SOC_APPROVER_HMAC_SECRET:-}" ]]; then
     ts=$(date +%s)
-    sig="sha256=$(printf '%s.' "$ts" | openssl dgst -sha256 -hmac "$SOC_AGENT_HMAC_SECRET" | awk '{print $2}')"
+    sig="sha256=$(printf '%s.' "$ts" | openssl dgst -sha256 -hmac "$SOC_APPROVER_HMAC_SECRET" | awk '{print $2}')"
   fi
-  curl -s --max-time 6 -H "x-elastic-signature: ${sig:-}" -H "x-elastic-timestamp: ${ts:-}" \
-    "$AGENT_URL/pending" \
-    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("count",0))' 2>/dev/null || echo 0
+  resp=$(curl -s --max-time 6 -w '\n%{http_code}' -H "x-elastic-signature: ${sig:-}" -H "x-elastic-timestamp: ${ts:-}" \
+    "$AGENT_URL/pending")
+  code="${resp##*$'\n'}"
+  body="${resp%$'\n'*}"
+  if [[ "$code" != "200" ]]; then
+    # Coercing this to a bare "0" (as this helper used to) would silently read as
+    # "no draft queued" to the before/after assertion below — indistinguishable
+    # from the SOAR loop actually working. Surface it instead.
+    echo "[ERR] GET /pending failed (HTTP $code, is SOC_APPROVER_HMAC_SECRET set in .env?)" >&2
+    echo "ERR"
+    return
+  fi
+  printf '%s' "$body" | python3 -c 'import sys,json;print(json.load(sys.stdin)["count"])' 2>/dev/null || echo "ERR"
 }
 fail=0
 
@@ -83,7 +95,9 @@ fi
 
 # 2. Agent: /alert drafted a response (pending count grew)
 after=$(agent_pending_count)
-if [[ "$after" -gt "$before" ]]; then
+if [[ "$before" == "ERR" || "$after" == "ERR" ]]; then
+  echo "[FAIL] SOAR: cannot confirm a draft was queued — GET /pending failed (see [ERR] above)"; fail=1
+elif [[ "$after" -gt "$before" ]]; then
   echo "[PASS] SOAR: /alert fired and drafted a response (pending $before -> $after)"
 else
   echo "[FAIL] SOAR: no new draft (pending $before -> $after) — did /alert fire/200?"; fail=1

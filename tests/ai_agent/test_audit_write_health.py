@@ -18,6 +18,9 @@ import unittest
 from unittest import mock
 
 os.environ["SOC_AGENT_HMAC_SECRET"] = "unit_test_secret"
+# #246: separate /approve + /pending credential, same collection-order
+# reasoning as above (agent.py reads both at import time).
+os.environ.setdefault("SOC_APPROVER_HMAC_SECRET", "unit_test_approver_secret")
 
 _stub = types.ModuleType("weekly_ciso_report")
 _stub.run_reporting_pipeline = lambda *a, **k: {"status": "stub"}  # type: ignore[attr-defined]

@@ -12,6 +12,7 @@ from flask import Flask, request, jsonify
 # Import everything else from our new core module
 from agent import (
     verify_signature, _require_signature, HMAC_HEADER, HMAC_TS_HEADER,
+    APPROVER_HMAC_SECRET, APPROVER_IDENTITY,
     _read_queue, safe_tenant, Agent, _RESOLVED_STATUSES
 )
 
@@ -43,7 +44,9 @@ def handle_kibana_webhook():
 
 @app.route("/pending", methods=["GET"])
 def list_pending():
-    auth_err = _require_signature()
+    # #246: gated on APPROVER_HMAC_SECRET, not /alert's HMAC_SECRET — Logstash
+    # holds the latter and has no business enumerating drafted containment actions.
+    auth_err = _require_signature(APPROVER_HMAC_SECRET, "SOC_APPROVER_HMAC_SECRET")
     if auth_err:
         return auth_err
 
@@ -64,7 +67,11 @@ def list_pending():
 
 @app.route("/approve", methods=["POST"])
 def approve_action():
-    auth_err = _require_signature()
+    # #246: /approve executes a real isolation action, so it is gated on
+    # APPROVER_HMAC_SECRET — a credential that signs /alert (Logstash's, the
+    # stack's largest untrusted-input surface) must NOT be sufficient to also
+    # authorize its execution.
+    auth_err = _require_signature(APPROVER_HMAC_SECRET, "SOC_APPROVER_HMAC_SECRET")
     if auth_err:
         return auth_err
 
@@ -72,7 +79,11 @@ def approve_action():
     # "id", not "action_id" — matches the broker's own /approve-equivalent
     # (hive-mind-broker/app.py) and its test suite.
     action_id = data.get("id")
-    approver = data.get("approver", "unknown")
+    # #246: the approver of record is the trusted, operator-configured identity
+    # bound to APPROVER_HMAC_SECRET — NOT this unauthenticated request-body field.
+    # A caller could put anything here; only the signature above is proof of who
+    # (or what) actually authorized the action.
+    approver = APPROVER_IDENTITY
     tenant = safe_tenant(data.get("tenant_id"))
 
     if not action_id:

@@ -154,8 +154,9 @@ within a milestone, not milestone completions in their own right:
   posture (CDP §12.3/§12.4): the §12.4 **exclusion list** is checked first
   (protected infrastructure is never isolated *or* drafted); **autonomous
   containment is OFF by default** — a critical alert is *drafted* to an approval
-  queue and a human executes it via `POST /approve` (HMAC-authenticated like
-  `/alert`; `/pending` is signed too — unsigned calls fail closed with 401);
+  queue and a human executes it via `POST /approve` (HMAC-authenticated;
+  `/pending` is signed too — unsigned calls fail closed with 401; since #246 both
+  verify against a credential separate from `/alert`'s — see below);
   auto-execution happens only
   when an operator opts in with `AUTONOMOUS_ISOLATION=true`. (This commit also
   repaired a non-functional merge of the agent module.)

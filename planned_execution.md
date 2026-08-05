@@ -257,9 +257,65 @@ architectural follow-ups #214's review filed:
   `.env.example` now state that limit rather than overclaiming. Fully closing
   it needs a second independent credential the way #246 did — its own issue.
 
-Once #273 merges, **#213** (the umbrella user story) can close and M12 is done.
+**M12 is COMPLETE** — 14/14 issues closed 2026-08-05. #273 merged via
+[PR #280](https://github.com/voltron-1/Suburban_SOC/pull/280) (16/16 CI green),
+and #213 closed with the full arc summarised.
 
-Next action: **merge PR #280**, then close #273 and #213.
+Next unstarted item: **M13 US2 — #232** (7 credential-access / AD-attack rules).
+Plan: [`plans/20260805-m13-us2-credential-access-rules.md`](plans/20260805-m13-us2-credential-access-rules.md).
+Two things in that plan would ship broken if skipped, both matching failure
+modes this repo has hit before: `configs/endpoint/winlogbeat.yml` does not
+collect event IDs 4769/4768/4662, so three of the seven rules could never fire;
+and the Security-channel ECS mapping lacks the fields those rules select on,
+which is the same silent no-op as #217's `ImagePath` defect.
+
+---
+
+## MILESTONE BACKLOG — M14/M16, opened 2026-08-05
+
+13 open issues had accumulated with **no milestone at all** — every one filed as
+a follow-up during an M11/M12 security review, real but deliberately out of
+scope for the issue being fixed at the time. Triaged into three milestones so
+they stop being invisible. None is started.
+
+**[M14 — SOAR Approval-Plane Operability & Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/18)** (7) —
+the operational tail of the plane M12 just rebuilt. Recommended next after M13 US2.
+- [ ] **#275** (P0, bug) — `slo_metrics_reader` never granted `soc-agent-health-*`,
+  which `metric_audit_write_failures()` queries every run. `slo-metrics.timer`
+  therefore exits 3 every 15 minutes in production; **#184's metric has never
+  actually worked**. Small fix, live defect.
+- [ ] **#277** (P0, security) — the broker's `/webhook/dispatch` *response* is
+  unauthenticated. An on-path attacker on `soc-mesh-net` can forge
+  `{"executed": true}` (agent closes the case and resolves the claim while no
+  router was touched) or black-hole a successful call to permanently stick the
+  claim. #247 made that response the sole arbiter of both outcomes.
+- [ ] **#276** (P1) — no operator tool to clear a genuinely stuck claim;
+  `agent.py`'s own log line points at a capability that does not exist.
+- [ ] **#278** (P1) — an `unknown` isolation outcome is permanently terminal, no
+  reconciliation path. Pairs with #276.
+- [ ] **#256** (P2) — `agent-checkpoints` has no retention mechanism (ILM does not
+  fit a non-rolling upsert-by-id index).
+- [ ] **#257** (P2) — hardening follow-ups from #245's review.
+- [ ] **#259** (tech-debt) — `slo_metrics.py`'s hand-rolled `.env` parser breaks on
+  inline comments.
+
+**[M15 — Detection Correctness & Pipeline Fidelity](https://github.com/voltron-1/Suburban_SOC/milestone/19)** (3) —
+whether the *existing* corpus behaves as written, as distinct from M13's count.
+- [ ] **#263** (P1, security) — `ignore_above: 8191` lets both PowerShell rules be
+  bypassed by payload length. **Compounds as M13 grows the corpus**, so this
+  should not trail M13 by much.
+- [ ] **#261** (P1) — Zeek T1046/T1110 classification tags every matching event
+  rather than an aggregated notice.
+- [ ] **#267** (P1) — `soar_quarantine_alert.json` Watcher has no HMAC auth and may
+  not install at all.
+
+**[M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20)** (3)
+- [ ] **#265** (P2) — **DEFERRED**, gated on an external event: Winlogbeat/endpoint
+  Filebeat have no client cert minted. Harmless while no endpoint is deployed;
+  a hard blocker the moment one is.
+- [ ] **#270** (P2) — `intel-refresh.service` co-locates config with data Zeek
+  executes as root, and re-trusts the CA on every use.
+- [ ] **#271** (P2) — the indicator index never retracts an indicator a feed removed.
 
 ---
 
@@ -731,6 +787,20 @@ are implemented in code; checked off with that one caveat noted inline.
 
 ## LAST SESSION — 2026-08-05 (later)
 
+- **M12 CLOSED, 14/14.** #273 merged (PR #280, 16/16 green), #213 closed with the
+  full arc summarised. One residual risk is documented rather than closed: the
+  broker's `/approve` and `/webhook/dispatch` share a single `HIVE_MIND_SECRET`,
+  so approver forgery is narrowed from an arbitrary string to one of two labels
+  selected by URL — not proof that a human acted. The docstring, compose comment
+  and `.env.example` now state that limit instead of overclaiming. Closing it
+  needs a second broker credential mirroring #246's split.
+- **Triaged the 13 unmilestoned issues into M14/M15/M16** (see MILESTONE BACKLOG
+  above). Every one was a review follow-up that had accumulated with no
+  milestone — invisible to any milestone-based view of the work. Two are P0
+  defects in already-shipped code, not new features: #275 (#184's metric has
+  never functioned in production) and #277 (forgeable containment outcome).
+  README, wiki Home, and project board #17 all updated to match; the wiki's
+  Project Status also had a garbled M11 entry from a bad paste, repaired.
 - **#247 closed** — PR #279 merged to `main` (`ef96b61`). Closed manually, since
   the PR body had no closing keyword and the merge therefore didn't auto-close
   it. Worth remembering as a recurring trap: this is the second M12 issue

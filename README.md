@@ -52,6 +52,9 @@ Milestones mirror the [GitHub Milestones](https://github.com/voltron-1/Suburban_
 M1–M6 are the completed MVP; M7–M11 follow the phases of the
 [SOC Maturity Roadmap](docs/SOC-maturity-roadmap.md); M12 is a
 post-remediation integrity + detection-tuning pass filed after M11 shipped.
+M14–M16 were opened 2026-08-05 to triage the follow-up issues that M11/M12's
+security reviews filed — work that was real but deliberately out of scope for
+the issue being fixed at the time, and which had accumulated untracked.
 
 | Milestone | Title | Status |
 |---|---|---|
@@ -66,8 +69,11 @@ post-remediation integrity + detection-tuning pass filed after M11 shipped.
 | M9 | Operational Maturity (SOC-CMM Level 3) (Phase 2) | ✅ Complete (5/5) |
 | M10 | SOC 2 Type II Technical Control Readiness (Phase 3) | ✅ Complete — 7/7 (WS3.1–3.7) |
 | M11 | Agent Orchestration & Compliance (Phase 4) | ✅ Complete (merged 2026-07-20) |
-| M12 | Approval Gate Integrity & Detection Engineering Tuning | 🚧 In progress ([#213](https://github.com/voltron-1/Suburban_SOC/issues/213)) — Phase 0 (#214) merged 2026-08-02, Phases 1–4 remain |
-| M13 | Detection Expansion: 35 → 105 Sigma Rules (Campus SOC) | 🚧 In progress ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/17), 7 rule-batch user stories) — process.args mapping fix merged 2026-08-02 (#249/#250, all 45 pre-existing rules affected); US1 (10 Windows LOLBin rules) implemented and reviewed, PR open |
+| M12 | Approval Gate Integrity & Detection Engineering Tuning | ✅ Complete (14/14 issues, closed 2026-08-05) — restored the atomic approval claim dropped by `2bb3d8f`, then hardened it three more times via #245/#246/#247/#273 |
+| M13 | Detection Expansion: 35 → 105 Sigma Rules (Campus SOC) | 🚧 In progress ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/17), 7 rule-batch user stories, 20 issues open) — `process.args` mapping fix merged 2026-08-02 (#249/#250, all 45 pre-existing rules affected); US1 (10 Windows LOLBin rules) merged 2026-08-03. **Next: US2 (#232)** |
+| M14 | SOAR Approval-Plane Operability & Hardening | 📋 Planned ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/18), 7 issues) — the operational tail of M12: two P0 defects in already-shipped work (#275, #277) plus the missing operator tooling for claims that cannot auto-recover |
+| M15 | Detection Correctness & Pipeline Fidelity | 📋 Planned ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/19), 3 issues) — whether the *existing* corpus behaves as written, as opposed to M13's rule count. #263 compounds as M13 grows |
+| M16 | Endpoint Onboarding & Threat-Intel Integrity | 📋 Planned ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/20), 3 issues) — client certs for endpoint shippers (gated on a real endpoint being deployed) plus two threat-intel integrity gaps |
 
 > **What "✅ Complete" means here (scope note, audit P1-12/P1-13).** A milestone is
 > marked complete when its tracked issues/workstreams were implemented and merged —
@@ -388,6 +394,9 @@ This project is licensed under the MIT License. (Make sure you include a `LICENS
 * **Detection tests mostly validate logic, not live firing (audit P2-21).** `tests/detections/test_sigma_detections.py` replays fixtures through a Sigma evaluator and CI converts every rule to Lucene — this proves rule *logic*, not that the compiled query fires against a live index. `tests/detections/test_live_fire.py` ([#221](https://github.com/voltron-1/Suburban_SOC/issues/221)) closes that gap for one rule per category (process_creation, network, threshold) against a real Elasticsearch in CI; the remaining rules are still logic-only. End-to-end firing across the whole rule set is exercised by `tests/anomaly_simulation/` (manual).
 * **A few Sigma rules are coarse (tracked: [#217](https://github.com/voltron-1/Suburban_SOC/issues/217)).** e.g. `proc_creation_win_powershell_encoded` and `system_win_service_installed` lack structured `filter` false-positive exclusions. (`mshta_remote` was previously miscited here as an example — it actually requires `mshta.exe` *and* an `http`/`javascript`/`vbscript` substring, not a bare `http` match; corrected 2026-08-01.) Tuning is iterative.
 * The default ntfy topic (`subsoc-alerts`) is guessable; ntfy topics are unauthenticated, so set a unique `NTFY_TOPIC` in `.env` (P3). Some docs still reference a fixed lab router IP — parameterize per environment.
+* **`docker compose` is currently broken for this repo.** Since the 2026-08-04 session a Compose version bump made `scripts/setup/docker-compose.yml`'s `$$` password escaping fail, so the stack cannot be brought up the documented way; the running containers were reconstructed by hand via `docker run`. Fix this before anyone needs a clean bring-up.
+* **The SLO metrics job errors on every scheduled run in production ([#275](https://github.com/voltron-1/Suburban_SOC/issues/275), P0).** `slo_metrics_reader` never granted `soc-agent-health-*`, which `metric_audit_write_failures()` (#184) queries every run — so `slo-metrics.timer` exits 3 (measurement error) every 15 minutes rather than reporting a clean zero. The metric #184 added has therefore never actually functioned.
+* **3 pre-existing test failures on `main`.** `tests/ai_agent/test_slo_metrics.py::MainExitCodeTests` (3 cases) exit 2 instead of 0 locally. CI's coverage job passes, so this appears environment-dependent; untriaged as of 2026-08-05.
 
 
 ## Compliance & Standards Mapping

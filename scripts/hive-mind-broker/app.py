@@ -22,6 +22,7 @@ import re
 import threading
 import fcntl
 import logging
+import unicodedata
 import httpx
 from datetime import datetime, timezone
 
@@ -66,6 +67,96 @@ ES_VERIFY = ES_CA if ES_CA else True  # fail closed: never silently disable TLS 
 # DRAFTS a block and queues it for a human-of-record; it does not push it.
 # Set AUTONOMOUS_BLOCK_ENABLED=true to restore legacy auto-dispatch.
 AUTONOMOUS_BLOCK_ENABLED = os.getenv("AUTONOMOUS_BLOCK_ENABLED", "false").lower() == "true"
+
+# #273: the approver of record must be bound to the credential that authenticated
+# the request, never to the request body. The broker authenticates every mutating
+# endpoint with the single shared HIVE_MIND_SECRET, so it can prove that *a holder
+# of that secret* called it — it cannot prove which human, and it certainly cannot
+# vouch for a name the caller typed into the payload. Recording that name as
+# "approver" made the audit trail forgeable by anyone holding the secret (the
+# ai-agent container, and anything reaching 127.0.0.1:8000), with no way for review
+# to tell a real analyst action from an attacker-chosen string.
+#
+# The two mutating endpoints have distinct callers, so each gets its own
+# operator-configured label. Both are configuration, not input.
+#   /approve          — a human-of-record approving a drafted block at the broker
+#   /webhook/dispatch — the AI agent relaying a block it already gated upstream
+#
+# Both are gated by the SAME secret, so these labels record which endpoint was
+# used, not which caller proved who they were — see approve()'s docstring for
+# the limit of that guarantee.
+def _resolve_identity(env_key: str, default: str) -> str:
+    """Return the operator-configured identity label for `env_key`, or `default`.
+
+    A var that is SET but empty must still fall back: os.getenv(key, default)
+    applies the default only when the key is ABSENT, so a `FOO=` line in an .env
+    file would otherwise yield "" and blank the approver of record. This is the
+    exact defect #246's security review caught in the agent's
+    SOC_APPROVER_IDENTITY. Kept as a pure function (not an inline `or`) so the
+    behaviour is unit-testable without reimporting this module — a test that
+    re-implements the expression inline proves nothing about this code.
+    """
+    return os.getenv(env_key) or default
+
+
+APPROVER_IDENTITY = _resolve_identity("BROKER_APPROVER_IDENTITY", "broker-operator")
+DISPATCH_IDENTITY = _resolve_identity("BROKER_DISPATCH_IDENTITY", "soc-ai-agent")
+
+# /webhook/dispatch callers may still send an "approver" field — today the agent
+# sends the fixed literal "soc-ai-agent" (agent.py's dispatch_block_via_broker).
+# It is recorded, bounded and under a name that marks it as unverified, for one
+# reason: a value that is anything OTHER than the expected literal means someone
+# holding HIVE_MIND_SECRET is calling this endpoint with a hand-crafted payload,
+# which is worth seeing in the audit trail. It is never the approver of record.
+#
+# Realising that value today means manually reading approval_queue.jsonl: the
+# broker's queue is not shipped to Elasticsearch by any config under configs/,
+# so nothing alerts on a mismatch (#273 review, MEDIUM). Wiring that up is
+# tracked separately — do not read this field as actively monitored.
+#
+# 64 chars: comfortably longer than any real analyst name or handle, short
+# enough to bound a hostile payload in the queue and the audit index.
+_CLAIMED_APPROVER_MAX = 64
+
+
+def _claimed_approver(payload: dict) -> str | None:
+    """Return the caller's asserted approver string, sanitised and bounded — or
+    None if absent.
+
+    Security review (#273, LOW): strip Unicode Cc/Cf (control characters, and
+    format characters such as the U+202E bidi override) before truncating.
+    json.dumps' ensure_ascii=True already stops this string from breaking the
+    JSONL queue's one-record-per-line framing, so this is latent rather than
+    live — but the field exists to be *read by a human during an audit*, and a
+    bidi override or ANSI escape that renders as a different name than it
+    stores defeats exactly that purpose. Close it before a renderer exists,
+    not after.
+    """
+    raw = payload.get("approver")
+    if raw is None:
+        return None
+    # A non-string JSON value (dict, list, number, bool) is itself the anomaly
+    # worth recording. str() on a dict renders Python syntax, not JSON, which
+    # reads as corruption to whoever audits the queue — record the type instead
+    # (#273 review, Should-Fix 4).
+    if not isinstance(raw, str):
+        return f"<non-string:{type(raw).__name__}>"
+    cleaned = "".join(c for c in raw if unicodedata.category(c) not in ("Cc", "Cf"))
+    return cleaned[:_CLAIMED_APPROVER_MAX]
+
+
+def _with_claim(record: dict, claimed: str | None) -> dict:
+    """Attach the caller's asserted approver to an audit row, if they sent one.
+
+    Kept out of the row literals so every write path — both endpoints, success
+    and denial alike — records the claim the same way. The key name is the
+    contract: `approver` is what the broker vouches for, anything
+    `*_claimed` is what the caller asserted.
+    """
+    if claimed is not None:
+        record["upstream_approver_claimed"] = claimed
+    return record
+
 
 APPROVAL_QUEUE = os.getenv("APPROVAL_QUEUE", "approval_queue.jsonl")
 # audit #176: a stable cross-process lock path — see _append_action().
@@ -289,7 +380,10 @@ async def dispatch_block(request: Request):
         validate_ip(attacker_ip)
     except ValueError:
         raise HTTPException(status_code=400, detail="attacker_ip is not a valid IP address")
-    approver = str(payload.get("approver", "soc-ai-agent"))
+    # #273: identity of record comes from the authenticated credential's
+    # configured label; the body's "approver" is retained only as a claim
+    # (computed below, past the early returns — neither writes an audit row).
+    approver = DISPATCH_IDENTITY
 
     # §12.4: refuse protected infrastructure, signed or not.
     if is_excluded_ip(attacker_ip):
@@ -306,11 +400,11 @@ async def dispatch_block(request: Request):
                 "message": f"No routers configured for tenant '{tenant}' — nothing to block."}
 
     count = await dispatch_block_to_all(routers, attacker_ip)
-    _append_action({
+    _append_action(_with_claim({
         "id": uuid.uuid4().hex[:12], "ts": time.time(), "status": "executed",
         "approver": approver, "tenant": tenant, "attacker_ip": attacker_ip,
         "result": f"{count}/{len(routers)} routers",
-    })
+    }, _claimed_approver(payload)))
     logger.info("Dispatched block for %s on tenant '%s' (%d/%d routers) — approver=%s.",
                 attacker_ip, tenant, count, len(routers), approver)
     return {"status": "executed", "executed": True, "tenant": tenant,
@@ -331,15 +425,33 @@ async def list_pending(request: Request):
 
 @app.post("/approve")
 async def approve(request: Request):
-    """Human-of-record approves a drafted block, which then dispatches.
+    """Approve a drafted block, which then dispatches.
 
     Authenticated (HMAC) — this endpoint EXECUTES a router block, so it must be
     gated to the same bar as /webhook/dispatch; an open /approve would let any
     caller execute a drafted block.
+
+    LIMIT OF THE GUARANTEE (#273): this is gated by the SAME HIVE_MIND_SECRET as
+    /webhook/dispatch, which the agent container holds. The broker can therefore
+    prove only that *a holder of that secret* called this endpoint — not that a
+    human did. A compromised agent (or anyone who extracts the secret from it)
+    can call /approve for an id read from /pending and have it recorded under
+    APPROVER_IDENTITY. Do not read that label as cryptographic proof of a
+    human-of-record; closing that gap needs a second, independent credential,
+    the way #246 did it for the agent.
     """
     body = await _verify_and_parse(request)
     action_id = body.get("id")
-    approver = body.get("approver", "unknown")
+    # #273: the approver of record is the identity bound to the credential that
+    # signed this request, never body.get("approver") — that field is
+    # caller-controlled and would let any HIVE_MIND_SECRET holder stamp an
+    # arbitrary analyst name onto an executed containment action.
+    approver = APPROVER_IDENTITY
+    # Security review (#273, MEDIUM): /webhook/dispatch keeps the caller's
+    # asserted approver as a labelled claim because a hand-crafted payload is
+    # worth seeing. /approve is the *higher*-trust endpoint, so it needs that
+    # forensic breadcrumb at least as much — it previously kept nothing.
+    claimed_approver = _claimed_approver(body)
     if not action_id:
         raise HTTPException(status_code=400, detail="missing 'id'")
 
@@ -354,27 +466,32 @@ async def approve(request: Request):
     try:
         excluded = is_excluded_ip(attacker_ip)  # re-check at execution time
     except ValueError:
-        _append_action({"id": action_id, "ts": time.time(), "status": "denied",
-                        "approver": approver, "result": "invalid attacker_ip"})
+        _append_action(_with_claim({"id": action_id, "ts": time.time(), "status": "denied",
+                                    "approver": approver, "result": "invalid attacker_ip"},
+                                   claimed_approver))
         raise HTTPException(status_code=422,
                             detail=f"invalid attacker_ip in drafted action {action_id}")
     if excluded:
-        _append_action({"id": action_id, "ts": time.time(), "status": "denied",
-                        "approver": approver, "result": "exclusion list"})
+        _append_action(_with_claim({"id": action_id, "ts": time.time(), "status": "denied",
+                                    "approver": approver, "result": "exclusion list"},
+                                   claimed_approver))
         raise HTTPException(status_code=422, detail=f"{attacker_ip} is excluded")
 
     # WS0.3: dispatch only to the drafted action's tenant routers — never all.
     tenant = safe_tenant(action.get("tenant"))
     routers = inv.get_routers_for_tenant(tenant)
     if not routers:
-        _append_action({"id": action_id, "ts": time.time(), "status": "denied",
-                        "approver": approver, "result": f"no routers for tenant {tenant}"})
+        _append_action(_with_claim(
+            {"id": action_id, "ts": time.time(), "status": "denied",
+             "approver": approver, "result": f"no routers for tenant {tenant}"},
+            claimed_approver))
         raise HTTPException(status_code=422, detail=f"no routers for tenant '{tenant}'")
 
     count = await dispatch_block_to_all(routers, attacker_ip)
-    _append_action({"id": action_id, "ts": time.time(), "status": "approved",
-                    "approver": approver, "tenant": tenant,
-                    "result": f"{count}/{len(routers)} routers"})
+    _append_action(_with_claim({"id": action_id, "ts": time.time(), "status": "approved",
+                                "approver": approver, "tenant": tenant,
+                                "result": f"{count}/{len(routers)} routers"},
+                               claimed_approver))
     return {"status": "executed", "approver": approver,
             "message": f"IP {attacker_ip} blocked on {count}/{len(routers)} "
                        f"router(s) for tenant '{tenant}'."}

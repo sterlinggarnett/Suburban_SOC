@@ -569,6 +569,11 @@ services:
     environment:
       # Must equal the agent's HIVE_MIND_SECRET. Broker fails closed (503) if unset.
       - HIVE_MIND_SECRET=${HIVE_MIND_SECRET:-}
+      # #273: audit-trail labels bound to whoever holds HIVE_MIND_SECRET. The
+      # broker records these as the approver of record; it never trusts the
+      # request body's "approver" field. Blank => code defaults apply.
+      - BROKER_APPROVER_IDENTITY=${BROKER_APPROVER_IDENTITY:-}
+      - BROKER_DISPATCH_IDENTITY=${BROKER_DISPATCH_IDENTITY:-}
       # §12.4 exclusion list, mounted from the repo's governance dir (below).
       - EXCLUSION_LIST=/governance/exclusion_list.txt
       # Legacy auto-block on /webhook/alert stays OFF; the agent owns approval.

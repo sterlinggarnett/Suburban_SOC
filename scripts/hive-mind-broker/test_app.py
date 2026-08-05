@@ -440,3 +440,150 @@ def test_write_denial_non_2xx_response_is_not_swallowed_as_success(caplog):
             asyncio.run(_real_write_denial("invalid_signature", fake_request))  # must not raise
 
     assert "Failed to write denial record" in caplog.text
+
+
+# --- #273: approver of record is credential-bound, never request-body content ---
+def _queue_rows():
+    """All rows currently in the broker's approval queue."""
+    return broker_app._read_queue()
+
+
+def test_approve_ignores_body_supplied_approver(_no_real_ssh):
+    """A HIVE_MIND_SECRET holder must not be able to stamp an arbitrary analyst
+    name onto an executed containment action (#273)."""
+    _post({"attacker_ip": "9.9.9.9", "tenant_id": TENANT})
+    action_id = [a for a in _get_pending().json()["pending"]
+                 if a["attacker_ip"] == "9.9.9.9"][0]["id"]
+
+    r = _approve({"id": action_id, "approver": "attacker-supplied-name"})
+    assert r.status_code == 200
+    assert r.json()["approver"] == broker_app.APPROVER_IDENTITY
+    assert r.json()["approver"] != "attacker-supplied-name"
+
+    approved = [a for a in _queue_rows() if a.get("status") == "approved"]
+    assert approved, "approval was not recorded"
+    assert all(a["approver"] == broker_app.APPROVER_IDENTITY for a in approved)
+    # The name may appear ONLY under the explicitly-unverified claim key.
+    assert not any(a["approver"] == "attacker-supplied-name" for a in approved)
+
+
+def test_approve_denial_rows_also_record_bound_identity(_no_real_ssh):
+    """The denial paths (#273) write audit rows too — they must not carry the
+    caller-supplied name either."""
+    _post({"attacker_ip": "9.9.9.9", "tenant_id": TENANT})
+    action_id = [a for a in _get_pending().json()["pending"]
+                 if a["attacker_ip"] == "9.9.9.9"][0]["id"]
+
+    with mock.patch.object(broker_app, "is_excluded_ip", return_value=True):
+        r = _approve({"id": action_id, "approver": "attacker-supplied-name"})
+    assert r.status_code == 422
+
+    denied = [a for a in _queue_rows() if a.get("status") == "denied"]
+    assert denied, "denial was not recorded"
+    assert all(a["approver"] == broker_app.APPROVER_IDENTITY for a in denied)
+    assert not any(a["approver"] == "attacker-supplied-name" for a in denied)
+
+
+def test_dispatch_records_bound_identity_and_labels_upstream_claim(_no_real_ssh):
+    """/webhook/dispatch keeps working (issue #273 criterion 2) and keeps the
+    agent's upstream approver — but as an explicitly-claimed field, not as the
+    approver of record."""
+    r = _post_dispatch({"attacker_ip": "9.9.9.9", "tenant_id": TENANT,
+                        "approver": "analyst-from-agent"})
+    assert r.status_code == 200
+    assert r.json()["executed"] is True
+
+    executed = [a for a in _queue_rows() if a.get("status") == "executed"]
+    assert executed, "dispatch was not recorded"
+    row = executed[-1]
+    assert row["approver"] == broker_app.DISPATCH_IDENTITY
+    assert row["upstream_approver_claimed"] == "analyst-from-agent"
+
+
+def test_dispatch_without_approver_records_no_claim(_no_real_ssh, monkeypatch):
+    """Absent claim => no claim key. The identity assertion uses a sentinel that
+    differs from the old hardcoded "soc-ai-agent" default, so this can only pass
+    if dispatch_block() reads the configured identity (review Must-Fix 2 — with
+    the real default the assertion passed against the vulnerable code too)."""
+    monkeypatch.setattr(broker_app, "DISPATCH_IDENTITY", "sentinel-dispatch-id")
+    r = _post_dispatch({"attacker_ip": "9.9.9.9", "tenant_id": TENANT})
+    assert r.status_code == 200
+    row = [a for a in _queue_rows() if a.get("status") == "executed"][-1]
+    assert row["approver"] == "sentinel-dispatch-id"
+    assert "upstream_approver_claimed" not in row
+
+
+def test_claimed_approver_is_bounded(_no_real_ssh):
+    """An unbounded caller-controlled string must not reach the queue/audit index."""
+    long_name = "A" * 500
+    r = _post_dispatch({"attacker_ip": "9.9.9.9", "tenant_id": TENANT,
+                        "approver": long_name})
+    assert r.status_code == 200
+    row = [a for a in _queue_rows() if a.get("status") == "executed"][-1]
+    assert len(row["upstream_approver_claimed"]) == broker_app._CLAIMED_APPROVER_MAX
+
+
+def test_resolve_identity_falls_back_when_env_var_set_but_empty(monkeypatch):
+    """A SET-but-empty env var must still fall back — os.getenv's two-arg default
+    only applies when the key is ABSENT. Asserts on app.py's own
+    _resolve_identity(), not a re-implementation of it (review Must-Fix 1)."""
+    monkeypatch.setenv("BROKER_APPROVER_IDENTITY", "")
+    assert broker_app._resolve_identity("BROKER_APPROVER_IDENTITY", "fallback") == "fallback"
+
+
+def test_resolve_identity_falls_back_when_env_var_absent(monkeypatch):
+    monkeypatch.delenv("BROKER_APPROVER_IDENTITY", raising=False)
+    assert broker_app._resolve_identity("BROKER_APPROVER_IDENTITY", "fallback") == "fallback"
+
+
+def test_resolve_identity_honors_configured_value(monkeypatch):
+    monkeypatch.setenv("BROKER_APPROVER_IDENTITY", "alice-on-call")
+    assert broker_app._resolve_identity("BROKER_APPROVER_IDENTITY", "fallback") == "alice-on-call"
+
+
+def test_approve_records_claim_alongside_bound_identity(_no_real_ssh, monkeypatch):
+    """/approve keeps the caller's asserted name as an explicitly-labelled claim
+    (security review MEDIUM) while the approver of record stays credential-bound."""
+    monkeypatch.setattr(broker_app, "APPROVER_IDENTITY", "sentinel-approver-id")
+    _post({"attacker_ip": "9.9.9.9", "tenant_id": TENANT})
+    action_id = [a for a in _get_pending().json()["pending"]
+                 if a["attacker_ip"] == "9.9.9.9"][0]["id"]
+
+    r = _approve({"id": action_id, "approver": "attacker-supplied-name"})
+    assert r.status_code == 200
+    row = [a for a in _queue_rows() if a.get("status") == "approved"][-1]
+    assert row["approver"] == "sentinel-approver-id"
+    assert row["upstream_approver_claimed"] == "attacker-supplied-name"
+
+
+def test_approve_denial_row_records_claim(_no_real_ssh, monkeypatch):
+    monkeypatch.setattr(broker_app, "APPROVER_IDENTITY", "sentinel-approver-id")
+    _post({"attacker_ip": "9.9.9.9", "tenant_id": TENANT})
+    action_id = [a for a in _get_pending().json()["pending"]
+                 if a["attacker_ip"] == "9.9.9.9"][0]["id"]
+    with mock.patch.object(broker_app, "is_excluded_ip", return_value=True):
+        assert _approve({"id": action_id, "approver": "mallory"}).status_code == 422
+    row = [a for a in _queue_rows() if a.get("status") == "denied"][-1]
+    assert row["approver"] == "sentinel-approver-id"
+    assert row["upstream_approver_claimed"] == "mallory"
+
+
+def test_claimed_approver_strips_control_and_bidi_characters():
+    """A bidi override or ANSI escape must not render as a different name than it
+    stores (security review LOW)."""
+    dirty = {"approver": "alice\u202ecilla\x1b[31m\nbob"}
+    # The ESC introducer (Cc) is stripped, which is what neutralizes the ANSI
+    # sequence; the residual "[31m" is inert literal text, not an escape.
+    assert broker_app._claimed_approver(dirty) == "alicecilla[31mbob"
+
+
+def test_claimed_approver_marks_non_string_types():
+    """str() on a dict renders Python syntax, not JSON, and reads as corruption
+    to whoever audits the queue — record the type instead (review Should-Fix 4)."""
+    assert broker_app._claimed_approver({"approver": {"x": 1}}) == "<non-string:dict>"
+    assert broker_app._claimed_approver({"approver": ["a"]}) == "<non-string:list>"
+    assert broker_app._claimed_approver({"approver": 7}) == "<non-string:int>"
+    assert broker_app._claimed_approver({"approver": True}) == "<non-string:bool>"
+    # Absent and explicit JSON null both mean "no claim".
+    assert broker_app._claimed_approver({}) is None
+    assert broker_app._claimed_approver({"approver": None}) is None

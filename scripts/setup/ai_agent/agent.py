@@ -228,7 +228,7 @@ def sign_request(secret: bytes, raw_body: bytes, timestamp: str | None = None):
 def verify_signature(raw_body: bytes, signature_header: str | None,
                      timestamp_header: str | None = None,
                      secret: bytes = HMAC_SECRET,
-                     secret_name: str = "SOC_AGENT_HMAC_SECRET") -> bool:
+                     hmac_env_var: str = "SOC_AGENT_HMAC_SECRET") -> bool:
     """Constant-time HMAC verification with timestamp-freshness + replay protection.
 
     Verifies sha256=HMAC(secret, '<timestamp>.' + raw_body), requires the timestamp
@@ -238,7 +238,7 @@ def verify_signature(raw_body: bytes, signature_header: str | None,
     its name, for the log line below) instead — see _require_signature().
     """
     if not secret:
-        logger.critical("%s is not set — refusing all signed requests.", secret_name)
+        logger.critical("%s is not set — refusing all signed requests.", hmac_env_var)
         return False
     if not signature_header or not timestamp_header:
         return False
@@ -265,7 +265,7 @@ def verify_signature(raw_body: bytes, signature_header: str | None,
     return True
 
 
-def _require_signature(secret: bytes = HMAC_SECRET, secret_name: str = "SOC_AGENT_HMAC_SECRET"):
+def _require_signature(secret: bytes = HMAC_SECRET, hmac_env_var: str = "SOC_AGENT_HMAC_SECRET"):
     """Fail-closed HMAC gate for privileged operator endpoints.
 
     Every endpoint that executes a destructive action (/approve), discloses the
@@ -281,9 +281,9 @@ def _require_signature(secret: bytes = HMAC_SECRET, secret_name: str = "SOC_AGEN
     """
     if not verify_signature(request.get_data(), request.headers.get(HMAC_HEADER),
                             request.headers.get(HMAC_TS_HEADER), secret=secret,
-                            secret_name=secret_name):
+                            hmac_env_var=hmac_env_var):
         logger.warning("Rejected %s: missing/invalid/replayed HMAC signature (%s).",
-                       request.path, secret_name)
+                       request.path, hmac_env_var)
         return jsonify({"status": "unauthorized"}), 401
     return None
 

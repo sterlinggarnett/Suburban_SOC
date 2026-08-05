@@ -5,6 +5,10 @@ import os
 # level on its FIRST import — whichever test file collects first "wins" for
 # the whole process. Set it here too so collection order can't matter (#214).
 os.environ.setdefault("SOC_AGENT_HMAC_SECRET", "unit_test_secret")
+# #246: separate /approve + /pending credential — same collection-order
+# reasoning. Deliberately a DIFFERENT literal than SOC_AGENT_HMAC_SECRET above
+# (test_alert_auth.py proves the two secrets can't sign for each other).
+os.environ.setdefault("SOC_APPROVER_HMAC_SECRET", "unit_test_approver_secret")
 
 import pytest
 from unittest.mock import patch
@@ -154,7 +158,7 @@ def test_phase_2_execution(mock_claim, mock_write, mock_exec, mock_read, mock_aw
 def test_phase_2_state_rejection(mock_awaiting, agent):
     mock_awaiting.return_value = False
 
-    result = agent.execute_approved("test-tenant", "fake-alert-id")
+    result = agent.execute_approved("test-tenant", "fake-alert-id", "human")
 
     assert result.status_code == 409
     assert result.response['status'] == 'error'

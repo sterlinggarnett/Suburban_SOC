@@ -47,6 +47,10 @@ done
 # Shared ES creds fail-fast + es()/TLS (issue #156).
 source "$HERE/../../scripts/setup/lib/es_common.sh"
 [[ -z "${SOC_AGENT_HMAC_SECRET:-}" ]] && { echo "[ERR] SOC_AGENT_HMAC_SECRET required (check scripts/setup/.env)" >&2; exit 2; }
+# #246: /pending is gated on a SEPARATE secret from /alert's — SOC_AGENT_HMAC_SECRET
+# no longer authenticates it (a Logstash compromise must not be able to enumerate
+# drafted containment actions).
+[[ -z "${SOC_APPROVER_HMAC_SECRET:-}" ]] && { echo "[ERR] SOC_APPROVER_HMAC_SECRET required (check scripts/setup/.env)" >&2; exit 2; }
 
 # Sign "<ts>." + raw_body with SOC_AGENT_HMAC_SECRET (the agent's HMAC scheme,
 # audit P0-2/P1-1: ±300s window, single-use nonce). Empty body => signs "<ts>.".
@@ -57,12 +61,23 @@ agent_post() {  # agent_post <path> <json-body>
   curl -s --max-time 12 -H "x-elastic-signature: $sig" -H "x-elastic-timestamp: $ts" \
     -H 'Content-Type: application/json' -X POST -d "$body" "$AGENT_URL$path"
 }
+# #246: signed with SOC_APPROVER_HMAC_SECRET, not SOC_AGENT_HMAC_SECRET — /pending
+# would otherwise 401 post-fix, and coercing that failure to a bare "0" (as this
+# helper used to) would silently read as "no draft queued" to every before/after
+# assertion below, indistinguishable from the SOAR loop actually working.
 agent_pending_count() {
-  local ts sig
+  local ts sig resp code body
   ts=$(date +%s)
-  sig="sha256=$(printf '%s.' "$ts" | openssl dgst -sha256 -hmac "$SOC_AGENT_HMAC_SECRET" | awk '{print $NF}')"
-  curl -s --max-time 6 -H "x-elastic-signature: $sig" -H "x-elastic-timestamp: $ts" "$AGENT_URL/pending" \
-    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("count",0))' 2>/dev/null || echo 0
+  sig="sha256=$(printf '%s.' "$ts" | openssl dgst -sha256 -hmac "$SOC_APPROVER_HMAC_SECRET" | awk '{print $NF}')"
+  resp=$(curl -s --max-time 6 -w '\n%{http_code}' -H "x-elastic-signature: $sig" -H "x-elastic-timestamp: $ts" "$AGENT_URL/pending")
+  code="${resp##*$'\n'}"
+  body="${resp%$'\n'*}"
+  if [[ "$code" != "200" ]]; then
+    echo "[ERR] GET /pending failed (HTTP $code) — before/after draft counts cannot be trusted" >&2
+    echo "ERR"
+    return
+  fi
+  printf '%s' "$body" | python3 -c 'import sys,json;print(json.load(sys.stdin)["count"])' 2>/dev/null || echo "ERR"
 }
 jget() { python3 -c "import sys,json
 try: d=json.load(sys.stdin)
@@ -130,7 +145,9 @@ if [[ "$status" == "no_action_protected_asset" ]]; then
 else
   echo "[FAIL] agent did not protect the asset (status='${status:-<none>}') resp=$resp"; fail=1
 fi
-if [[ "$after" -le "$before" ]]; then
+if [[ "$before" == "ERR" || "$after" == "ERR" ]]; then
+  echo "[FAIL] GET /pending failed — cannot confirm no draft was queued (see [ERR] above)"; fail=1
+elif [[ "$after" -le "$before" ]]; then
   echo "[PASS] no draft queued for the protected asset (pending $before -> $after)"
 else
   echo "[FAIL] a draft was queued for a PROTECTED asset (pending $before -> $after)"; fail=1

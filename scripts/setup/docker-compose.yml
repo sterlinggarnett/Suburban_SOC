@@ -512,6 +512,19 @@ services:
       # Shared secret for HMAC-signed /alert requests (WS0.2). Required — the
       # endpoint fails closed (503/401) if unset or the signature is wrong.
       - SOC_AGENT_HMAC_SECRET=${SOC_AGENT_HMAC_SECRET}
+      # #246: SEPARATE secret gating /approve (executes isolation) and /pending
+      # (discloses the drafted-action queue). Deliberately NOT given to the
+      # logstash service above — Logstash holds SOC_AGENT_HMAC_SECRET to sign
+      # /alert, and a Logstash compromise (RCE, container escape, a crafted Ruby
+      # filter) must not also be able to approve the actions it can draft. The
+      # human operator holds this value locally (their own shell/.env, never
+      # baked into any other container) to sign /approve and /pending calls.
+      - SOC_APPROVER_HMAC_SECRET=${SOC_APPROVER_HMAC_SECRET}
+      # The approver-of-record label recorded against every claim/audit/case-
+      # comment for an action approved via this credential (agent.py's
+      # APPROVER_IDENTITY) — NOT read from the request body, which is
+      # unauthenticated and caller-controlled.
+      - SOC_APPROVER_IDENTITY=${SOC_APPROVER_IDENTITY:-soc-analyst}
       # #109: route quarantine through the broker (the slim agent has no ssh/sudo).
       # The agent signs /webhook/dispatch with HIVE_MIND_SECRET (must equal the
       # broker's). If unset, _execute_isolation fails closed (never dispatches).

@@ -216,18 +216,50 @@ architectural follow-ups #214's review filed:
   `HIVE_MIND_SECRET`, not `SOC_AGENT_HMAC_SECRET`, so criterion 1 already
   holds there; criterion 2 does not).
 
-The milestone has 1 open issue left —
-[#247](https://github.com/voltron-1/Suburban_SOC/issues/247) (a claim is
-never released on execution failure, permanently stranding the alert),
-a pre-existing architectural follow-up filed during #214's review
-(2026-08-02), not part of the #214-#222 sequence but tagged to this
-milestone; #213 (the umbrella user story) stays open until it closes too.
-(#273 above is tagged to M12 as well but is a new finding from #246's
-review, not part of #213's original scope — it does not block M12/#213
-completion.)
+- [x] **#247 — COMPLETE** — an approval claim was never released when execution
+  failed, permanently stranding the alert: nothing could ever retry it and
+  nothing surfaced that it was stuck. A pre-existing architectural follow-up
+  filed during #214's review (2026-08-02), not part of the #214-#222 sequence
+  but tagged to this milestone.
+  [PR #279](https://github.com/voltron-1/Suburban_SOC/pull/279) merged
+  2026-08-05 (`ef96b61`). Three security-auditor rounds reshaped the design
+  twice — the substantive change being that a *confirmed* router-block failure
+  is now distinguished from an *ambiguous* one: `dispatch_block_to_all()`
+  returns `(count, unknown_count)` and an unconfirmed router is never folded
+  into the failure count, since a caller treating the two alike would risk a
+  real double-dispatch on retry. The terminal `ESCALATED` state was removed in
+  the process — a confirmed execution failure now reverts to
+  `PENDING_APPROVAL` so a retry is possible, rather than dead-ending in a state
+  nothing ever leaves. Closed manually: the PR body carried no `Closes #247`
+  keyword, so the merge did not auto-close it.
+- [~] **#273 — IN REVIEW** — the hive-mind-broker's own `/approve` recorded the
+  approver straight from the request body (`body.get("approver", "unknown")`),
+  so anyone holding `HIVE_MIND_SECRET` — the ai-agent container, and anything
+  reaching 127.0.0.1:8000 — could execute a router block and stamp it with an
+  arbitrary analyst name. Broker-side counterpart to #246, on a different trust
+  boundary. Fixed with credential-bound `BROKER_APPROVER_IDENTITY` /
+  `BROKER_DISPATCH_IDENTITY` labels resolved through a pure `_resolve_identity()`
+  that handles the set-but-empty env var (the same defect #246's review caught);
+  what the caller sent is retained on both endpoints as
+  `upstream_approver_claimed`, sanitised and bounded, never as the approver of
+  record. [PR #280](https://github.com/voltron-1/Suburban_SOC/pull/280) — all
+  16 CI checks green, **awaiting merge sign-off**.
+  security-auditor + code-reviewer ran in parallel. Both code-review Must-Fix
+  items were real: two of the six original tests were vacuous (one asserted on
+  a re-implementation of the fallback expression rather than the module
+  constant; the other passed by coincidence because the configured default
+  equalled the old hardcoded literal) — both rewritten and re-verified by
+  mutation. **Known residual risk, deliberately not closed there** (the
+  auditor's HIGH): `/approve` and `/webhook/dispatch` share one secret, so a
+  compromised agent can call `/approve` and be recorded under the human label.
+  The fix narrows forgery from any string to one of two labels chosen by URL;
+  it does not prove a human acted. The docstring, compose comment and
+  `.env.example` now state that limit rather than overclaiming. Fully closing
+  it needs a second independent credential the way #246 did — its own issue.
 
-Next unstarted item: **#247** (release approval claims on execution
-failure — the last open M12 issue).
+Once #273 merges, **#213** (the umbrella user story) can close and M12 is done.
+
+Next action: **merge PR #280**, then close #273 and #213.
 
 ---
 
@@ -696,6 +728,33 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-05 (later)
+
+- **#247 closed** — PR #279 merged to `main` (`ef96b61`). Closed manually, since
+  the PR body had no closing keyword and the merge therefore didn't auto-close
+  it. Worth remembering as a recurring trap: this is the second M12 issue
+  (#224 was the first) left orphaned-open by a PR that referenced it without
+  the keyword.
+- **#273 implemented and reviewed** — see NEXT UP. PR #280, 16/16 green,
+  awaiting merge sign-off.
+- **Project board #17 was materially stale and has been reconciled.** 23 issues
+  were absent from it entirely — 14 open (including M12's own #273) and 9
+  closed historical ones. Everything already on the board had a correct Status,
+  so the drift was pure absence rather than mislabeling. All 14 open issues
+  added; #247 moved out of Backlog (it had a green PR at the time). The 9
+  closed historical issues were deliberately left off — adding them would pad
+  the Done column with no tracking value.
+- Two things found that are nobody's assigned scope yet:
+  `tests/ai_agent/test_slo_metrics.py` has **3 failures on `main`**
+  (`MainExitCodeTests` — exit code 2 instead of 0), confirmed pre-existing and
+  unrelated to any branch work; CI's coverage job passes, so it looks
+  environment-dependent. And `plans/2026-06-28-147-remaining-evidence.md` was
+  found deleted in the working tree by something outside this session
+  (restored; it is tracked, 12,982 bytes since `04f35e1`) alongside an
+  untracked `plans/20260805-fork-security-onion-migration.md` and a `.gemini/`
+  directory — the same signature as the uncoordinated external tool that
+  created M13 on 2026-08-01.
 
 ## LAST SESSION — 2026-08-05
 

@@ -366,7 +366,13 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
             data=body,
             headers={"Content-Type": "application/json",
                      HMAC_HEADER: sig, HMAC_TS_HEADER: ts},
-            timeout=15,
+            # #247 security-auditor review (round 3): 20s, not 15s — the
+            # broker's own SSH connect+command budget is 5s+5s=10s worst case
+            # per router (dispatcher.py's SSH_CONNECT_TIMEOUT/SSH_COMMAND_TIMEOUT),
+            # and this must stay comfortably above that or a merely-slow (not
+            # ambiguous) router would make the AGENT time out first, raising
+            # IsolationOutcomeUnknown for what would have been a clean answer.
+            timeout=20,
         )
     except Exception as exc:  # noqa: BLE001 - never let response handling crash
         logger.error("broker dispatch outcome UNKNOWN (request failed after send): %s", exc)
@@ -375,8 +381,10 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
     detail = resp.text[:300]
     data = {}
     try:
-        data = resp.json()
-        detail = data.get("message", detail)
+        parsed = resp.json()
+        if isinstance(parsed, dict):
+            data = parsed
+            detail = data.get("message", detail)
     except Exception:
         pass
 
@@ -385,27 +393,38 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
     # per-router "failed" (command confirmed not applied) from "unknown"
     # (connection lost/timed out after the command was sent — nft may already
     # have run); this must not get re-collapsed into a blanket False here.
-    if resp.status_code >= 500:
-        # The broker's own processing failed, possibly AFTER it already
-        # dispatched to routers (e.g. an exception raised while recording the
-        # audit row, after dispatch_block_to_all() already ran). Not confirmed.
+    #
+    # Only 500 (the broker's OWN handler code failed partway through — e.g. an
+    # exception raised while recording the audit row, AFTER dispatch_block_to_all()
+    # already ran) and 504 (an intermediary gave up waiting while the broker may
+    # still have been mid-dispatch) are genuinely ambiguous. Every other non-200 —
+    # 4xx (rejected before dispatch: auth/validation), or 502/503 (the request
+    # never reached, or was refused by, the broker's dispatch logic at all — e.g.
+    # the broker's own 503 for "HMAC secret not configured" fires before any
+    # dispatch attempt is even possible) — is a confirmed non-dispatch.
+    if resp.status_code in (500, 504):
         logger.error("broker dispatch outcome UNKNOWN (broker returned HTTP %s): %s",
                     resp.status_code, detail)
         raise IsolationOutcomeUnknown(
             f"broker returned HTTP {resp.status_code} — outcome unknown: {detail}")
     if resp.status_code != 200:
-        # A 4xx means the broker rejected the request BEFORE ever attempting
-        # dispatch (auth/validation) — confirmed non-dispatch.
         return False, detail
     if not data:
-        # A 200 with an unparseable/empty body shouldn't happen in practice
-        # (the handler always returns well-formed JSON) — if it somehow does,
-        # don't assume it's a confirmed non-dispatch either.
+        # A 200 with an unparseable/non-object body shouldn't happen in practice
+        # (the handler always returns a well-formed JSON object) — if it somehow
+        # does, don't assume it's a confirmed non-dispatch either.
         logger.error("broker dispatch outcome UNKNOWN (unparseable 200 response): %s", detail)
         raise IsolationOutcomeUnknown(f"unparseable broker response — outcome unknown: {detail}")
 
-    success_count = data.get("success_count", 0)
-    unknown_count = data.get("unknown_count", 0)
+    try:
+        success_count = int(data.get("success_count", 0))
+        unknown_count = int(data.get("unknown_count", 0))
+    except (TypeError, ValueError):
+        # A non-integer count is as unreadable as no body at all — don't
+        # guess which way it leans.
+        logger.error("broker dispatch outcome UNKNOWN (non-integer counts in "
+                     "response): %s", detail)
+        raise IsolationOutcomeUnknown(f"malformed broker response counts — outcome unknown: {detail}")
     if bool(data.get("executed")) and success_count == 0 and unknown_count > 0:
         # No router confirmed success, but at least one router's own outcome
         # could not be confirmed — the block may already be live there.

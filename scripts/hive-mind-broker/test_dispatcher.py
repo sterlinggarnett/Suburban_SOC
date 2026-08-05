@@ -46,10 +46,13 @@ ROUTER = {"id": "test-router", "tenant": "home-smith", "ip_address": "192.168.1.
           "username": "root", "ssh_key_path": "~/.ssh/id_ed25519_hivemind"}
 
 
-def _process_error():
+_SIGKILL = ("SIGKILL", False, "Killed", "en-US")
+
+
+def _process_error(exit_signal=None):
     return asyncssh.ProcessError(
         env=None, command="nft add rule ...", subsystem=None,
-        exit_status=1, exit_signal=None, returncode=1,
+        exit_status=None if exit_signal else 1, exit_signal=exit_signal, returncode=1,
         stdout="", stderr="nft: rule rejected", reason="Command failed")
 
 
@@ -98,6 +101,36 @@ class BlockIpOnRouterTests(unittest.TestCase):
             result = asyncio.run(dispatcher.block_ip_on_router(ROUTER, "1.2.3.4"))
         self.assertEqual(result, "unknown")
 
+    def test_unknown_when_process_error_is_a_signal_kill_not_a_clean_exit(self):
+        # round-3 security-auditor review: a signal-killed remote process (e.g.
+        # an OOM kill on a small router) may have already issued its netlink
+        # call before being killed — NOT the same as a clean non-zero exit.
+        conn = _mock_conn(run_side_effect=_process_error(exit_signal=_SIGKILL))
+        with mock.patch.object(dispatcher.asyncssh, "connect",
+                               new=mock.AsyncMock(return_value=conn)):
+            result = asyncio.run(dispatcher.block_ip_on_router(ROUTER, "1.2.3.4"))
+        self.assertEqual(result, "unknown")
+
+    def test_failed_when_router_entry_is_malformed(self):
+        # round-3 security-auditor review: a bad inventory entry must not
+        # crash the whole dispatch (it used to run outside any try) — nothing
+        # was ever sent, so "failed" (confirmed non-dispatch) is correct.
+        with mock.patch.object(dispatcher.asyncssh, "connect") as mock_connect:
+            result = asyncio.run(dispatcher.block_ip_on_router(None, "1.2.3.4"))
+        self.assertEqual(result, "failed")
+        mock_connect.assert_not_called()
+
+    def test_connect_is_bounded_by_both_timeouts(self):
+        conn = _mock_conn()
+        mock_connect = mock.AsyncMock(return_value=conn)
+        with mock.patch.object(dispatcher.asyncssh, "connect", new=mock_connect):
+            asyncio.run(dispatcher.block_ip_on_router(ROUTER, "1.2.3.4"))
+        kwargs = mock_connect.call_args.kwargs
+        self.assertEqual(kwargs["connect_timeout"], dispatcher.SSH_CONNECT_TIMEOUT)
+        # login_timeout bounds auth/KEX too, not just the TCP handshake —
+        # connect_timeout alone may not cover a stalled authentication phase.
+        self.assertEqual(kwargs["login_timeout"], dispatcher.SSH_CONNECT_TIMEOUT)
+
 
 class DispatchBlockToAllTests(unittest.TestCase):
     def test_refuses_excluded_ip_without_dispatching(self):
@@ -127,6 +160,22 @@ class DispatchBlockToAllTests(unittest.TestCase):
                 dispatcher.dispatch_block_to_all(routers, "1.2.3.4"))
         self.assertEqual(success_count, 0)
         self.assertEqual(unknown_count, 2)
+
+    def test_one_router_crashing_does_not_lose_the_others_results(self):
+        # round-3 security-auditor review: asyncio.gather() without
+        # return_exceptions=True lets ONE router's unexpected exception take
+        # down every OTHER router's already-in-flight result. r1 succeeds, r2
+        # raises something block_ip_on_router() itself didn't classify — must
+        # still count r1's success and treat r2 as unknown, not crash entirely.
+        # (gather() preserves input order, so this list lines up r1 -> r2.)
+        routers = [dict(ROUTER, id="r1"), dict(ROUTER, id="r2")]
+        with mock.patch.object(dispatcher, "is_excluded_ip", return_value=False), \
+             mock.patch.object(dispatcher, "block_ip_on_router",
+                               new=mock.AsyncMock(side_effect=["success", RuntimeError("unexpected bug")])):
+            success_count, unknown_count = asyncio.run(
+                dispatcher.dispatch_block_to_all(routers, "1.2.3.4"))
+        self.assertEqual(success_count, 1)
+        self.assertEqual(unknown_count, 1)
 
 
 if __name__ == "__main__":

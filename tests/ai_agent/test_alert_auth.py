@@ -544,20 +544,55 @@ class TenantResolverTests(unittest.TestCase):
     def test_dispatch_confirmed_failure_on_4xx(self):
         # The broker rejected the request BEFORE ever attempting dispatch
         # (auth/validation) — confirmed non-dispatch, safe to release+retry.
-        resp = self._fake_response(422, {"message": "no routers for tenant"})
+        # Verbatim shape of a real /webhook/dispatch 4xx: FastAPI's
+        # HTTPException(status_code=400, detail=...) body is {"detail": "..."},
+        # not {"message": "..."} (round-3 security-auditor review).
+        resp = self._fake_response(400, {"detail": "attacker_ip is not a valid IP address"})
         with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
              mock.patch.object(agent.requests, "post", return_value=resp):
             ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
         self.assertFalse(ok)
 
-    def test_dispatch_unknown_on_broker_5xx(self):
-        # The broker's own processing failed — possibly AFTER it already
-        # dispatched to routers. Must raise, never return a confirmed False.
-        resp = self._fake_response(500, {"message": "internal error"})
+    def test_dispatch_confirmed_failure_on_broker_502_or_503(self):
+        # 502/503 mean the request never reached (or was refused before) the
+        # broker's dispatch logic at all — e.g. the broker's own 503 for "HMAC
+        # secret not configured" (app.py's _verify()) fires before any dispatch
+        # attempt is even possible. Confirmed non-dispatch, unlike 500/504.
+        for status in (502, 503):
+            with self.subTest(status=status):
+                resp = self._fake_response(status, {"detail": "Broker secret not configured"})
+                with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+                     mock.patch.object(agent.requests, "post", return_value=resp):
+                    ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+                self.assertFalse(ok)
+
+    def test_dispatch_confirmed_failure_on_real_no_routers_response_shape(self):
+        # Verbatim shape of /webhook/dispatch's real "no routers configured"
+        # response (app.py): 200 status, executed=False, no count keys at all
+        # — not the {"executed": True, "success_count": 0, ...} shape the
+        # all-routers-confirmed-failed test below uses (a different, also-real
+        # scenario). Both must classify as confirmed non-dispatch.
+        resp = self._fake_response(200, {
+            "status": "no_routers", "executed": False,
+            "message": "No routers configured for tenant 'home-smith' — nothing to block."})
         with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
              mock.patch.object(agent.requests, "post", return_value=resp):
-            with self.assertRaises(agent.IsolationOutcomeUnknown):
-                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+            ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+        self.assertFalse(ok)
+
+    def test_dispatch_unknown_on_broker_500_or_504(self):
+        # 500: the broker's OWN handler code failed partway through (e.g. an
+        # exception raised while recording the audit row, AFTER
+        # dispatch_block_to_all() already ran). 504: an intermediary gave up
+        # waiting while the broker may still have been mid-dispatch. Both
+        # genuinely ambiguous — must raise, never return a confirmed False.
+        for status in (500, 504):
+            with self.subTest(status=status):
+                resp = self._fake_response(status, {"detail": "internal error"})
+                with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+                     mock.patch.object(agent.requests, "post", return_value=resp):
+                    with self.assertRaises(agent.IsolationOutcomeUnknown):
+                        agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
 
     def test_dispatch_unknown_when_no_router_confirmed_but_some_unconfirmed(self):
         # success_count=0 AND unknown_count>0: at least one router's outcome
@@ -579,13 +614,24 @@ class TenantResolverTests(unittest.TestCase):
             ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
         self.assertTrue(ok)
 
-    def test_dispatch_confirmed_failure_when_zero_routers_succeed_and_none_unknown(self):
+    def test_dispatch_confirmed_failure_when_all_routers_confirmed_failed(self):
+        # Distinct from "no routers configured" (tested above): routers exist
+        # and dispatch was attempted, but every one confirmed-failed (e.g. bad
+        # SSH keys) with none unknown — still a safe, confirmed non-dispatch.
         resp = self._fake_response(200, {"executed": True, "success_count": 0,
-                                          "unknown_count": 0, "message": "no routers"})
+                                          "unknown_count": 0, "message": "0/2 routers blocked"})
         with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
              mock.patch.object(agent.requests, "post", return_value=resp):
             ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
         self.assertFalse(ok)
+
+    def test_dispatch_unknown_on_non_integer_counts(self):
+        resp = self._fake_response(200, {"executed": True, "success_count": "not-a-number",
+                                          "unknown_count": 0, "message": "malformed"})
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
 
     def test_dispatch_unknown_on_unparseable_200_body(self):
         resp = self._fake_response(200, json_body=None, text="not json")

@@ -382,7 +382,7 @@ async def approve(request: Request):
                     "result": f"{count}/{len(routers)} routers ({unknown_count} unknown)"})
     return {"status": "executed", "approver": approver, "unknown_count": unknown_count,
             "message": f"IP {attacker_ip} blocked on {count}/{len(routers)} "
-                       f"router(s) for tenant '{tenant}'."}
+                       f"router(s) for tenant '{tenant}' ({unknown_count} unknown)."}
 
 
 if __name__ == "__main__":

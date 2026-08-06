@@ -1,0 +1,42 @@
+title: Kerberoasting — RC4 Service Ticket Requested for a User SPN
+id: c9e37b15-4a82-4d6f-b053-1e7c8f2a9d46
+status: experimental
+description: |
+    Detects a Kerberos service-ticket request (Security 4769) encrypted with
+    RC4-HMAC (TicketEncryptionType 0x17) for a service account. Kerberoasting
+    works by requesting a ticket for a user-account SPN and cracking it
+    offline; RC4 is requested deliberately because it is far cheaper to crack
+    than AES.
+    The two account filters are what make this usable rather than a
+    per-logon firehose: machine accounts (trailing `$`) legitimately request
+    RC4 tickets constantly, and krbtgt appears in every TGT exchange.
+    Success is required explicitly (Status 0x0), not by blacklisting one
+    failure code — security review (#232) found the original design
+    (`Status != 0x1b`) both unverified against a real DC and structurally
+    under-inclusive: any Kerberos failure status OTHER than the one
+    blacklisted would still have passed through. Requires the "Audit
+    Kerberos Service Ticket Operations" subcategory on domain controllers.
+references:
+    - https://attack.mitre.org/techniques/T1558/003/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.credential_access
+    - attack.t1558.003
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4769
+        TicketEncryptionType: '0x17'
+        Status: '0x0'
+    filter_machine_account:
+        ServiceName|endswith: '$'
+    filter_krbtgt:
+        ServiceName|startswith: 'krbtgt'
+    condition: selection and not filter_machine_account and not filter_krbtgt
+falsepositives:
+    - A legacy application or appliance whose service account genuinely still negotiates RC4 because it cannot do AES — baseline these SPNs and exclude them explicitly rather than weakening the rule.
+    - A domain still running at a functional level where RC4 is the negotiated default.
+level: high

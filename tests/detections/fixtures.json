@@ -743,5 +743,169 @@
         "ParentImage": "C:\\Windows\\explorer.exe"
       }
     ]
+  },
+  "proc_creation_win_mimikatz_module_syntax.yml": {
+    "true_positive": {
+      "Image": "C:\\Users\\Public\\svc.exe",
+      "CommandLine": "svc.exe privilege::debug sekurlsa::logonpasswords exit"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\cmd.exe",
+        "CommandLine": "cmd.exe /c echo sekurlsa"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\whoami.exe",
+        "CommandLine": "whoami /priv"
+      }
+    ]
+  },
+  "proc_creation_win_ntdsutil_ifm_dump.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\ntdsutil.exe",
+      "CommandLine": "ntdsutil \"ac i ntds\" \"ifm\" \"create full C:\\temp\\x\" q q"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\ntdsutil.exe",
+        "CommandLine": "ntdsutil \"ac i ntds\" \"compact to C:\\temp\" q q"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\ntdsutil.exe",
+        "CommandLine": "ntdsutil snapshot list all q q"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\diskshadow.exe",
+        "CommandLine": "diskshadow /s script.txt"
+      }
+    ]
+  },
+  "proc_creation_win_lazagne_credential_harvest.yml": {
+    "true_positive": {
+      "Image": "C:\\Users\\Public\\lazagne.exe",
+      "CommandLine": "lazagne.exe all -oN"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Users\\Public\\lazagne.exe",
+        "CommandLine": "lazagne.exe"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\cmd.exe",
+        "CommandLine": "cmd.exe /c dir all"
+      }
+    ]
+  },
+  "proc_creation_win_cmdkey_saved_creds_enum.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\cmdkey.exe",
+      "CommandLine": "cmdkey /list"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\cmdkey.exe",
+        "CommandLine": "cmdkey /add:server /user:svc /pass:x"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\cmdkey.exe",
+        "CommandLine": "cmdkey /delete:server"
+      }
+    ]
+  },
+  "auth_win_kerberoasting_rc4_spn_request.yml": {
+    "true_positive": {
+      "EventID": 4769,
+      "ServiceName": "MSSQLSvc",
+      "TicketEncryptionType": "0x17",
+      "Status": "0x0"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4769,
+        "ServiceName": "WORKSTATION01$",
+        "TicketEncryptionType": "0x17",
+        "Status": "0x0"
+      },
+      {
+        "EventID": 4769,
+        "ServiceName": "krbtgt",
+        "TicketEncryptionType": "0x17",
+        "Status": "0x0"
+      },
+      {
+        "EventID": 4769,
+        "ServiceName": "MSSQLSvc",
+        "TicketEncryptionType": "0x12",
+        "Status": "0x0"
+      },
+      {
+        "EventID": 4769,
+        "ServiceName": "MSSQLSvc",
+        "TicketEncryptionType": "0x17",
+        "Status": "0x1b"
+      },
+      {
+        "EventID": 4624,
+        "ServiceName": "MSSQLSvc",
+        "TicketEncryptionType": "0x17"
+      }
+    ]
+  },
+  "auth_win_asreproast_no_preauth_tgt.yml": {
+    "true_positive": {
+      "EventID": 4768,
+      "TargetUserName": "svc_legacy",
+      "PreAuthType": "0"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4768,
+        "TargetUserName": "WORKSTATION01$",
+        "PreAuthType": "0"
+      },
+      {
+        "EventID": 4768,
+        "TargetUserName": "alice",
+        "PreAuthType": "2"
+      },
+      {
+        "EventID": 4769,
+        "TargetUserName": "alice",
+        "PreAuthType": "0"
+      }
+    ]
+  },
+  "auth_win_dcsync_replication_rights_used.yml": {
+    "true_positive": {
+      "EventID": 4662,
+      "AccessMask": "0x100",
+      "Properties": "%%7688\t{1131f6aa-9c07-11d1-f79f-00c04fc2dcd2}",
+      "SubjectUserName": "mallory"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4662,
+        "AccessMask": "0x100",
+        "Properties": "%%7688\t{1131f6aa-9c07-11d1-f79f-00c04fc2dcd2}",
+        "SubjectUserName": "DC01$"
+      },
+      {
+        "EventID": 4662,
+        "AccessMask": "0x20",
+        "Properties": "{bf967aba-0de6-11d0-a285-00aa003049e2}",
+        "SubjectUserName": "alice"
+      },
+      {
+        "EventID": 4662,
+        "AccessMask": "0x100",
+        "Properties": "{bf967aba-0de6-11d0-a285-00aa003049e2}",
+        "SubjectUserName": "alice"
+      },
+      {
+        "EventID": 4624,
+        "AccessMask": "0x100",
+        "SubjectUserName": "alice"
+      }
+    ]
   }
 }

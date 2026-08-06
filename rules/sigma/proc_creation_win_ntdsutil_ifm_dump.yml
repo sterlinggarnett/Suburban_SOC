@@ -1,0 +1,50 @@
+title: NTDS.dit Extraction via ntdsutil IFM Media Creation
+id: 8d2b7f41-3e95-4a6c-b17d-52c8e0a93b4f
+status: experimental
+description: |
+    Detects ntdsutil.exe creating an Install-From-Media snapshot, which writes
+    a copy of NTDS.dit (the full AD credential database) plus the SYSTEM hive
+    to an operator-chosen path. Requires both the NTDS-instance activation
+    (`ac i ntds` / `activate instance ntds`) and a media/snapshot verb so that
+    ordinary ntdsutil maintenance does not match — security review (#232)
+    found the original activation check (a bare `ntds` substring) vacuous,
+    since it is also the first four characters of `ntdsutil` itself and so
+    matched every invocation regardless of context.
+    Legitimate AD backup uses the identical syntax — this rule cannot separate
+    the two on command line alone, so it is scoped to alert and be triaged
+    against the change calendar, not to fire silently as high-confidence evil.
+    A more significant blind spot: ntdsutil's documented IFM workflow is
+    normally driven interactively (typed at successive `ntdsutil:` prompts),
+    which puts none of the verbs on the launching process's CommandLine —
+    this rule only sees the less-common single-line form. No console-input
+    telemetry is collected in this environment to close that gap; a
+    companion Sysmon FileCreate rule watching for `ntds.dit`/`SYSTEM` writes
+    to a non-standard path would survive interactive use and is a candidate
+    follow-up, not part of this issue's scope.
+references:
+    - https://attack.mitre.org/techniques/T1003/003/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.credential_access
+    - attack.t1003.003
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\ntdsutil.exe'
+        - OriginalFileName: 'ntdsutil.exe'
+    selection_ntds:
+        CommandLine|contains:
+            - 'ac i ntds'
+            - 'activate instance ntds'
+    selection_verb:
+        CommandLine|contains:
+            - 'create full'
+            - 'ifm'
+    condition: selection_img and selection_ntds and selection_verb
+falsepositives:
+    - A scheduled or operator-run Active Directory backup creating IFM media legitimately. Correlate with the change calendar and the destination path.
+    - None for the interactive-console form — that usage is invisible to this rule entirely (see description), so a real IFM extraction driven interactively will not be flagged.
+level: high

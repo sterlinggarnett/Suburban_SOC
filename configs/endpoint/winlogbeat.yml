@@ -27,8 +27,21 @@ winlogbeat.event_logs:
   # Windows Security — logon success/failure, explicit creds, special privs,
   # account creation, group membership changes (local/global/universal),
   # audit-log-cleared (1102). See rules/sigma/auth_win_*.yml (issue #192).
+  # 4768/4769/4662 added by M13 US2 (#232) for the Kerberos and DCSync rules
+  # (auth_win_kerberoasting_rc4_spn_request, auth_win_asreproast_no_preauth_tgt,
+  # auth_win_dcsync_replication_rights_used). Without collection those rules
+  # deploy and can never fire — the same silent-false-negative shape as the
+  # unenforced Beats mTLS in #219.
+  # Audit-policy prerequisites, on DOMAIN CONTROLLERS specifically:
+  #   4768/4769 — "Audit Kerberos Authentication Service" and "Audit Kerberos
+  #               Service Ticket Operations" (Account Logon).
+  #   4662      — "Audit Directory Service Access" (DS Access), AND a SACL for
+  #               the replication extended rights on the domain object; 4662 is
+  #               not emitted for them by default even with the subcategory on.
+  # 4662 is high-volume: the DCSync rule filters to AccessMask 0x100 plus the
+  # two replication GUIDs, but collection volume should be watched after rollout.
   - name: Security
-    event_id: 1102, 4624, 4625, 4648, 4672, 4720, 4728, 4732, 4756
+    event_id: 1102, 4624, 4625, 4648, 4662, 4672, 4720, 4728, 4732, 4756, 4768, 4769
 
   # Windows System — reboots / service control manager, event-log cleared (104),
   # service start-type changes (7040), new service installs (7045). See

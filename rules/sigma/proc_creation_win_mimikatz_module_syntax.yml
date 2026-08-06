@@ -1,0 +1,45 @@
+title: Mimikatz Module Syntax on the Command Line
+id: 3f1c9a2e-6b47-4d18-9c53-0e7a1b8d4f62
+status: experimental
+description: |
+    Detects Mimikatz invoked by its distinctive `module::function` command
+    syntax (sekurlsa::logonpasswords, lsadump::dcsync, privilege::debug, ...).
+    Deliberately does NOT match on the filename `mimikatz.exe`: renaming the
+    binary is the first thing any operator does, so a filename rule has close
+    to zero detection value. The module syntax survives renaming because it is
+    how the tool is driven — durable against that specific evasion, but not
+    against every one. Security review (#232) named the real remaining gap
+    plainly: Mimikatz is normally driven interactively at its own `mimikatz #`
+    prompt, which puts none of these module strings on the launching process's
+    CommandLine — only a bare `mimikatz.exe` launch is visible then, and this
+    rule cannot see the commands typed afterward. No console-input telemetry
+    is collected in this environment to close that gap. Pair with
+    `posh_ps_obfuscated_scriptblock.yml`/ScriptBlock logging (4104) for the
+    reflective in-memory case (`Invoke-Mimikatz`), which this rule does not
+    cover either.
+references:
+    - https://attack.mitre.org/techniques/T1003/001/
+    - https://github.com/gentilkiwi/mimikatz/wiki
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.credential_access
+    - attack.t1003.001
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains:
+            - 'sekurlsa::'
+            - 'lsadump::'
+            - 'privilege::debug'
+            - 'kerberos::golden'
+            - 'kerberos::ptt'
+            - 'crypto::capi'
+            - 'misc::memssp'
+    condition: selection
+falsepositives:
+    - Security staff running Mimikatz deliberately during an authorised red-team exercise or a detection-validation test.
+    - Documentation, training material, or a detection rule file quoted verbatim on a command line.
+level: critical

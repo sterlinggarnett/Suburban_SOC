@@ -1,0 +1,44 @@
+title: DCSync — Directory Replication Rights Exercised by a Non-DC Account
+id: 1b6f8d24-5c07-49e3-a82b-3f9d1e7c60a5
+status: experimental
+description: |
+    Detects use of the directory-replication extended rights (Security 4662,
+    AccessMask 0x100 "control access") against the domain object. Three
+    GUIDs: DS-Replication-Get-Changes (1131f6aa-...),
+    DS-Replication-Get-Changes-All (1131f6ad-...), and
+    DS-Replication-Get-Changes-In-Filtered-Set (89e95b76-..., RODC
+    filtered-attribute-set replication — added per security review, #232).
+    Holding the first two lets a principal ask a DC to replicate any
+    account's password hashes — the mainline DCSync technique used by
+    Mimikatz `lsadump::dcsync` and Impacket `secretsdump.py`, needing no code
+    execution on the DC itself; the third covers the RODC-adjacent variant.
+    The GUID filter is what makes this deployable at all: unfiltered, 4662 is
+    among the highest-volume events Windows emits. Domain controllers and the
+    accounts that legitimately replicate must be excluded per environment —
+    that account list is site-specific, so it is documented here rather than
+    guessed at in the rule.
+references:
+    - https://attack.mitre.org/techniques/T1003/006/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.credential_access
+    - attack.t1003.006
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4662
+        AccessMask: '0x100'
+        Properties|contains:
+            - '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2'
+            - '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2'
+            - '89e95b76-444d-4c62-991a-0facbeda640c'
+    filter_machine_account:
+        SubjectUserName|endswith: '$'
+    condition: selection and not filter_machine_account
+falsepositives:
+    - Azure AD Connect / DirSync, Entra Connect, or a backup product whose service account holds replication rights by design — exclude those specific accounts by name, and treat any change to that list as a privileged-access event.
+    - Domain controller computer accounts replicating with each other. Excluded here via the trailing `$` filter, which also removes the DC-to-DC baseline.
+level: critical

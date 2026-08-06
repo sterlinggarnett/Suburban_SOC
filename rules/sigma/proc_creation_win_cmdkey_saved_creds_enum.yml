@@ -1,0 +1,42 @@
+title: Saved Credential Enumeration via cmdkey or vaultcmd
+id: 7a4d1e93-2c68-4b57-9f01-3d8e6a2b5c74
+status: experimental
+description: |
+    Detects cmdkey.exe or vaultcmd.exe listing the stored credentials in
+    Windows Credential Manager / Windows Vault — two separate, signed
+    built-in binaries that read the same underlying store. This is a
+    standard early-access discovery step: it reveals which remote hosts the
+    user has cached credentials for, which then feeds lateral movement.
+    vaultcmd added after security review (#232) flagged that a cmdkey-only
+    rule is trivially evaded by tool substitution — cmdkey and vaultcmd do
+    the same recon with zero code required, so covering only one leaves the
+    other as a free bypass. Genuinely low-volume on a normal endpoint —
+    neither is run interactively often, which is what makes the plain
+    list/listcreds verb usable as a signal without further qualification.
+references:
+    - https://attack.mitre.org/techniques/T1555/004/
+    - https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/vaultcmd
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.credential_access
+    - attack.t1555.004
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\cmdkey.exe'
+        - OriginalFileName: 'cmdkey.exe'
+        - Image|endswith: '\vaultcmd.exe'
+        - OriginalFileName: 'vaultcmd.exe'
+    selection_list:
+        # '/list' also matches vaultcmd's '/listcreds:"..."' verb (substring).
+        CommandLine|contains:
+            - '/list'
+            - '-list'
+    condition: selection_img and selection_list
+falsepositives:
+    - Helpdesk or provisioning scripts auditing stored credentials on a managed workstation.
+    - An administrator manually checking which credentials are cached before troubleshooting a mapped-drive or RDP issue.
+level: medium

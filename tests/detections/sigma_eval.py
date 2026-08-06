@@ -17,6 +17,7 @@ test_sigma_detections.py, which fails if a rule introduces an unsupported featur
   * field modifiers: contains, endswith, startswith, all (and bare equality)
   * string OR list values (list = OR, unless `all` -> AND)
   * multiple keys in a selection block = AND
+  * a selection that is a LIST of maps = OR across those maps (#232)
   * condition over named blocks with and / or / not / parentheses
 
 All matching is case-insensitive (Sigma's default).
@@ -51,7 +52,19 @@ def _match_one(value: Optional[str], mods, target) -> bool:
     return cmp(target)
 
 
-def _block_match(block: dict, event: dict) -> bool:
+def _block_match(block, event: dict) -> bool:
+    # Sigma allows a selection to be a LIST of maps, meaning OR across them —
+    # the idiomatic way to write "Image endswith X OR OriginalFileName is X"
+    # without a second named block. Added for M13 US2 (#232); before this the
+    # evaluator raised AttributeError on the form, which silently pushed rule
+    # authors toward contorted single-map rules instead. Each element is itself
+    # a map whose keys still AND together.
+    if isinstance(block, list):
+        if not block:
+            raise ValueError("empty list selection block")
+        return any(_block_match(sub, event) for sub in block)
+    if not isinstance(block, dict):
+        raise ValueError(f"unsupported Sigma selection shape: {block!r}")
     for key, target in block.items():
         field, *mods = key.split("|")
         bad = [m for m in mods if m not in _SUPPORTED_MODS]

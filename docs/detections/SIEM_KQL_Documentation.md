@@ -5,7 +5,15 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**45 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**52 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+
+## AS-REP Roasting — TGT Requested for an Account Without Pre-Authentication
+
+- **Rule:** `auth_win_asreproast_no_preauth_tgt.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1558.004
+
+```
+(winlog.event_id:4768 AND winlog.event_data.PreAuthType:0) AND (NOT winlog.event_data.TargetUserName:*$)
+```
 
 ## Repeated Failed Sign-Ins (Windows Security 4625)
 
@@ -23,12 +31,28 @@ winlog.event_id:4625
 winlog.event_id:4625
 ```
 
+## DCSync — Directory Replication Rights Exercised by a Non-DC Account
+
+- **Rule:** `auth_win_dcsync_replication_rights_used.yml` · **level:** critical · **status:** experimental · **ATT&CK:** T1003.006
+
+```
+(winlog.event_id:4662 AND winlog.event_data.AccessMask:0x100 AND (winlog.event_data.Properties:(*1131f6aa\-9c07\-11d1\-f79f\-00c04fc2dcd2* OR *1131f6ad\-9c07\-11d1\-f79f\-00c04fc2dcd2* OR *89e95b76\-444d\-4c62\-991a\-0facbeda640c*))) AND (NOT winlog.event_data.SubjectUserName:*$)
+```
+
 ## Explicit-Credential Sign-In Recorded (Windows Security 4648)
 
 - **Rule:** `auth_win_explicit_cred_account_sweep.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1110.003
 
 ```
 winlog.event_id:4648
+```
+
+## Kerberoasting — RC4 Service Ticket Requested for a User SPN
+
+- **Rule:** `auth_win_kerberoasting_rc4_spn_request.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1558.003
+
+```
+(winlog.event_id:4769 AND winlog.event_data.TicketEncryptionType:0x17 AND winlog.event_data.Status:0x0) AND (NOT winlog.event_data.ServiceName:*$) AND (NOT winlog.event_data.ServiceName:krbtgt*)
 ```
 
 ## Privileged Group Membership Change (Windows Security 4732/4728/4756)
@@ -127,6 +151,14 @@ process.executable:*\\certutil.exe AND (process.args:(*\-decode* OR *\/decode*))
 process.executable:*\\wevtutil.exe AND (process.args:(*\ cl\ * OR *\ clear\-log\ *))
 ```
 
+## Saved Credential Enumeration via cmdkey or vaultcmd
+
+- **Rule:** `proc_creation_win_cmdkey_saved_creds_enum.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1555.004
+
+```
+(process.executable:*\\cmdkey.exe OR process.pe.original_file_name:cmdkey.exe OR process.executable:*\\vaultcmd.exe OR process.pe.original_file_name:vaultcmd.exe) AND (process.args:(*\/list* OR *\-list*))
+```
+
 ## CMSTP Execution via Malicious INF or Silent-Install Flags
 
 - **Rule:** `proc_creation_win_cmstp_execution.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1218.003
@@ -183,6 +215,14 @@ process.executable:*\\installutil.exe AND (process.args:(*\/u* OR *\-u* OR *\/lo
 (process.executable:(*\\cmd.exe OR *\\powershell.exe)) AND (process.parent.name:(*\\PSEXESVC.exe OR *\\WmiPrvSE.exe))
 ```
 
+## LaZagne Credential Harvester Execution
+
+- **Rule:** `proc_creation_win_lazagne_credential_harvest.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1555
+
+```
+((process.executable:*lazagne* OR process.pe.original_file_name:*lazagne* OR process.args:*lazagne*) AND ((process.args:(*\ all* OR *\ browsers* OR *\ windows*)) OR (process.args:(*\ \-oN* OR *\ \-oJ*)))) OR ((process.args:(*\ all* OR *\ browsers* OR *\ windows*)) AND (process.args:(*\ \-oN* OR *\ \-oJ*)))
+```
+
 ## Local User Account Creation via Net.exe
 
 - **Rule:** `proc_creation_win_local_acct_create.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1136.001
@@ -197,6 +237,14 @@ process.executable:*\\installutil.exe AND (process.args:(*\/u* OR *\-u* OR *\/lo
 
 ```
 process.executable:*\\rundll32.exe AND (process.args:*comsvcs.dll* AND process.args:*MiniDump*)
+```
+
+## Mimikatz Module Syntax on the Command Line
+
+- **Rule:** `proc_creation_win_mimikatz_module_syntax.yml` · **level:** critical · **status:** experimental · **ATT&CK:** T1003.001
+
+```
+process.args:(*sekurlsa\:\:* OR *lsadump\:\:* OR *privilege\:\:debug* OR *kerberos\:\:golden* OR *kerberos\:\:ptt* OR *crypto\:\:capi* OR *misc\:\:memssp*)
 ```
 
 ## Mshta Remote or Script Payload Execution
@@ -221,6 +269,14 @@ process.executable:*\\msiexec.exe AND (process.args:(*\/i\ http* OR *\/i\"http* 
 
 ```
 process.executable:*\\nltest.exe AND (process.args:(*\/dclist\:* OR *\/domain_trusts* OR *\/dsgetdc\:*))
+```
+
+## NTDS.dit Extraction via ntdsutil IFM Media Creation
+
+- **Rule:** `proc_creation_win_ntdsutil_ifm_dump.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1003.003
+
+```
+(process.executable:*\\ntdsutil.exe OR process.pe.original_file_name:ntdsutil.exe) AND (process.args:(*ac\ i\ ntds* OR *activate\ instance\ ntds*)) AND (process.args:(*create\ full* OR *ifm*))
 ```
 
 ## Indirect Command Execution via Pcalua

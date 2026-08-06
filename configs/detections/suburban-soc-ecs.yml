@@ -64,6 +64,24 @@ transformations:
       PrivilegeList: winlog.event_data.PrivilegeList
       SubjectUserSid: winlog.event_data.SubjectUserSid
       IpAddress: winlog.event_data.IpAddress
+      # M13 US2 (#232) — Kerberos 4768/4769 and DCSync 4662 fields. Every field
+      # a Security-channel rule selects on MUST be listed here: logstash.conf
+      # does not rename EventData for this channel, so an unmapped name compiles
+      # into a query against a field that does not exist and the rule silently
+      # never fires. That is exactly the #217 `ImagePath` defect, which passed
+      # the fixture tests while being a production no-op (sigma_eval.py evaluates
+      # raw Sigma field names, not these mapped ones — see its module docstring).
+      ServiceName: winlog.event_data.ServiceName
+      TicketEncryptionType: winlog.event_data.TicketEncryptionType
+      PreAuthType: winlog.event_data.PreAuthType
+      Status: winlog.event_data.Status
+      AccessMask: winlog.event_data.AccessMask
+      Properties: winlog.event_data.Properties
+      SubjectUserName: winlog.event_data.SubjectUserName
+      # NOT mapped here: TicketOptions, ObjectServer. Both reviewed and removed
+      # (code-reviewer + security-auditor, US2 review) — no rule in the corpus
+      # selects on either; add them back only alongside a rule that actually uses
+      # them, so this list never silently drifts ahead of what's deployed.
     rule_conditions:
       - type: logsource
         product: windows

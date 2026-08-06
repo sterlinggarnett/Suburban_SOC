@@ -55,8 +55,10 @@ def _match_one(value: Optional[str], mods, target) -> bool:
 def _block_match(block, event: dict) -> bool:
     # Sigma allows a selection to be a LIST of maps, meaning OR across them —
     # the idiomatic way to write "Image endswith X OR OriginalFileName is X"
-    # without a second named block. Each element is itself a map whose keys
-    # still AND together.
+    # without a second named block. Added for M13 US2 (#232); before this the
+    # evaluator raised AttributeError on the form, which silently pushed rule
+    # authors toward contorted single-map rules instead. Each element is itself
+    # a map whose keys still AND together.
     if isinstance(block, list):
         if not block:
             raise ValueError("empty list selection block")

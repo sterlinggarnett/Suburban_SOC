@@ -146,6 +146,34 @@ class SigmaDetectionTests(unittest.TestCase):
                           "Accessibility-backdoor rule over-fired: a legitimate "
                           "sethc.exe launch from winlogon.exe should not match")
 
+    def test_lazagne_survives_rename_off_lazagne_path(self):
+        # M13 US2 (#232) security review: the fixtures.json true_positive for
+        # this rule has "lazagne" in its own filename, so it alone cannot prove
+        # the category+output path added specifically to survive a PyInstaller
+        # rename (which loses OriginalFileName) still fires with NO name match
+        # anywhere on the command line. One targeted assertion, not a fixture
+        # entry — the schema only carries one true_positive per rule.
+        det = load_rule(SIGMA_DIR / "proc_creation_win_lazagne_credential_harvest.yml")["detection"]
+        renamed = {"Image": "C:\\Users\\Public\\svc42.exe", "CommandLine": "svc42.exe all -oN"}
+        self.assertTrue(detection_matches(det, renamed),
+                         "LaZagne rule regressed: renamed binary + category/output "
+                         "pairing no longer fires without a name match")
+        category_only = {"Image": "C:\\Users\\Public\\svc42.exe", "CommandLine": "svc42.exe all"}
+        self.assertFalse(detection_matches(det, category_only),
+                          "LaZagne rule over-fired: category keyword alone "
+                          "(no output switch, no name match) should not match")
+
+    def test_cmdkey_rule_also_catches_vaultcmd(self):
+        # M13 US2 (#232) security review: cmdkey.exe and vaultcmd.exe are
+        # separate signed binaries reading the same credential store — the
+        # vaultcmd branch added to selection_img had zero fixture coverage,
+        # so a future edit to that list could silently drop it with CI green.
+        det = load_rule(SIGMA_DIR / "proc_creation_win_cmdkey_saved_creds_enum.yml")["detection"]
+        vaultcmd = {"Image": "C:\\Windows\\System32\\vaultcmd.exe",
+                    "CommandLine": 'vaultcmd /listcreds:"Windows Credentials" /all'}
+        self.assertTrue(detection_matches(det, vaultcmd),
+                         "cmdkey/vaultcmd rule regressed: vaultcmd.exe listcreds no longer fires")
+
 
 def coverage_report():
     rows = []

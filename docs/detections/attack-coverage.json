@@ -11,6 +11,14 @@
   "hideDisabled": false,
   "techniques": [
     {
+      "techniqueID": "T1558.004",
+      "tactic": "credential-access",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "AS-REP Roasting \u2014 TGT Requested for an Account Without Pre-Authentication \u2014 rules/sigma/auth_win_asreproast_no_preauth_tgt.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1110",
       "tactic": "credential-access",
       "score": 75,
@@ -27,11 +35,27 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1003.006",
+      "tactic": "credential-access",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "DCSync \u2014 Directory Replication Rights Exercised by a Non-DC Account \u2014 rules/sigma/auth_win_dcsync_replication_rights_used.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1110.003",
       "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
       "comment": "Explicit-Credential Sign-In Recorded (Windows Security 4648) \u2014 rules/sigma/auth_win_explicit_cred_account_sweep.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1558.003",
+      "tactic": "credential-access",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Kerberoasting \u2014 RC4 Service Ticket Requested for a User SPN \u2014 rules/sigma/auth_win_kerberoasting_rc4_spn_request.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -147,6 +171,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1555.004",
+      "tactic": "credential-access",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Saved Credential Enumeration via cmdkey or vaultcmd \u2014 rules/sigma/proc_creation_win_cmdkey_saved_creds_enum.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1218.003",
       "tactic": "defense-evasion",
       "score": 75,
@@ -211,6 +243,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1555",
+      "tactic": "credential-access",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "LaZagne Credential Harvester Execution \u2014 rules/sigma/proc_creation_win_lazagne_credential_harvest.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1136.001",
       "tactic": "persistence",
       "score": 75,
@@ -224,6 +264,14 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "LSASS Memory Dump via Comsvcs.dll \u2014 rules/sigma/proc_creation_win_lsass_dump.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1003.001",
+      "tactic": "credential-access",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Mimikatz Module Syntax on the Command Line \u2014 rules/sigma/proc_creation_win_mimikatz_module_syntax.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -272,6 +320,14 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "Domain Controller Discovery via Nltest \u2014 rules/sigma/proc_creation_win_nltest_discovery.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1003.003",
+      "tactic": "credential-access",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "NTDS.dit Extraction via ntdsutil IFM Media Creation \u2014 rules/sigma/proc_creation_win_ntdsutil_ifm_dump.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -508,7 +564,7 @@
   "metadata": [
     {
       "name": "detections",
-      "value": "60"
+      "value": "67"
     },
     {
       "name": "source",

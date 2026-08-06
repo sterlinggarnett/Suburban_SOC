@@ -1,0 +1,41 @@
+title: Existing Service Reconfigured to a New Binary Path
+id: 6d1f8a25-3e97-4b60-8c14-5a9d2e7b0f63
+status: experimental
+description: |
+    Detects `sc.exe config <service> binpath= <value>`, which changes what
+    binary an ALREADY-EXISTING service launches — a distinct technique from
+    creating a new service (covered by proc_creation_win_service_creation_sc.yml
+    / system_win_service_installed.yml). Reconfiguring a legitimate, already-
+    trusted service's binary path is a stealthier persistence/privesc move
+    than creating a new one: the service name, description, and any existing
+    allow-listing an analyst or tool applies to it stay unchanged, only the
+    payload that runs under its identity does. The space after `binpath=` is
+    mandatory sc.exe syntax and is preserved here to avoid matching an
+    unrelated `/binpath=` substring elsewhere on a command line.
+references:
+    - https://attack.mitre.org/techniques/T1543/003/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.persistence
+    - attack.privilege_escalation
+    - attack.t1543.003
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\sc.exe'
+        - OriginalFileName: 'sc.exe'
+    selection_verb:
+        CommandLine|contains: ' config '
+    selection_flag:
+        CommandLine|contains: 'binpath='
+    condition: selection_img and selection_verb and selection_flag
+falsepositives:
+    - Legitimate IT/patch-management tooling repointing a service's binary during an in-place upgrade — correlate the target service name and new path against the change calendar.
+    - Real bypass, found by security review (#233) — the equivalent change
+      can be made via the Win32 `ChangeServiceConfigW` API directly, or a
+      raw registry write to the service's `ImagePath` value, neither of
+      which invokes sc.exe. This rule has no visibility into either path.
+level: high

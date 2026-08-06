@@ -1,0 +1,44 @@
+title: File Dropped into the Startup Folder
+id: 5c9e2a71-4b83-4f16-9d02-7e8a1c3f6b95
+status: experimental
+description: |
+    Detects a file created (Sysmon EventID 11) inside a user or all-users
+    Startup folder — anything placed there runs automatically at the next
+    logon, with no registry key or scheduled task needed. Scoped to
+    executable-adjacent extensions (.exe/.dll/.lnk/.bat/.cmd/.vbs/.js/.ps1);
+    a data file dropped there (e.g. a document a user saves by mistake) has
+    no persistence effect and would otherwise be pure noise. Includes .scr
+    (screensaver) and .pif — both natively executable by the shell at logon
+    and classic icon-disguise extensions, added after security review (#233)
+    flagged their absence from the original list.
+references:
+    - https://attack.mitre.org/techniques/T1547/001/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.persistence
+    - attack.t1547.001
+logsource:
+    category: file_event
+    product: windows
+detection:
+    selection_path:
+        TargetFilename|contains:
+            - '\Microsoft\Windows\Start Menu\Programs\Startup\'
+            - '\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\'
+    selection_ext:
+        TargetFilename|endswith:
+            - '.exe'
+            - '.dll'
+            - '.lnk'
+            - '.bat'
+            - '.cmd'
+            - '.vbs'
+            - '.js'
+            - '.ps1'
+            - '.scr'
+            - '.pif'
+    condition: selection_path and selection_ext
+falsepositives:
+    - A legitimate application installer creating its own Startup-folder shortcut (.lnk) during setup — correlate the installing process against the change calendar.
+level: high

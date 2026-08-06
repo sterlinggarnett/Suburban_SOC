@@ -1,0 +1,49 @@
+title: Remote-Style Service Creation (PsExec Pattern)
+id: 5f8c1e37-9a64-4d02-b715-3e8a6c4f2d90
+status: experimental
+description: |
+    Detects System 7045 with the ServiceName `PSEXESVC` — Sysinternals
+    PsExec's default temporary service name on the target host, used by
+    both the legitimate tool and virtually every reimplementation
+    (Impacket's psexec.py, CrackMapExec, and most C2 lateral-movement
+    modules default to this exact name unless explicitly overridden). This
+    is a single-event signal deliberately scoped to the tool's default
+    behavior; an operator who renames the service (`-r <name>` in PsExec)
+    evades it, which is a known, accepted limitation rather than an
+    oversight.
+    Complements the existing proc_creation_win_lateral_tool_parent.yml,
+    which detects cmd.exe/powershell.exe spawned WITH PSEXESVC.exe as
+    parent — a later, payload-dependent point in the chain that only fires
+    if the service goes on to run a shell. This rule fires at service
+    registration itself, before any payload executes, so it still catches a
+    PsExec-style deployment whose payload is a direct EXE rather than a
+    shell invocation.
+    Tagged persistence/privilege_escalation, matching T1543.003's canonical
+    ATT&CK tactic list and its two sibling rules in this batch — not
+    lateral_movement, corrected during security review (#233): the
+    technique used to REACH this host is lateral movement, but this
+    specific event (a service registered ON the host) is a
+    persistence/privesc primitive by ATT&CK's own classification, and the
+    original lateral_movement tag would have placed this rule's coverage in
+    the wrong ATT&CK Navigator tactic column. The lateral-movement context
+    is real and stays in this description, just not as the formal tag.
+references:
+    - https://attack.mitre.org/techniques/T1543/003/
+    - https://learn.microsoft.com/en-us/sysinternals/downloads/psexec
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.persistence
+    - attack.privilege_escalation
+    - attack.t1543.003
+logsource:
+    product: windows
+    service: system
+detection:
+    selection:
+        EventID: 7045
+        ServiceName: 'PSEXESVC'
+    condition: selection
+falsepositives:
+    - Legitimate administrative use of PsExec for remote troubleshooting or software deployment — a common, real IT-operations pattern in many environments; correlate against the change calendar and known admin source hosts before treating as malicious.
+level: high

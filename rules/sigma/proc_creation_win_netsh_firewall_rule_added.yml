@@ -1,0 +1,53 @@
+title: Firewall Rule Added via netsh
+id: 6a1e8c53-4f97-4d20-8b16-9c3e5a7f2d64
+status: experimental
+description: |
+    Detects `netsh advfirewall firewall add rule` / `netsh firewall add`,
+    which opens an inbound or outbound path through the host firewall —
+    commonly used to permit a C2 listener or an exfiltration channel, or to
+    disable protection ahead of further action (T1562.004).
+    LOGSOURCE CORRECTION: issue #234 filed this alongside System-channel
+    (EventID 7045) rules under a "system log rules" heading. The technically
+    correct native signal is the Windows Firewall With Advanced
+    Security/Firewall operational log (EventID 2004, rule added) — but that
+    channel is not currently collected in this environment, and standing
+    up a new channel + field mapping is out of scope for a single rule.
+    netsh's command-line invocation is already visible via process_creation
+    telemetry this pipeline already collects, so this rule detects the
+    netsh-driven method today; it has NO visibility into the
+    New-NetFirewallRule PowerShell cmdlet path, which can add the identical
+    rule without ever invoking netsh.exe. That gap is real and stated here
+    rather than implied covered.
+    Security review (#233) identified a THIRD option this correction missed:
+    Security EventID 4946 ("a rule was added to the Windows Firewall
+    exception list"), the native audit event for the policy engine itself,
+    which would fire identically regardless of whether the change came from
+    netsh, the PowerShell cmdlet, or the GUI — closing the exact gap stated
+    above. The Security channel is already collected in this pipeline, so
+    this is a materially smaller lift than standing up EventID 2004. Not
+    implemented here: it needs its own non-default audit-policy subcategory
+    ("Audit MPSSVC Rule-Level Policy Change") and an unverified field format,
+    same class of uncertainty as this batch's other System-channel rules —
+    tracked as a follow-up rather than expanding this rule's scope.
+references:
+    - https://attack.mitre.org/techniques/T1562/004/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.defense_evasion
+    - attack.t1562.004
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\netsh.exe'
+        - OriginalFileName: 'netsh.exe'
+    selection_verb:
+        CommandLine|contains:
+            - 'advfirewall firewall add'
+            - 'firewall add'
+    condition: selection_img and selection_verb
+falsepositives:
+    - Legitimate IT/deployment automation opening a required port for a new service — correlate the rule's direction/port/program against the change calendar.
+level: medium

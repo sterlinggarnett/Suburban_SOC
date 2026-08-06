@@ -1,0 +1,90 @@
+title: Accessibility Feature Backdoor via Image/OriginalFileName Mismatch
+id: 9a4d6f38-2c71-4e05-8b93-1f6c0a5d7e42
+status: experimental
+description: |
+    Detects two forms of the "sticky keys" class of pre-logon backdoor —
+    both launchable from the Winlogon screen before any credential is
+    entered, and both requiring the same six accessibility binaries
+    (sethc.exe, utilman.exe, osk.exe, magnify.exe, narrator.exe,
+    displayswitch.exe):
+
+    1. Binary replacement: the accessibility executable itself is
+       overwritten with cmd.exe. The launched Image path still says
+       `sethc.exe` (that's the file on disk that's launched), but its PE
+       metadata (OriginalFileName) still says `Cmd.Exe` — a mismatch a
+       legitimate accessibility-tool launch never produces. Sigma's default
+       case-insensitive comparison means casing differences in the real
+       OriginalFileName string do not evade it.
+    2. IFEO Debugger redirect: an Image File Execution Options `Debugger`
+       registry value under the target binary's key redirects execution to
+       cmd.exe instead. Security review (#233) caught that form 1's
+       selectors CANNOT see this variant — the process actually launched
+       has Image=cmd.exe, OriginalFileName=Cmd.exe (both legitimate values
+       for cmd.exe), with the original target name passed as an ARGUMENT
+       (`cmd.exe "sethc.exe"`), and Windows launches this from winlogon.exe
+       exactly as it would the real accessibility tool. The original rule's
+       description claimed this variant was covered by the same
+       Image/OriginalFileName mismatch check; it structurally is not — a
+       separate detection path is required, added below.
+references:
+    - https://attack.mitre.org/techniques/T1546/008/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.persistence
+    - attack.privilege_escalation
+    - attack.t1546.008
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_sethc:
+        Image|endswith: '\sethc.exe'
+    selection_utilman:
+        Image|endswith: '\utilman.exe'
+    selection_osk:
+        Image|endswith: '\osk.exe'
+    selection_magnify:
+        Image|endswith: '\magnify.exe'
+    selection_narrator:
+        Image|endswith: '\narrator.exe'
+    selection_displayswitch:
+        Image|endswith: '\displayswitch.exe'
+    filter_sethc_legit:
+        OriginalFileName: 'sethc.exe'
+    filter_utilman_legit:
+        OriginalFileName: 'utilman.exe'
+    filter_osk_legit:
+        OriginalFileName: 'osk.exe'
+    filter_magnify_legit:
+        OriginalFileName: 'Magnify.exe'
+    filter_narrator_legit:
+        OriginalFileName: 'Narrator.exe'
+    filter_displayswitch_legit:
+        OriginalFileName: 'DisplaySwitch.exe'
+    selection_ifeo_parent:
+        ParentImage|endswith: '\winlogon.exe'
+    selection_ifeo_debugger:
+        Image|endswith:
+            - '\cmd.exe'
+            - '\powershell.exe'
+    selection_ifeo_target_arg:
+        CommandLine|contains:
+            - 'sethc.exe'
+            - 'utilman.exe'
+            - 'osk.exe'
+            - 'magnify.exe'
+            - 'narrator.exe'
+            - 'displayswitch.exe'
+    condition: >
+        (selection_sethc and not filter_sethc_legit)
+        or (selection_utilman and not filter_utilman_legit)
+        or (selection_osk and not filter_osk_legit)
+        or (selection_magnify and not filter_magnify_legit)
+        or (selection_narrator and not filter_narrator_legit)
+        or (selection_displayswitch and not filter_displayswitch_legit)
+        or (selection_ifeo_parent and selection_ifeo_debugger and selection_ifeo_target_arg)
+falsepositives:
+    - An OriginalFileName-stripping packer or an unusual accessibility-tool build without standard PE metadata — treat a missing/empty OriginalFileName the same as a mismatch and triage accordingly.
+    - A legitimate pre-logon debugging or accessibility-testing tool that launches cmd.exe/powershell.exe from winlogon.exe with one of these binary names appearing incidentally on its command line — uncommon in practice.
+level: critical

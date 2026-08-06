@@ -743,5 +743,226 @@
         "ParentImage": "C:\\Windows\\explorer.exe"
       }
     ]
+  },
+  "proc_creation_win_startup_folder_file_drop.yml": {
+    "true_positive": {
+      "TargetFilename": "C:\\Users\\bob\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\evil.exe"
+    },
+    "true_negatives": [
+      {
+        "TargetFilename": "C:\\Users\\bob\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\readme.txt"
+      },
+      {
+        "TargetFilename": "C:\\Users\\bob\\Downloads\\evil.exe"
+      }
+    ]
+  },
+  "proc_creation_win_accessibility_binary_debugger_swap.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\sethc.exe",
+      "OriginalFileName": "Cmd.exe"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\sethc.exe",
+        "OriginalFileName": "sethc.exe"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\notepad.exe",
+        "OriginalFileName": "notepad.exe"
+      }
+    ]
+  },
+  "proc_creation_win_netsh_portproxy_relay.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\netsh.exe",
+      "CommandLine": "netsh interface portproxy add v4tov4 listenport=8080 connectaddress=1.2.3.4 connectport=80"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\netsh.exe",
+        "CommandLine": "netsh interface portproxy show v4tov4"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\netsh.exe",
+        "CommandLine": "netsh advfirewall firewall add rule name=x dir=in action=allow"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\netsh.exe",
+        "CommandLine": "netsh interface portproxy delete v4tov4 listenport=8080 listenaddress=10.0.0.5"
+      }
+    ]
+  },
+  "proc_creation_win_sc_config_binpath_change.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\sc.exe",
+      "CommandLine": "sc config wuauserv binpath= \"C:\\evil.exe\""
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\sc.exe",
+        "CommandLine": "sc create newsvc binpath= \"C:\\legit.exe\""
+      },
+      {
+        "Image": "C:\\Windows\\System32\\sc.exe",
+        "CommandLine": "sc config wuauserv start= demand"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\sc.exe",
+        "CommandLine": "sc config wuauserv binpath_migrator_flag"
+      }
+    ]
+  },
+  "proc_creation_win_dnscmd_serverlevelplugindll.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\dnscmd.exe",
+      "CommandLine": "dnscmd /config /serverlevelplugindll C:\\temp\\evil.dll"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\dnscmd.exe",
+        "CommandLine": "dnscmd /config /allowupdate 1"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\dnscmd.exe",
+        "CommandLine": "dnscmd /enumzones"
+      }
+    ]
+  },
+  "proc_creation_win_sharphound_bloodhound_collection.yml": {
+    "true_positive": {
+      "Image": "C:\\Users\\Public\\SharpHound.exe",
+      "CommandLine": "SharpHound.exe -c All"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "CommandLine": "powershell.exe Get-Process"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\net.exe",
+        "CommandLine": "net user"
+      }
+    ]
+  },
+  "proc_creation_win_net_share_recon.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\net.exe",
+      "CommandLine": "net view \\\\FILESERVER"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\net.exe",
+        "CommandLine": "net user"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\cmd.exe",
+        "CommandLine": "cmd.exe /c dir"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\net1.exe",
+        "CommandLine": "net1 user"
+      }
+    ]
+  },
+  "proc_creation_win_arp_cache_discovery.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\arp.exe",
+      "CommandLine": "arp -a"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\arp.exe",
+        "CommandLine": "arp -d *"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\cmd.exe",
+        "CommandLine": "cmd.exe /c echo -a"
+      }
+    ]
+  },
+  "system_win_suspicious_service_binpath_lolbin.yml": {
+    "true_positive": {
+      "EventID": 7045,
+      "ImagePath": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -enc ZQBjAGgAbwA="
+    },
+    "true_negatives": [
+      {
+        "EventID": 7045,
+        "ImagePath": "C:\\Program Files\\Vendor\\Agent\\svc.exe"
+      },
+      {
+        "EventID": 7040,
+        "ImagePath": "C:\\Windows\\System32\\powershell.exe"
+      }
+    ]
+  },
+  "system_win_driver_service_installed.yml": {
+    "true_positive": {
+      "EventID": 7045,
+      "ServiceType": "0x2"
+    },
+    "true_negatives": [
+      {
+        "EventID": 7045,
+        "ServiceType": "0x10"
+      },
+      {
+        "EventID": 7045,
+        "ServiceType": "0x20"
+      },
+      {
+        "EventID": 7040,
+        "ServiceType": "0x1"
+      }
+    ]
+  },
+  "system_win_remote_service_creation_psexec_style.yml": {
+    "true_positive": {
+      "EventID": 7045,
+      "ServiceName": "PSEXESVC"
+    },
+    "true_negatives": [
+      {
+        "EventID": 7045,
+        "ServiceName": "MyLegitSvc"
+      },
+      {
+        "EventID": 7040,
+        "ServiceName": "PSEXESVC"
+      }
+    ]
+  },
+  "proc_creation_win_spooler_child_process_printnightmare.yml": {
+    "true_positive": {
+      "ParentImage": "C:\\Windows\\System32\\spoolsv.exe",
+      "Image": "C:\\Windows\\System32\\cmd.exe"
+    },
+    "true_negatives": [
+      {
+        "ParentImage": "C:\\Windows\\System32\\spoolsv.exe",
+        "Image": "C:\\Windows\\System32\\notepad.exe"
+      },
+      {
+        "ParentImage": "C:\\Windows\\explorer.exe",
+        "Image": "C:\\Windows\\System32\\cmd.exe"
+      }
+    ]
+  },
+  "proc_creation_win_netsh_firewall_rule_added.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\netsh.exe",
+      "CommandLine": "netsh advfirewall firewall add rule name=\"x\" dir=in action=allow"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\netsh.exe",
+        "CommandLine": "netsh advfirewall firewall show rule name=all"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\netsh.exe",
+        "CommandLine": "netsh advfirewall set currentprofile state on"
+      }
+    ]
   }
 }

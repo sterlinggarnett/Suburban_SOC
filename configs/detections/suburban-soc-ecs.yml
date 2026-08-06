@@ -78,16 +78,40 @@ transformations:
   # fixture-based test (sigma_eval.py evaluates raw Sigma field names directly, not
   # through this ECS pipeline — exactly the divergence its own module docstring warns
   # about). Confirmed no other rule in the corpus references System-channel ImagePath.
+  # ServiceName/ServiceType added M13 US3 (#233/#234): the new
+  # remote-service-creation and driver-service rules select on these 7045
+  # fields (the LOLBin-service-binary rule in the same batch reuses the
+  # pre-existing ImagePath mapping instead) — same #217 shape as ImagePath
+  # above, added up front this time rather than found broken after the fact.
   - id: field-mapping-windows-system
     type: field_name_mapping
     mapping:
       EventID: winlog.event_id
       param1: winlog.event_data.param1
       ImagePath: winlog.event_data.ImagePath
+      ServiceName: winlog.event_data.ServiceName
+      ServiceType: winlog.event_data.ServiceType
     rule_conditions:
       - type: logsource
         product: windows
         service: system
+
+  # Sysmon FileCreate (EventID 11, M13 US3 #233) — logstash.conf's Sysmon
+  # rename block applies channel-wide (every Sysmon EventID, not just
+  # process_creation's EventID 1), so TargetFilename is ALREADY renamed to
+  # file.path for these events in the real pipeline; this transformation
+  # exists only because pySigma's rule_conditions scope by the SIGMA RULE's
+  # own logsource category, which for this rule is file_event, not
+  # process_creation — without a category: file_event entry here, the
+  # converted query would target the raw pre-rename field name instead.
+  - id: field-mapping-sysmon-file-event
+    type: field_name_mapping
+    mapping:
+      TargetFilename: file.path
+    rule_conditions:
+      - type: logsource
+        product: windows
+        category: file_event
 
   # Microsoft-Windows-WMI-Activity/Operational (issue #192 rule 5).
   - id: field-mapping-windows-wmi

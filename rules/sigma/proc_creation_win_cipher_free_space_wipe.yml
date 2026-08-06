@@ -1,0 +1,36 @@
+title: Free Disk Space Wiped via cipher.exe
+id: 5b9e2c84-7a16-4d03-b891-6c5e3a2f8d17
+status: experimental
+description: |
+    Detects `cipher.exe /w` (or `/w:<path>`), which overwrites the free
+    (deallocated) space on a volume — a legitimate anti-forensics tool built
+    into Windows, repurposed by ransomware and data-destruction actors after
+    deleting or exfiltrating files to prevent forensic recovery of the
+    deleted originals. Genuinely rare in normal operation: `/w` is not part
+    of cipher's everyday encrypting-file-system workflow, which is what
+    keeps this usable as a single-flag signal.
+references:
+    - https://attack.mitre.org/techniques/T1485/
+    - https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cipher
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.impact
+    - attack.t1485
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\cipher.exe'
+        - OriginalFileName: 'cipher.exe'
+    selection_flag:
+        # Leading space: a bare '/w' substring could collide with a URL
+        # argument's "//w..." (e.g. http://www...), however unlikely for
+        # this specific tool — anchored the same way as this batch's other
+        # short-flag checks (RAR's -p/-hp).
+        CommandLine|contains: ' /w'
+    condition: selection_img and selection_flag
+falsepositives:
+    - IT staff deliberately sanitizing free space on a workstation being decommissioned or repurposed — correlate against the change calendar and asset-lifecycle records.
+level: high

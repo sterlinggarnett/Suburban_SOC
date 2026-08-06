@@ -265,6 +265,10 @@
       {
         "Image": "C:\\Windows\\System32\\certutil.exe",
         "CommandLine": "certutil -hashfile C:\\reports\\decode_summary.txt SHA256"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil -hashfile C:\\reports\\base64-decoded-blob.bin SHA256"
       }
     ]
   },
@@ -1126,6 +1130,186 @@
         "EventID": 4624,
         "AccessMask": "0x100",
         "SubjectUserName": "alice"
+      }
+    ]
+  },
+  "proc_creation_win_wmic_shadowcopy_delete.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\wbem\\WMIC.exe",
+      "CommandLine": "wmic shadowcopy delete"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\wbem\\WMIC.exe",
+        "CommandLine": "wmic shadowcopy list brief"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\wbem\\WMIC.exe",
+        "CommandLine": "wmic process list brief"
+      }
+    ]
+  },
+  "proc_creation_win_bcdedit_recovery_disabled.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\bcdedit.exe",
+      "CommandLine": "bcdedit /set {default} bootstatuspolicy ignoreallfailures"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\bcdedit.exe",
+        "CommandLine": "bcdedit /enum"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\bcdedit.exe",
+        "CommandLine": "bcdedit /set {default} description \"Windows 11\""
+      }
+    ]
+  },
+  "proc_creation_win_wbadmin_delete_catalog.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\wbadmin.exe",
+      "CommandLine": "wbadmin delete catalog -quiet"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\wbadmin.exe",
+        "CommandLine": "wbadmin get versions"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\wbadmin.exe",
+        "CommandLine": "wbadmin start backup -backuptarget:D:"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\wbadmin.exe",
+        "CommandLine": "wbadmin delete versions -keepVersions:10 -quiet"
+      }
+    ]
+  },
+  "proc_creation_win_cipher_free_space_wipe.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\cipher.exe",
+      "CommandLine": "cipher /w:C:\\"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\cipher.exe",
+        "CommandLine": "cipher /e C:\\secrets"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\cipher.exe",
+        "CommandLine": "cipher /r:C:\\keys\\backup"
+      }
+    ]
+  },
+  "proc_creation_win_rar_archive_staging.yml": {
+    "true_positive": {
+      "Image": "C:\\Program Files\\WinRAR\\rar.exe",
+      "CommandLine": "rar.exe a -hpSecret123 archive.rar C:\\data\\*"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Program Files\\WinRAR\\rar.exe",
+        "CommandLine": "rar.exe a archive.rar C:\\data\\*"
+      },
+      {
+        "Image": "C:\\Program Files\\WinRAR\\rar.exe",
+        "CommandLine": "rar.exe x -p archive.rar C:\\out\\"
+      },
+      {
+        "Image": "C:\\Program Files\\WinRAR\\rar.exe",
+        "CommandLine": "rar.exe x -pSecret123 \"C:\\Users\\bob\\Downloads\\Financial Data a Copy.rar\" C:\\out\\"
+      },
+      {
+        "Image": "C:\\Program Files\\WinRAR\\rar.exe",
+        "CommandLine": "rar.exe a archive-project.rar C:\\data\\*"
+      }
+    ]
+  },
+  "proc_creation_win_esentutl_locked_file_copy.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\esentutl.exe",
+      "CommandLine": "esentutl.exe /y \"C:\\...\\Login Data\" /d C:\\temp\\out.db /vss"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\esentutl.exe",
+        "CommandLine": "esentutl.exe /g C:\\db\\mail.edb"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\esentutl.exe",
+        "CommandLine": "esentutl.exe /p C:\\db\\mail.edb"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\esentutl.exe",
+        "CommandLine": "esentutl.exe /y C:\\db\\mail.edb /d C:\\backup\\mail.edb"
+      }
+    ]
+  },
+  "posh_credential_harvesting_scriptblock.yml": {
+    "true_positive": {
+      "EventID": 4104,
+      "ScriptBlockText": "Copy-Item \"$env:LOCALAPPDATA\\Google\\Chrome\\User Data\\Default\\Login Data\" C:\\temp\\"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "Get-Process | Where-Object {$_.Name -eq \"chrome\"}"
+      },
+      {
+        "EventID": 4103,
+        "ScriptBlockText": "Login Data"
+      }
+    ]
+  },
+  "posh_data_compression_staging.yml": {
+    "true_positive": {
+      "EventID": 4104,
+      "ScriptBlockText": "[System.IO.Compression.ZipFile]::CreateFromDirectory(\"C:\\data\", \"C:\\out.zip\")"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "Compress-Archive -Path C:\\data -DestinationPath C:\\backups\\out.zip"
+      },
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "Get-ChildItem C:\\"
+      }
+    ]
+  },
+  "proc_creation_win_certutil_encode_exfil_prep.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\certutil.exe",
+      "CommandLine": "certutil -encode C:\\data\\staged.zip C:\\data\\staged.b64"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil -decode C:\\data\\staged.b64 C:\\data\\staged.zip"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil -hashfile encode_report.txt SHA256"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\certutil.exe",
+        "CommandLine": "certutil -hashfile C:\\reports\\base64-encoded-output.txt SHA256"
+      }
+    ]
+  },
+  "proc_creation_win_psexec_client_side_launch.yml": {
+    "true_positive": {
+      "Image": "C:\\Tools\\PsExec.exe",
+      "CommandLine": "PsExec.exe \\\\FILESERVER -accepteula cmd.exe"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Tools\\PsExec.exe",
+        "CommandLine": "PsExec.exe -i 1 cmd.exe"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\cmd.exe",
+        "CommandLine": "cmd.exe /c dir \\\\FILESERVER"
       }
     ]
   }

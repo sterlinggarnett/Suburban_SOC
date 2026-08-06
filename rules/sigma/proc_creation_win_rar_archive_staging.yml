@@ -1,0 +1,52 @@
+title: Password-Protected Archive Staging via RAR/WinRAR
+id: 2c6a8e15-9d47-4b02-a893-5f1c7e6b0a48
+status: experimental
+description: |
+    Detects rar.exe/winrar.exe invoked with a password flag (`-p<password>`
+    or `-hp<password>`, which also encrypts filenames) to create an
+    archive — the classic collection-staging step before exfiltration: bulk
+    files are compressed and password-protected in one command, which both
+    shrinks the transfer and defeats content-inspection egress controls
+    that don't decrypt archives. The password requirement is deliberate: it
+    is what separates staging-for-exfil from routine archiving, which
+    rarely bothers with a password.
+    Security review (#235/#236) found the original verb check (a
+    freestanding `' a '` substring) wasn't anchored to the verb's actual
+    position — it could also match an incidental " a " inside an unrelated
+    filename on an EXTRACT command, e.g. `rar.exe x -p "...Financial Data
+    a Copy.rar" ...`. Anchored to immediately follow the binary name
+    instead (`.exe a ` / `.exe" a `, covering both the unquoted and
+    quoted-path invocation forms), which only a real add-archive verb can
+    produce there.
+references:
+    - https://attack.mitre.org/techniques/T1560/001/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.collection
+    - attack.t1560.001
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\rar.exe'
+        - Image|endswith: '\winrar.exe'
+        - OriginalFileName: 'rar.exe'
+        - OriginalFileName: 'WinRAR.exe'
+    selection_verb:
+        CommandLine|contains:
+            - '.exe a '
+            - '.exe" a '
+    selection_password:
+        # Leading space: RAR flags are always space-separated on the command
+        # line, and a bare '-p' substring would also match an unrelated path
+        # or filename fragment like '-project'/'-public' — the same class of
+        # collision already caught and fixed in US3's sc.exe binpath rule.
+        CommandLine|contains:
+            - ' -p'
+            - ' -hp'
+    condition: selection_img and selection_verb and selection_password
+falsepositives:
+    - Legitimate IT/backup tooling creating a password-protected archive for authorized data transfer — correlate the destination and archive contents against the change calendar.
+level: high

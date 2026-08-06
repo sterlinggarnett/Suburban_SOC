@@ -1,0 +1,39 @@
+title: Windows Recovery Options Disabled via bcdedit
+id: 4a8c1e57-6d93-4f20-8b05-3e9a7c2f6b81
+status: experimental
+description: |
+    Detects bcdedit.exe disabling Windows Recovery Environment auto-repair
+    (`bootstatuspolicy ignoreallfailures`) or the Recovery Console itself
+    (`recoveryenabled no`) — a pre-encryption ransomware step that removes
+    the OS's own automatic-repair fallback, so a corrupted/encrypted boot
+    volume can't self-heal into a recovery prompt. CISA AA23-320A names this
+    as a key pre-encryption TTP for education-sector-targeting ransomware.
+    `recoveryenabled no`'s embedded single space is anchored against a tab
+    character too (`CreateProcess` treats tab and space as equivalent
+    argument delimiters) — security review (#235/#236) named this class of
+    gap across the batch; this is the one `level: critical` rule in it, so
+    it gets the explicit fix rather than just a documented limitation.
+references:
+    - https://attack.mitre.org/techniques/T1490/
+    - https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.impact
+    - attack.t1490
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\bcdedit.exe'
+        - OriginalFileName: 'bcdedit.exe'
+    selection_recovery:
+        CommandLine|contains:
+            - 'recoveryenabled no'
+            - "recoveryenabled\tno"
+            - 'ignoreallfailures'
+    condition: selection_img and selection_recovery
+falsepositives:
+    - A deliberate, documented dual-boot or embedded-device configuration change by IT staff — rare; correlate against the change calendar.
+level: critical

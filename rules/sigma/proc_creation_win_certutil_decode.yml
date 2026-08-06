@@ -8,16 +8,25 @@ description: >
     instead of the bare word 'decode', which also matched as a substring of any
     unrelated filename/parameter containing that word (e.g. certutil -hashfile
     decode_report.txt SHA256 has nothing to do with the decode operation).
+    Security review (#235/#236, found while reviewing this rule's -encode
+    mirror) tightened further: flag-form-only matching still collided with a
+    hyphen-compound filename like base64-decoded-blob.bin (the hyphen
+    naturally precedes "decoded"). Space-anchored (a leading space before
+    the flag, which real certutil syntax always has). OriginalFileName
+    fallback added at the same time for rename-resistance, matching the
+    sibling -encode rule.
 logsource:
     category: process_creation
     product: windows
 detection:
-    selection:
-        Image|endswith: '\certutil.exe'
+    selection_img:
+        - Image|endswith: '\certutil.exe'
+        - OriginalFileName: 'CertUtil.exe'
+    selection_flag:
         CommandLine|contains:
-            - '-decode'
-            - '/decode'
-    condition: selection
+            - ' -decode'
+            - ' /decode'
+    condition: selection_img and selection_flag
 falsepositives:
     - Rare legitimate certificate encoding/decoding workflows.
 level: medium

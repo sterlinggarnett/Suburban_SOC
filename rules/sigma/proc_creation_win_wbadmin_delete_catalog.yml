@@ -1,0 +1,37 @@
+title: Windows Backup Catalog or System State Backup Deleted via wbadmin
+id: 9c3e6a71-4d08-4f52-9a16-7c2f8b5e0d63
+status: experimental
+description: |
+    Detects wbadmin.exe deleting the local backup catalog
+    (`wbadmin delete catalog`) or an existing system-state backup
+    (`wbadmin delete systemstatebackup`) — a third recovery-inhibition
+    primitive alongside Volume Shadow Copy deletion (vssadmin/wmic) and
+    disabling boot-repair (bcdedit): this specifically destroys Windows
+    Server Backup's own catalog/backups, a distinct recovery path those two
+    don't touch. CISA AA23-320A names this pattern for education-sector
+    ransomware.
+references:
+    - https://attack.mitre.org/techniques/T1490/
+    - https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.impact
+    - attack.t1490
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\wbadmin.exe'
+        - OriginalFileName: 'wbadmin.exe'
+    selection_verb:
+        CommandLine|contains: 'delete'
+    selection_target:
+        CommandLine|contains:
+            - 'catalog'
+            - 'systemstatebackup'
+    condition: selection_img and selection_verb and selection_target
+falsepositives:
+    - Legitimate backup-retention cleanup by IT/backup-administration staff — correlate against the change calendar and the specific catalog/backup identifiers involved.
+level: critical

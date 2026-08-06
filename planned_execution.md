@@ -261,13 +261,52 @@ architectural follow-ups #214's review filed:
 [PR #280](https://github.com/voltron-1/Suburban_SOC/pull/280) (16/16 CI green),
 and #213 closed with the full arc summarised.
 
-Next unstarted item: **M13 US2 — #232** (7 credential-access / AD-attack rules).
-Plan: [`plans/20260805-m13-us2-credential-access-rules.md`](plans/20260805-m13-us2-credential-access-rules.md).
-Two things in that plan would ship broken if skipped, both matching failure
-modes this repo has hit before: `configs/endpoint/winlogbeat.yml` does not
-collect event IDs 4769/4768/4662, so three of the seven rules could never fire;
-and the Security-channel ECS mapping lacks the fields those rules select on,
-which is the same silent no-op as #217's `ImagePath` defect.
+- [x] **M13 US2 — #225 — COMPLETE** — 7 credential-access/AD-attack rules
+  (4 process_creation + 3 Security-channel: Kerberoasting 4769, AS-REP 4768,
+  DCSync 4662). [PR #282](https://github.com/voltron-1/Suburban_SOC/pull/282)
+  merged 2026-08-05, closing #232. `winlogbeat.yml` didn't collect
+  4769/4768/4662 and the Security-channel ECS mapping lacked the fields
+  these rules select on — both fixed up front (same silent-no-op shape as
+  #217's `ImagePath` defect). security-auditor + code-reviewer found real
+  bypasses (Kerberoasting `Status` blacklist let other failure codes
+  through; LaZagne name-only check defeatable by rename; DCSync missing a
+  third replication-rights GUID) — all fixed pre-merge. 45 → 52 rules.
+  Umbrella issue #225 closed manually 2026-08-06 (PR said "Part of #225",
+  not "Closes").
+- [x] **M13 US3 — #226 — COMPLETE** — 13 persistence/privesc/discovery rules
+  (8 process_creation + 5 System-log, 1 over the original 12-estimate from 2
+  deliberate reclassifications). [PR #284](https://github.com/voltron-1/Suburban_SOC/pull/284)
+  merged 2026-08-05, closing #233/#234. Found and fixed a repo-wide silent
+  no-op: `suburban-soc-ecs.yml` claimed an `OriginalFileName` rename
+  `logstash.conf` never performed, which would have broken all 8 rules
+  using it. 2 HIGH from security-auditor (accessibility-backdoor rule
+  couldn't detect the IFEO variant it claimed to; netsh portproxy false-
+  positived on `delete`). 45 → 58 rules. Umbrella issue #226 closed
+  manually 2026-08-06.
+- [x] **M13 US4 — #227 — COMPLETE** — 10 ransomware/collection/exfiltration
+  rules, closing Collection TA0009 (0→4) and Exfiltration TA0010 (0→2) gaps
+  plus 4 impact rules. [PR #285](https://github.com/voltron-1/Suburban_SOC/pull/285)
+  merged 2026-08-06, closing #235/#236. HIGH from security-auditor:
+  `certutil -encode`/`-decode` flag matching collided with hyphen-compound
+  filenames like `base64-encoded-output.txt` — fixed and backported to the
+  pre-existing `-decode` rule too. 58 → 75 rules. Umbrella issue #227
+  closed manually 2026-08-06.
+
+Next unstarted item: **M13 US5 — #228** (Campus Network Detection via Zeek
+Telemetry, 15 rules across 4 implementation issues: [#237](https://github.com/voltron-1/Suburban_SOC/issues/237)
+DNS tunneling/DGA/DoH/mining (5), [#238](https://github.com/voltron-1/Suburban_SOC/issues/238)
+SSL/TLS self-signed-C2/expired-certs (2), [#239](https://github.com/voltron-1/Suburban_SOC/issues/239)
+conn.log Tor/RDP/SMB/ICMP-tunnel (4), [#240](https://github.com/voltron-1/Suburban_SOC/issues/240)
+HTTP/SMTP C2/exfil/spam/phishing (4)). No plan doc written yet. Given every
+prior M13 batch has hit a silent-no-op defect in the Zeek→ECS field mapping
+or a missing collection prerequisite, the same class of check applies here
+first: confirm `configs/logstash.conf`/`suburban-soc-ecs.yml` actually map
+the `dns.*`/`ssl.*`/`conn.*`/`http.*`/`smtp.*` fields these rules will
+select on, and that the relevant Zeek scripts/log streams are enabled.
+After US5: US6 — #229 (PowerShell Deep Inspection & Windows Event Log, 8
+rules via #241/#242), US7 — #230 (Linux Auth Log + final CI verification, 5
+rules via #243), then #244 (fixtures for all 70 new rules + regenerate
+ATT&CK coverage/KQL docs, cross-cutting wrap-up for the whole milestone).
 
 ---
 
@@ -784,6 +823,21 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-06
+
+- **Housekeeping only — no new detection work this session.** This file's
+  NEXT UP was stale (still showing M13 US2/#232 as next-unstarted) despite
+  US2 (PR #282), US3 (PR #284), and US4 (PR #285) all having merged since.
+  Refreshed NEXT UP with all three phases marked done + evidence links, and
+  closed the three umbrella issues (#225, #226, #227) manually — same
+  not-auto-closed shape as #247: their PRs used "Part of #NNN" rather than
+  "Closes #NNN". Confirmed via `gh api .../milestones` (M13: 15 open / 10
+  closed at session start) and `gh api .../issues?milestone=17` rather than
+  trusting the file. Local `main` was also 1 commit behind `origin/main`
+  (US4's squash-merge, PR #285) — fast-forwarded before editing this file.
+  Next unstarted item is M13 US5 (#228, Zeek network telemetry, 15 rules) —
+  not yet started, no plan doc written.
 
 ## LAST SESSION — 2026-08-05 (later)
 

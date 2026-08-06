@@ -1,0 +1,51 @@
+title: Print Spooler Service Spawning a Suspicious Child Process
+id: 9e4c7a18-2d63-4f95-b108-6a3e9c5f7b21
+status: experimental
+description: |
+    Detects spoolsv.exe (the Print Spooler service) spawning a command
+    interpreter or script/LOLBin host. The Print Spooler runs as SYSTEM and
+    should never legitimately launch a shell or scripting engine — the
+    PrintNightmare family of vulnerabilities (CVE-2021-1675/34527) and
+    similar spooler-driver-loading exploit chains characteristically end in
+    exactly this: spoolsv.exe spawning cmd.exe, powershell.exe, or
+    rundll32.exe to execute attacker-controlled code with SYSTEM privileges.
+    LOGSOURCE CORRECTION: issue #234 filed this alongside 4 System-channel
+    (EventID 7045) rules under a "system log rules" heading, but a
+    PrintNightmare-class exploit chain does not reliably generate a service
+    (7045) event at all — driver-loading via the spooler's
+    RpcAddPrinterDriverEx path is the well-documented exploitation route and
+    leaves no such trace. Process-creation telemetry (already collected via
+    Sysmon EventID 1) is the accurate, deployable signal for this technique;
+    implemented here as process_creation rather than a System-channel rule.
+references:
+    - https://attack.mitre.org/techniques/T1068/
+    - https://msrc.microsoft.com/update-guide/vulnerability/CVE-2021-34527
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.privilege_escalation
+    - attack.t1068
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_parent:
+        ParentImage|endswith: '\spoolsv.exe'
+    selection_child:
+        Image|endswith:
+            - '\cmd.exe'
+            - '\powershell.exe'
+            - '\pwsh.exe'
+            - '\rundll32.exe'
+            - '\mshta.exe'
+            - '\regsvr32.exe'
+    condition: selection_parent and selection_child
+falsepositives:
+    - A third-party print-management or driver-installation product that legitimately launches a helper process from spoolsv.exe context — baseline and exclude the specific child image path.
+    - Security review (#233) found a real bypass, not a false positive — an
+      in-process-only payload (a malicious driver DLL that runs its code
+      inside spoolsv.exe without ever calling CreateProcess) leaves no
+      trace in process-creation telemetry either. This rule only catches
+      exploitation that goes on to spawn a child process; no telemetry
+      currently collected in this environment covers the in-process case.
+level: critical

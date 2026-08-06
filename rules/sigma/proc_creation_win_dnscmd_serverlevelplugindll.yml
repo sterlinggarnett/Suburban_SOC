@@ -1,0 +1,39 @@
+title: DNS Server Plugin DLL Side-Loading via dnscmd
+id: 4b7e2c95-6a38-4f01-9d52-8c3f6a1e0b49
+status: experimental
+description: |
+    Detects `dnscmd.exe /config /serverlevelplugindll <path>`, which sets a
+    registry value the DNS Server service loads as an in-process plugin DLL
+    on its next restart (or after the service is force-restarted). Requires
+    admin rights on the DNS server, but the DNS Server service typically runs
+    as SYSTEM — so this is a privilege-escalation and persistence primitive
+    specific to domain controllers, which very commonly co-host the DNS
+    Server role. Low volume: this switch has essentially no legitimate use
+    in normal DNS server administration.
+references:
+    - https://attack.mitre.org/techniques/T1574/002/
+    - https://web.archive.org/web/2021*/https://adsecurity.org/?p=4064
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.persistence
+    - attack.privilege_escalation
+    - attack.t1574.002
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\dnscmd.exe'
+        - OriginalFileName: 'dnscmd.exe'
+    selection_flag:
+        CommandLine|contains: 'serverlevelplugindll'
+    condition: selection_img and selection_flag
+falsepositives:
+    - None expected in normal DNS server operation. A DNS-plugin architecture deployed deliberately by a vendor product would be the only legitimate case, and should be a standing exclusion by exact DLL path if so.
+    - Real bypass, found by security review (#233) — the same registry
+      value can be set via the `DnsServerPsProvider` PowerShell module
+      (`Set-DnsServerSetting -ServerLevelPluginDll <path>`) or a direct
+      registry write, neither of which invokes dnscmd.exe. This rule has
+      no visibility into either path.
+level: critical

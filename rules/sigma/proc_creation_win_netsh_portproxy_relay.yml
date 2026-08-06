@@ -1,0 +1,37 @@
+title: Port-Proxy Relay Configured via netsh
+id: 2e6a9c4f-8b17-4d53-a091-6c2e8f4b1a75
+status: experimental
+description: |
+    Detects `netsh interface portproxy add v4tov4`, which configures the
+    Windows TCP/IP stack itself to relay a local port to a remote host:port —
+    a built-in, no-malware-required pivot/tunnel mechanism (attacker connects
+    to a compromised host's local port, which the OS silently forwards
+    onward). No third-party tooling is needed and the relay survives process
+    exit, which is what makes this a durable, low-footprint technique worth
+    its own rule distinct from generic proxy/tunnel malware detections.
+    Security review (#233) found the original two-selector design (`portproxy`
+    AND a bare `add` substring) false-positived on a routine `delete`: both
+    `listenaddress` and `connectaddress` — legitimate parameter names on the
+    `delete` verb too — contain the substring `add`. Matched as a single
+    contiguous phrase instead, which is the real, invariant `netsh` syntax.
+references:
+    - https://attack.mitre.org/techniques/T1090/001/
+    - https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netsh-interface-portproxy
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.command_and_control
+    - attack.t1090.001
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\netsh.exe'
+        - OriginalFileName: 'netsh.exe'
+    selection_verb:
+        CommandLine|contains: 'portproxy add'
+    condition: selection_img and selection_verb
+falsepositives:
+    - A legitimate network engineer or deployment script configuring a documented port-forward (e.g. exposing a container's port, or a WSL2 networking workaround) — correlate against the change calendar.
+level: high

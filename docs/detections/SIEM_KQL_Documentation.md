@@ -5,7 +5,7 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**52 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**65 rules.** Each query is the exact Lucene the Sigma rule compiles to.
 
 ## AS-REP Roasting — TGT Requested for an Account Without Pre-Authentication
 
@@ -119,6 +119,22 @@ note:(SSH\:\:Password_Guessing OR SSH\:\:Login_By_Password_Guesser)
 winlog.event_id:4104 AND (((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ * OR *\|IEX* OR *\|\ IEX* OR *;IEX* OR *;\ IEX* OR *Invoke\-Expression* OR *\[scriptblock\]\:\:Create* OR *.Invoke\(\)*)) AND ((winlog.event_data.ScriptBlockText:(*DownloadString* OR *DownloadFile* OR *DownloadData* OR *Net.WebClient* OR *Invoke\-WebRequest* OR *Invoke\-RestMethod* OR *Start\-BitsTransfer* OR *\ iwr\ * OR *\|iwr\ * OR *;iwr\ * OR *\=iwr\ * OR *\ irm\ * OR *\|irm\ * OR *;irm\ * OR *\=irm\ *)) OR (winlog.event_data.ScriptBlockText:(iwr\ * OR irm\ *)))) OR ((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ * OR *\|IEX* OR *\|\ IEX* OR *;IEX* OR *;\ IEX* OR *Invoke\-Expression* OR *\[scriptblock\]\:\:Create* OR *.Invoke\(\)*)) AND (winlog.event_data.ScriptBlockText:(*\-bxor* OR *\-bnot* OR *FromBase64String* OR *\-EncodedCommand* OR *\-enc\ *))) OR (((winlog.event_data.ScriptBlockText:(*DownloadString* OR *DownloadFile* OR *DownloadData* OR *Net.WebClient* OR *Invoke\-WebRequest* OR *Invoke\-RestMethod* OR *Start\-BitsTransfer* OR *\ iwr\ * OR *\|iwr\ * OR *;iwr\ * OR *\=iwr\ * OR *\ irm\ * OR *\|irm\ * OR *;irm\ * OR *\=irm\ *)) OR (winlog.event_data.ScriptBlockText:(iwr\ * OR irm\ *))) AND (winlog.event_data.ScriptBlockText:(*\-bxor* OR *\-bnot* OR *FromBase64String* OR *\-EncodedCommand* OR *\-enc\ *))))
 ```
 
+## Accessibility Feature Backdoor via Image/OriginalFileName Mismatch
+
+- **Rule:** `proc_creation_win_accessibility_binary_debugger_swap.yml` · **level:** critical · **status:** experimental · **ATT&CK:** T1546.008
+
+```
+(process.executable:*\\sethc.exe AND (NOT process.pe.original_file_name:sethc.exe)) OR (process.executable:*\\utilman.exe AND (NOT process.pe.original_file_name:utilman.exe)) OR (process.executable:*\\osk.exe AND (NOT process.pe.original_file_name:osk.exe)) OR (process.executable:*\\magnify.exe AND (NOT process.pe.original_file_name:Magnify.exe)) OR (process.executable:*\\narrator.exe AND (NOT process.pe.original_file_name:Narrator.exe)) OR (process.executable:*\\displayswitch.exe AND (NOT process.pe.original_file_name:DisplaySwitch.exe)) OR (process.parent.name:*\\winlogon.exe AND (process.executable:(*\\cmd.exe OR *\\powershell.exe)) AND (process.args:(*sethc.exe* OR *utilman.exe* OR *osk.exe* OR *magnify.exe* OR *narrator.exe* OR *displayswitch.exe*)))
+```
+
+## ARP Cache Enumeration via arp.exe
+
+- **Rule:** `proc_creation_win_arp_cache_discovery.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1016
+
+```
+(process.executable:*\\arp.exe OR process.pe.original_file_name:arp.exe) AND process.args:*\-a*
+```
+
 ## Malicious File Download via Bitsadmin
 
 - **Rule:** `proc_creation_win_bitsadmin_download.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1105
@@ -181,6 +197,14 @@ process.executable:*\\cmstp.exe AND (process.args:(*\/s* OR *\/ns* OR *.inf* OR 
 
 ```
 (process.executable:(*\\powershell.exe OR *\\pwsh.exe)) AND (process.args:*Set\-MpPreference* AND process.args:*Disable*)
+```
+
+## DNS Server Plugin DLL Side-Loading via dnscmd
+
+- **Rule:** `proc_creation_win_dnscmd_serverlevelplugindll.yml` · **level:** critical · **status:** experimental · **ATT&CK:** T1574.002
+
+```
+(process.executable:*\\dnscmd.exe OR process.pe.original_file_name:dnscmd.exe) AND process.args:*serverlevelplugindll*
 ```
 
 ## Domain Group Discovery via Net.exe
@@ -261,6 +285,30 @@ process.executable:*\\mshta.exe AND (process.args:(*http* OR *javascript* OR *vb
 
 ```
 process.executable:*\\msiexec.exe AND (process.args:(*\/i\ http* OR *\/i\"http* OR *\-i\ http* OR *\/package\ http* OR *\/a\ http*))
+```
+
+## Network Share Enumeration via net.exe
+
+- **Rule:** `proc_creation_win_net_share_recon.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1135
+
+```
+(process.executable:*\\net.exe OR process.executable:*\\net1.exe OR process.pe.original_file_name:net.exe OR process.pe.original_file_name:net1.exe) AND (process.args:(*\ view* OR *\ share*))
+```
+
+## Firewall Rule Added via netsh
+
+- **Rule:** `proc_creation_win_netsh_firewall_rule_added.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1562.004
+
+```
+(process.executable:*\\netsh.exe OR process.pe.original_file_name:netsh.exe) AND (process.args:(*advfirewall\ firewall\ add* OR *firewall\ add*))
+```
+
+## Port-Proxy Relay Configured via netsh
+
+- **Rule:** `proc_creation_win_netsh_portproxy_relay.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1090.001
+
+```
+(process.executable:*\\netsh.exe OR process.pe.original_file_name:netsh.exe) AND process.args:*portproxy\ add*
 ```
 
 ## Domain Controller Discovery via Nltest
@@ -351,6 +399,14 @@ process.executable:*\\reg.exe AND (process.args:*add* AND process.args:*CurrentV
 process.executable:*\\rundll32.exe AND (process.args:(*javascript\:* OR *vbscript\:* OR *runhtmlapplication* OR *mshtml*))
 ```
 
+## Existing Service Reconfigured to a New Binary Path
+
+- **Rule:** `proc_creation_win_sc_config_binpath_change.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1543.003
+
+```
+(process.executable:*\\sc.exe OR process.pe.original_file_name:sc.exe) AND process.args:*\ config\ * AND process.args:*binpath\=*
+```
+
 ## Scheduled Task Creation via Schtasks
 
 - **Rule:** `proc_creation_win_scheduled_task.yml` · **level:** low · **status:** stable · **ATT&CK:** T1053.005
@@ -365,6 +421,30 @@ process.executable:*\\schtasks.exe AND (process.args:*\/create* AND process.args
 
 ```
 process.executable:*\\sc.exe AND (process.args:*create* AND process.args:*binpath*)
+```
+
+## SharpHound / BloodHound AD Collection Execution
+
+- **Rule:** `proc_creation_win_sharphound_bloodhound_collection.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1087.002
+
+```
+(process.executable:*sharphound* OR process.pe.original_file_name:*sharphound* OR process.args:*sharphound*) OR (process.args:(*\-\-collectionmethod* OR *\-CollectionMethod* OR *Invoke\-BloodHound*))
+```
+
+## Print Spooler Service Spawning a Suspicious Child Process
+
+- **Rule:** `proc_creation_win_spooler_child_process_printnightmare.yml` · **level:** critical · **status:** experimental · **ATT&CK:** T1068
+
+```
+process.parent.name:*\\spoolsv.exe AND (process.executable:(*\\cmd.exe OR *\\powershell.exe OR *\\pwsh.exe OR *\\rundll32.exe OR *\\mshta.exe OR *\\regsvr32.exe))
+```
+
+## File Dropped into the Startup Folder
+
+- **Rule:** `proc_creation_win_startup_folder_file_drop.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1547.001
+
+```
+(file.path:(*\\Microsoft\\Windows\\Start\ Menu\\Programs\\Startup\\* OR *\\AppData\\Roaming\\Microsoft\\Windows\\Start\ Menu\\Programs\\Startup\\*)) AND (file.path:(*.exe OR *.dll OR *.lnk OR *.bat OR *.cmd OR *.vbs OR *.js OR *.ps1 OR *.scr OR *.pif))
 ```
 
 ## Suspicious System Owner/User Discovery
@@ -391,6 +471,14 @@ process.executable:*\\vssadmin.exe AND (process.args:*delete* AND process.args:*
 process.executable:*\\wmic.exe AND (process.args:*process* AND process.args:*call* AND process.args:*create*)
 ```
 
+## Kernel or File-System Driver Service Installed
+
+- **Rule:** `system_win_driver_service_installed.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1068
+
+```
+winlog.event_id:7045 AND ((winlog.event_data.ServiceType:(0x1 OR 0x2)) OR (winlog.event_data.ServiceType:(*kernel* OR *file\ system\ driver*)))
+```
+
 ## Event Log Cleared (Windows System 104)
 
 - **Rule:** `system_win_eventlog_cleared.yml` · **level:** high · **status:** stable · **ATT&CK:** T1070.001
@@ -407,12 +495,28 @@ winlog.event_id:104
 winlog.event_id:7040 AND winlog.event_data.param1:*Event\ Log*
 ```
 
+## Remote-Style Service Creation (PsExec Pattern)
+
+- **Rule:** `system_win_remote_service_creation_psexec_style.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1543.003
+
+```
+winlog.event_id:7045 AND winlog.event_data.ServiceName:PSEXESVC
+```
+
 ## New Service Installed (Windows System 7045)
 
 - **Rule:** `system_win_service_installed.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1543.003
 
 ```
 winlog.event_id:7045 AND (NOT (winlog.event_data.ImagePath:(C\:\\Windows\\System32\\* OR \"C\:\\Windows\\System32\\* OR C\:\\Windows\\SysWOW64\\* OR \"C\:\\Windows\\SysWOW64\\* OR C\:\\Program\ Files\\* OR \"C\:\\Program\ Files\\* OR C\:\\Program\ Files\ \(x86\)\\* OR \"C\:\\Program\ Files\ \(x86\)\\* OR %SystemRoot%\\* OR \"%SystemRoot%\\* OR \\SystemRoot\\* OR \??\\C\:\\Windows\\* OR \"\??\\C\:\\Windows\\* OR \??\\C\:\\Program\ Files\\* OR \"\??\\C\:\\Program\ Files\\*)))
+```
+
+## New Service Installed With a LOLBin as its Binary
+
+- **Rule:** `system_win_suspicious_service_binpath_lolbin.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1543.003
+
+```
+winlog.event_id:7045 AND (winlog.event_data.ImagePath:(*cmd.exe* OR *powershell.exe* OR *rundll32.exe* OR *mshta.exe* OR *regsvr32.exe* OR *wscript.exe* OR *cscript.exe*))
 ```
 
 ## Suspicious WMI Event Filter-to-Consumer Binding (WMI-Activity 5861)

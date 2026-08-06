@@ -1,0 +1,41 @@
+title: New Service Installed With a LOLBin as its Binary
+id: 7c2e9a41-5b83-4f06-9d17-6a3c8e5f2b91
+status: experimental
+description: |
+    Detects System 7045 ("a service was installed") where the service's
+    ImagePath itself is a living-off-the-land binary (cmd.exe,
+    powershell.exe, rundll32.exe, mshta.exe, regsvr32.exe, wscript.exe,
+    cscript.exe) rather than a normal dedicated service executable — the
+    service exists purely as a persistence wrapper to auto-run a one-liner
+    (or a VBS/JS payload, via wscript/cscript — added after security
+    review, #233) as SYSTEM at boot.
+    Complements the existing system_win_service_installed.yml (which
+    suppresses noise by installer PATH) with a different, orthogonal signal:
+    this rule fires regardless of install path, because a service binary
+    that IS a LOLBin is unusual no matter where it's installed from.
+references:
+    - https://attack.mitre.org/techniques/T1543/003/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.persistence
+    - attack.privilege_escalation
+    - attack.t1543.003
+logsource:
+    product: windows
+    service: system
+detection:
+    selection:
+        EventID: 7045
+        ImagePath|contains:
+            - 'cmd.exe'
+            - 'powershell.exe'
+            - 'rundll32.exe'
+            - 'mshta.exe'
+            - 'regsvr32.exe'
+            - 'wscript.exe'
+            - 'cscript.exe'
+    condition: selection
+falsepositives:
+    - A legitimate scheduled-task-style service wrapper that intentionally launches powershell.exe/cmd.exe to run an internal script — baseline and exclude these specific service names by exact match.
+level: high

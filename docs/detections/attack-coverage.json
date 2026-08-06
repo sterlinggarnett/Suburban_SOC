@@ -123,6 +123,22 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1546.008",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Accessibility Feature Backdoor via Image/OriginalFileName Mismatch \u2014 rules/sigma/proc_creation_win_accessibility_binary_debugger_swap.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1016",
+      "tactic": "discovery",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "ARP Cache Enumeration via arp.exe \u2014 rules/sigma/proc_creation_win_arp_cache_discovery.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1105",
       "tactic": "command-and-control",
       "score": 75,
@@ -184,6 +200,14 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "Windows Defender Real-Time Protection Disabled \u2014 rules/sigma/proc_creation_win_defender_tamper.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1574.002",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "DNS Server Plugin DLL Side-Loading via dnscmd \u2014 rules/sigma/proc_creation_win_dnscmd_serverlevelplugindll.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -264,6 +288,30 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "MSI Package Installed from a Remote URL \u2014 rules/sigma/proc_creation_win_msiexec_remote.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1135",
+      "tactic": "discovery",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Network Share Enumeration via net.exe \u2014 rules/sigma/proc_creation_win_net_share_recon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1562.004",
+      "tactic": "defense-evasion",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Firewall Rule Added via netsh \u2014 rules/sigma/proc_creation_win_netsh_firewall_rule_added.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1090.001",
+      "tactic": "command-and-control",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Port-Proxy Relay Configured via netsh \u2014 rules/sigma/proc_creation_win_netsh_portproxy_relay.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -355,6 +403,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1543.003",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Existing Service Reconfigured to a New Binary Path \u2014 rules/sigma/proc_creation_win_sc_config_binpath_change.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1053.005",
       "tactic": "execution",
       "score": 75,
@@ -368,6 +424,30 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "Windows Service Creation via Sc.exe \u2014 rules/sigma/proc_creation_win_service_creation_sc.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1087.002",
+      "tactic": "discovery",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "SharpHound / BloodHound AD Collection Execution \u2014 rules/sigma/proc_creation_win_sharphound_bloodhound_collection.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1068",
+      "tactic": "privilege-escalation",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Print Spooler Service Spawning a Suspicious Child Process \u2014 rules/sigma/proc_creation_win_spooler_child_process_printnightmare.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1547.001",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "File Dropped into the Startup Folder \u2014 rules/sigma/proc_creation_win_startup_folder_file_drop.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -395,6 +475,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1068",
+      "tactic": "privilege-escalation",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Kernel or File-System Driver Service Installed \u2014 rules/sigma/system_win_driver_service_installed.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1070.001",
       "tactic": "defense-evasion",
       "score": 75,
@@ -415,7 +503,23 @@
       "tactic": "persistence",
       "score": 75,
       "color": "#2ca02c",
+      "comment": "Remote-Style Service Creation (PsExec Pattern) \u2014 rules/sigma/system_win_remote_service_creation_psexec_style.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1543.003",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
       "comment": "New Service Installed (Windows System 7045) \u2014 rules/sigma/system_win_service_installed.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1543.003",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "New Service Installed With a LOLBin as its Binary \u2014 rules/sigma/system_win_suspicious_service_binpath_lolbin.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -460,7 +564,7 @@
   "metadata": [
     {
       "name": "detections",
-      "value": "54"
+      "value": "67"
     },
     {
       "name": "source",

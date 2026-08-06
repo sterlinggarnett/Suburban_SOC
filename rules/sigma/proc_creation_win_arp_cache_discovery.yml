@@ -1,0 +1,33 @@
+title: ARP Cache Enumeration via arp.exe
+id: 3a8e5c62-7d14-4f39-9b06-2e8a5c1f9d73
+status: experimental
+description: |
+    Detects `arp -a`, which dumps the local ARP cache — every IP/MAC pair
+    this host has recently communicated with on its local segment. A common,
+    low-cost network-discovery step, but also one of the most heavily used
+    legitimate diagnostic commands on any Windows fleet, so this rule is
+    intentionally low-confidence (medium) and documented as such: on its own
+    it is closer to noise than signal, and its value comes from correlation
+    with the other discovery-stage rules in this batch (SharpHound, net
+    view/share) or a subsequent lateral-movement/scan indicator, not from
+    firing in isolation.
+references:
+    - https://attack.mitre.org/techniques/T1016/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.discovery
+    - attack.t1016
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\arp.exe'
+        - OriginalFileName: 'arp.exe'
+    selection_flag:
+        CommandLine|contains: '-a'
+    condition: selection_img and selection_flag
+falsepositives:
+    - Routine network troubleshooting by IT staff or an end user diagnosing a connectivity issue — this is one of the most common legitimate diagnostic commands on any fleet. Do not alert on this rule in isolation; correlate with other discovery/lateral-movement indicators.
+level: medium

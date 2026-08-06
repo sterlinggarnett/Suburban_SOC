@@ -1,0 +1,54 @@
+title: Kernel or File-System Driver Service Installed
+id: 0e9c4a76-2f38-4d15-8b06-5e9c2a7f4b83
+status: experimental
+description: |
+    Detects System 7045 where ServiceType indicates a kernel-mode (0x1) or
+    file-system (0x2) driver — as opposed to the far more common own-process
+    (0x10) or shared-process (0x20) user-mode service types. A new kernel
+    driver load is a genuinely notable, comparatively rare event on an
+    endpoint (legitimate causes are almost always AV/EDR agents, VPN
+    clients, virtualization tooling, or printer/peripheral drivers) and is a
+    real privilege-escalation and defense-evasion primitive when malicious —
+    a vulnerable-signed-driver ("BYOVD") or unsigned driver can execute
+    arbitrary code in kernel context.
+    Named "driver service installed" rather than "unsigned driver loaded"
+    deliberately: Windows Security 7045 carries no code-signing field at
+    all, so signature status cannot be asserted from this event — the rule
+    only proves a driver-class service was registered, and every
+    signature/trust judgment belongs in triage, not in the rule's claims.
+    UNVERIFIED FORMAT ASSUMPTION: this environment has no Windows endpoint
+    shipping real 7045 telemetry to confirm how Winlogbeat renders
+    ServiceType (numeric hex, a decimal code, or Microsoft's descriptive
+    string) — validate against a real 7045 event before promoting past
+    `experimental`. The hex values are matched by EXACT equality, not
+    `contains`: `0x10` (own-process, ordinary user-mode) and `0x20`
+    (share-process) both contain the substring `0x1`/`0x2`, so a `contains`
+    match there would fire on nearly every routine service install. The
+    descriptive-string guesses use `contains` since their real rendering is
+    less certain and lower-collision-risk.
+references:
+    - https://attack.mitre.org/techniques/T1068/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.privilege_escalation
+    - attack.defense_evasion
+    - attack.t1068
+logsource:
+    product: windows
+    service: system
+detection:
+    selection_id:
+        EventID: 7045
+    selection_type_hex:
+        ServiceType:
+            - '0x1'
+            - '0x2'
+    selection_type_desc:
+        ServiceType|contains:
+            - 'kernel'
+            - 'file system driver'
+    condition: selection_id and (selection_type_hex or selection_type_desc)
+falsepositives:
+    - Legitimate AV/EDR agent, VPN client, virtualization platform, or printer/peripheral driver installation or update — baseline the known-good driver service names in this environment and exclude them by name.
+level: medium

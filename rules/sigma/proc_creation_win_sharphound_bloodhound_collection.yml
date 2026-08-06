@@ -1,0 +1,45 @@
+title: SharpHound / BloodHound AD Collection Execution
+id: 8f3a6d17-4c92-4e58-b071-9a6d3c5f2e84
+status: experimental
+description: |
+    Detects SharpHound.exe (the .NET collector) or its command-line ingestor
+    flags, and the BloodHound Python collector's distinctive `--collectionmethod`
+    argument syntax. BloodHound builds an attack-path graph over the entire
+    domain by enumerating sessions, group memberships, ACLs, and trust
+    relationships — the collection step itself generates significant,
+    detectable AD query volume before any exploitation happens, making this
+    one of the earliest observable indicators of an AD compromise-path
+    reconnaissance campaign.
+references:
+    - https://attack.mitre.org/techniques/T1087/002/
+    - https://github.com/BloodHoundAD/SharpHound
+    - https://github.com/dirkjanm/BloodHound.py
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.discovery
+    - attack.t1087.002
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_name:
+        - Image|contains: 'sharphound'
+        - OriginalFileName|contains: 'sharphound'
+        - CommandLine|contains: 'sharphound'
+    selection_cli_flags:
+        CommandLine|contains:
+            - '--collectionmethod'
+            - '-CollectionMethod'
+            - 'Invoke-BloodHound'
+    condition: selection_name or selection_cli_flags
+falsepositives:
+    - A security team running SharpHound/BloodHound during an authorised AD attack-path assessment or purple-team exercise.
+    - Real bypass, found by security review (#233) — SharpHound run via an
+      in-memory/reflective loader (e.g. Cobalt Strike's execute-assembly)
+      executes the .NET assembly inside an already-running process. No
+      process image or command line ever contains "sharphound" or the
+      collection-method flags, since there is no new process creation at
+      all. This is common tradecraft in practice, not a theoretical edge
+      case, and this rule has no visibility into it.
+level: high

@@ -1,0 +1,36 @@
+title: Shadow Copy Deletion via WMIC
+id: 7d2e9c48-3a61-4f05-9b17-6c8e2a5f0d94
+status: experimental
+description: |
+    Detects `wmic shadowcopy delete` (or `wmic.exe shadowcopy where "..." delete`)
+    — the WMIC-driven route to the same effect as
+    proc_creation_win_vss_delete_shadows.yml's vssadmin-based detection:
+    destroying Volume Shadow Copies to block recovery ahead of encryption.
+    A distinct, genuinely complementary signal, not a duplicate: WMIC is a
+    separate binary with its own command grammar, and ransomware operators
+    (CISA AA23-320A names this explicitly for education-sector-targeting
+    Vice Society/Rhysida activity) commonly favor it specifically because
+    vssadmin-based detections are now widely deployed and well known.
+references:
+    - https://attack.mitre.org/techniques/T1490/
+    - https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.impact
+    - attack.t1490
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\wmic.exe'
+        - OriginalFileName: 'wmic.exe'
+    selection_verb:
+        CommandLine|contains: 'shadowcopy'
+    selection_action:
+        CommandLine|contains: 'delete'
+    condition: selection_img and selection_verb and selection_action
+falsepositives:
+    - Backup software or a storage-management script pruning shadow copies via WMIC — rare in practice; verify context and correlate against the change calendar.
+level: high

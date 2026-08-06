@@ -1,0 +1,44 @@
+title: Locked File Copied via esentutl VSS Trick (Browser Credential Access)
+id: 6a4c9e27-3b85-4d16-a903-7e2f5c8b1d64
+status: experimental
+description: |
+    Detects esentutl.exe used with the `/y` (copy) and `/vss` (Volume Shadow
+    Copy) flags together to copy a file that is normally locked while in
+    use — most notably browser SQLite credential/cookie stores (Chrome/Edge
+    `Login Data`, `Cookies`), which the browser process holds open and a
+    plain `copy`/`Copy-Item` cannot read. esentutl is a legitimate
+    built-in Windows database-repair utility repurposed for this because
+    its `/vss` copy mode bypasses the file lock without needing a full VSS
+    snapshot of its own.
+    Requires `/vss` specifically, not just `/y ... /d` — security review
+    (#235/#236) found the original design also fired on a bare `/y ... /d`
+    copy with no `/vss` at all, which is esentutl's documented general-
+    purpose file-copy syntax, independent of the locked-file bypass this
+    rule is actually about. `/vss` is genuinely rare in normal IT
+    operation; a plain `/y ... /d` copy is not, so requiring it is what
+    keeps this a real signal rather than flagging routine esentutl use.
+references:
+    - https://attack.mitre.org/techniques/T1005/
+    - https://blog.mandiant.com/archive/mining-for-credentials/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.collection
+    - attack.credential_access
+    - attack.t1005
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\esentutl.exe'
+        - OriginalFileName: 'esentutl.exe'
+    selection_copy:
+        CommandLine|contains: ' /y '
+    selection_vss:
+        CommandLine|contains: '/vss'
+    condition: selection_img and selection_copy and selection_vss
+falsepositives:
+    - Legitimate database-repair or forensic-imaging use of esentutl by IT/DBA staff — rare in practice; correlate the copied file path against the change calendar.
+    - A bare `/y ... /d` copy with no `/vss` is esentutl's documented general-purpose copy syntax and does NOT match this rule at all — it is not a bypass of this rule's intent, since that form cannot bypass a file lock the way `/vss` does.
+level: high

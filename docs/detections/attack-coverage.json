@@ -115,6 +115,22 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1056.002",
+      "tactic": "collection",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "PowerShell Credential-Harvesting Cmdlet Pattern \u2014 rules/sigma/posh_credential_harvesting_scriptblock.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1560",
+      "tactic": "collection",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "PowerShell-Native Data Compression Staging \u2014 rules/sigma/posh_data_compression_staging.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1059.001",
       "tactic": "execution",
       "score": 75,
@@ -139,6 +155,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1490",
+      "tactic": "impact",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Windows Recovery Options Disabled via bcdedit \u2014 rules/sigma/proc_creation_win_bcdedit_recovery_disabled.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1105",
       "tactic": "command-and-control",
       "score": 75,
@@ -155,11 +179,27 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1132.001",
+      "tactic": "exfiltration",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Data Encoded for Exfiltration via Certutil \u2014 rules/sigma/proc_creation_win_certutil_encode_exfil_prep.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1105",
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
       "comment": "Ingress Tool Transfer via Certutil URL Cache \u2014 rules/sigma/proc_creation_win_certutil_urlcache_download.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1485",
+      "tactic": "impact",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Free Disk Space Wiped via cipher.exe \u2014 rules/sigma/proc_creation_win_cipher_free_space_wipe.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -216,6 +256,14 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "Domain Group Discovery via Net.exe \u2014 rules/sigma/proc_creation_win_domain_group_discovery.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1005",
+      "tactic": "collection",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Locked File Copied via esentutl VSS Trick (Browser Credential Access) \u2014 rules/sigma/proc_creation_win_esentutl_locked_file_copy.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -355,6 +403,22 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1569.002",
+      "tactic": "execution",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "PsExec Client-Side Remote Execution Launch \u2014 rules/sigma/proc_creation_win_psexec_client_side_launch.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1560.001",
+      "tactic": "collection",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Password-Protected Archive Staging via RAR/WinRAR \u2014 rules/sigma/proc_creation_win_rar_archive_staging.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1574",
       "tactic": "privilege-escalation",
       "score": 75,
@@ -467,11 +531,27 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1490",
+      "tactic": "impact",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Windows Backup Catalog or System State Backup Deleted via wbadmin \u2014 rules/sigma/proc_creation_win_wbadmin_delete_catalog.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1047",
       "tactic": "execution",
       "score": 75,
       "color": "#2ca02c",
       "comment": "WMI Process Call Create \u2014 rules/sigma/proc_creation_win_wmi_process_create.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1490",
+      "tactic": "impact",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Shadow Copy Deletion via WMIC \u2014 rules/sigma/proc_creation_win_wmic_shadowcopy_delete.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -564,7 +644,7 @@
   "metadata": [
     {
       "name": "detections",
-      "value": "67"
+      "value": "77"
     },
     {
       "name": "source",

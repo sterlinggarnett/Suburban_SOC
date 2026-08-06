@@ -5,7 +5,7 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**65 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**75 rules.** Each query is the exact Lucene the Sigma rule compiles to.
 
 ## AS-REP Roasting — TGT Requested for an Account Without Pre-Authentication
 
@@ -111,6 +111,22 @@ note:(Scan\:\:Port_Scan OR Scan\:\:Address_Scan OR Scan\:\:Random_Scan)
 note:(SSH\:\:Password_Guessing OR SSH\:\:Login_By_Password_Guesser)
 ```
 
+## PowerShell Credential-Harvesting Cmdlet Pattern
+
+- **Rule:** `posh_credential_harvesting_scriptblock.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1056.002
+
+```
+winlog.event_id:4104 AND ((winlog.event_data.ScriptBlockText:(*Login\ Data* OR *\\Cookies* OR *Local\ State*)) OR (winlog.event_data.ScriptBlockText:(*DPAPI* OR *\[System.Security.Cryptography.ProtectedData\]*)))
+```
+
+## PowerShell-Native Data Compression Staging
+
+- **Rule:** `posh_data_compression_staging.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1560
+
+```
+winlog.event_id:4104 AND (winlog.event_data.ScriptBlockText:*System.IO.Compression* OR (winlog.event_data.ScriptBlockText:*Compress\-Archive* AND (winlog.event_data.ScriptBlockText:(*\\Temp\\* OR *\\AppData\\Local\\Temp\\* OR *$env\:TEMP*))))
+```
+
 ## Obfuscated or Encoded PowerShell Script Block
 
 - **Rule:** `posh_ps_obfuscated_scriptblock.yml` · **level:** high · **status:** stable · **ATT&CK:** T1059.001, T1027
@@ -135,6 +151,14 @@ winlog.event_id:4104 AND (((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ 
 (process.executable:*\\arp.exe OR process.pe.original_file_name:arp.exe) AND process.args:*\-a*
 ```
 
+## Windows Recovery Options Disabled via bcdedit
+
+- **Rule:** `proc_creation_win_bcdedit_recovery_disabled.yml` · **level:** critical · **status:** experimental · **ATT&CK:** T1490
+
+```
+(process.executable:*\\bcdedit.exe OR process.pe.original_file_name:bcdedit.exe) AND (process.args:(*recoveryenabled\ no* OR *recoveryenabled	no* OR *ignoreallfailures*))
+```
+
 ## Malicious File Download via Bitsadmin
 
 - **Rule:** `proc_creation_win_bitsadmin_download.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1105
@@ -148,7 +172,15 @@ process.executable:*\\bitsadmin.exe AND process.args:*\/transfer*
 - **Rule:** `proc_creation_win_certutil_decode.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1140
 
 ```
-process.executable:*\\certutil.exe AND (process.args:(*\-decode* OR *\/decode*))
+(process.executable:*\\certutil.exe OR process.pe.original_file_name:CertUtil.exe) AND (process.args:(*\ \-decode* OR *\ \/decode*))
+```
+
+## Data Encoded for Exfiltration via Certutil
+
+- **Rule:** `proc_creation_win_certutil_encode_exfil_prep.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1132.001
+
+```
+(process.executable:*\\certutil.exe OR process.pe.original_file_name:CertUtil.exe) AND (process.args:(*\ \-encode* OR *\ \/encode*))
 ```
 
 ## Ingress Tool Transfer via Certutil URL Cache
@@ -157,6 +189,14 @@ process.executable:*\\certutil.exe AND (process.args:(*\-decode* OR *\/decode*))
 
 ```
 (process.executable:*\\certutil.exe AND (process.args:(*urlcache* OR *verifyctl*))) AND process.args:*split*
+```
+
+## Free Disk Space Wiped via cipher.exe
+
+- **Rule:** `proc_creation_win_cipher_free_space_wipe.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1485
+
+```
+(process.executable:*\\cipher.exe OR process.pe.original_file_name:cipher.exe) AND process.args:*\ \/w*
 ```
 
 ## Clearing Windows Event Logs via Wevtutil
@@ -213,6 +253,14 @@ process.executable:*\\cmstp.exe AND (process.args:(*\/s* OR *\/ns* OR *.inf* OR 
 
 ```
 (process.executable:(*\\net.exe OR *\\net1.exe)) AND (process.args:*group* AND process.args:*\/domain*)
+```
+
+## Locked File Copied via esentutl VSS Trick (Browser Credential Access)
+
+- **Rule:** `proc_creation_win_esentutl_locked_file_copy.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1005
+
+```
+(process.executable:*\\esentutl.exe OR process.pe.original_file_name:esentutl.exe) AND process.args:*\ \/y\ * AND process.args:*\/vss*
 ```
 
 ## Indirect Command Execution via Forfiles
@@ -351,6 +399,22 @@ process.executable:*\\nltest.exe AND (process.args:(*\/dclist\:* OR *\/domain_tr
 ((process.executable:(*\\powershell.exe OR *\\pwsh.exe)) AND (process.args:(*\ \-e\ * OR *\ \-en\ * OR *\ \-enc\ * OR *\ \-enco* OR *\ \-encod* OR *\ \-EncodedCommand* OR *\ \-ec\ * OR *\ \/e\ * OR *\ \/en\ * OR *\ \/enc\ * OR *\ \/enco* OR *\ \/encod* OR *\ \/EncodedCommand* OR *\ \/ec\ *))) AND (NOT (process.args:(*\ \-encoding\ * OR *\ \-encoding\:*)))
 ```
 
+## PsExec Client-Side Remote Execution Launch
+
+- **Rule:** `proc_creation_win_psexec_client_side_launch.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1569.002
+
+```
+(process.executable:*\\psexec.exe OR process.executable:*\\psexec64.exe OR process.pe.original_file_name:psexec.c) AND process.args:*\\*
+```
+
+## Password-Protected Archive Staging via RAR/WinRAR
+
+- **Rule:** `proc_creation_win_rar_archive_staging.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1560.001
+
+```
+(process.executable:*\\rar.exe OR process.executable:*\\winrar.exe OR process.pe.original_file_name:rar.exe OR process.pe.original_file_name:WinRAR.exe) AND (process.args:(*.exe\ a\ * OR *.exe\"\ a\ *)) AND (process.args:(*\ \-p* OR *\ \-hp*))
+```
+
 ## RDP Session Hijacking via Tscon
 
 - **Rule:** `proc_creation_win_rdp_hijack_tscon.yml` · **level:** high · **status:** stable · **ATT&CK:** T1574
@@ -463,12 +527,28 @@ process.executable:*\\whoami.exe AND process.args:*\/all*
 process.executable:*\\vssadmin.exe AND (process.args:*delete* AND process.args:*shadows*)
 ```
 
+## Windows Backup Catalog or System State Backup Deleted via wbadmin
+
+- **Rule:** `proc_creation_win_wbadmin_delete_catalog.yml` · **level:** critical · **status:** experimental · **ATT&CK:** T1490
+
+```
+(process.executable:*\\wbadmin.exe OR process.pe.original_file_name:wbadmin.exe) AND process.args:*delete* AND (process.args:(*catalog* OR *systemstatebackup*))
+```
+
 ## WMI Process Call Create
 
 - **Rule:** `proc_creation_win_wmi_process_create.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1047
 
 ```
 process.executable:*\\wmic.exe AND (process.args:*process* AND process.args:*call* AND process.args:*create*)
+```
+
+## Shadow Copy Deletion via WMIC
+
+- **Rule:** `proc_creation_win_wmic_shadowcopy_delete.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1490
+
+```
+(process.executable:*\\wmic.exe OR process.pe.original_file_name:wmic.exe) AND process.args:*shadowcopy* AND process.args:*delete*
 ```
 
 ## Kernel or File-System Driver Service Installed

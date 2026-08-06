@@ -1,0 +1,47 @@
+title: PsExec Client-Side Remote Execution Launch
+id: 0c6a3e94-7d18-4b52-9f06-8a1c5e2f9b73
+status: experimental
+description: |
+    Detects PsExec.exe itself being launched to initiate remote command
+    execution — the LAUNCHING side of a PsExec deployment, complementary to
+    the two target-side signals already in this corpus:
+    system_win_remote_service_creation_psexec_style.yml (the PSEXESVC
+    service registered ON the target) and proc_creation_win_lateral_tool_parent.yml
+    (a shell spawned WITH PSEXESVC.exe as parent, also on the target). This
+    rule instead catches the operator/attacker-controlled host where PsExec
+    is actually run FROM, giving earlier and independent visibility on
+    that side of the lateral-movement pair — scoped to the tool's own
+    filename plus a UNC-path remote-target indicator.
+    Two reviews (security-auditor + code-reviewer, #235/#236) independently
+    flagged the original design, which also treated `-accepteula` alone as
+    a remote-target indicator: PsExec caches EULA acceptance per-user in
+    the registry after the first run, so `-accepteula` is absent on repeat
+    invocations regardless of remote/local, and it also appears on
+    perfectly local invocations (`psexec -accepteula -s cmd.exe`, a
+    same-host SYSTEM-context technique, not this one). Dropped as a
+    standalone trigger — the UNC path alone is what actually distinguishes
+    "targets a remote host" from "runs locally," and still catches the
+    standard/documented remote-invocation form.
+references:
+    - https://attack.mitre.org/techniques/T1569/002/
+    - https://learn.microsoft.com/en-us/sysinternals/downloads/psexec
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.execution
+    - attack.lateral_movement
+    - attack.t1569.002
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\psexec.exe'
+        - Image|endswith: '\psexec64.exe'
+        - OriginalFileName: 'psexec.c'
+    selection_remote:
+        CommandLine|contains: '\\'
+    condition: selection_img and selection_remote
+falsepositives:
+    - Legitimate administrative use of PsExec for remote troubleshooting or software deployment — a common, real IT-operations pattern; correlate the source host and target against the change calendar and known admin workflows.
+level: medium

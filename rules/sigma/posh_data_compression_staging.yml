@@ -1,0 +1,45 @@
+title: PowerShell-Native Data Compression Staging
+id: 3f7c2a68-9e14-4d05-b823-6a1f5c9e0b47
+status: experimental
+description: |
+    Detects PowerShell ScriptBlock logging (4104) capturing
+    `Compress-Archive` or the .NET `System.IO.Compression` namespace used to
+    bundle files — the PowerShell-native equivalent of the RAR/WinRAR
+    staging pattern in this same batch, favored when a target host has no
+    third-party archiver installed. `Compress-Archive` alone is common in
+    legitimate admin scripts, so this is scoped to the .NET namespace
+    reference OR `Compress-Archive` combined with output to a
+    non-standard/temp-style path, rather than the cmdlet name alone.
+    The destination-path scoping is a real, accepted COVERAGE GAP, not
+    just an FP-reduction measure (security review, #235/#236): staging to
+    any path outside the three temp-path strings below — e.g.
+    `C:\ProgramData\`, `C:\Users\Public\`, or a mapped share, all
+    real-world staging choices, sometimes chosen specifically to avoid
+    temp-directory monitoring — evades the `Compress-Archive` branch
+    entirely.
+references:
+    - https://attack.mitre.org/techniques/T1560/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.collection
+    - attack.t1560
+logsource:
+    product: windows
+    service: powershell
+detection:
+    selection_id:
+        EventID: 4104
+    selection_dotnet_compression:
+        ScriptBlockText|contains: 'System.IO.Compression'
+    selection_compress_cmdlet:
+        ScriptBlockText|contains: 'Compress-Archive'
+    selection_temp_dest:
+        ScriptBlockText|contains:
+            - '\Temp\'
+            - '\AppData\Local\Temp\'
+            - '$env:TEMP'
+    condition: selection_id and (selection_dotnet_compression or (selection_compress_cmdlet and selection_temp_dest))
+falsepositives:
+    - A legitimate PowerShell deployment/backup script that compresses files to a temp path as an intermediate step — baseline and exclude by script hash/path if recurring.
+level: medium

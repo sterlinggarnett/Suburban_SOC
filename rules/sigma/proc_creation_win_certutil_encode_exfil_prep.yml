@@ -1,0 +1,39 @@
+title: Data Encoded for Exfiltration via Certutil
+id: 1d8e4c72-6a95-4f03-9b17-2e6c8a5f7d91
+status: experimental
+description: |
+    Detects `certutil.exe -encode` (or the `/encode` variant), which base64-
+    encodes an arbitrary local file. Encoding data before exfiltration is a
+    standard LOLBin technique to defeat egress controls that inspect for
+    binary/archive signatures but pass what looks like text; it is also the
+    exact inverse of proc_creation_win_certutil_decode.yml's -decode flag in
+    this corpus. Security review (#235/#236) found that mirroring that
+    rule's exact match form wasn't enough: '-encode' matches a bare-word
+    filename collision (`decode_report.txt`), but flag-form-only matching
+    (`-encode`/`/encode` with no space) still collides with a
+    hyphen-compound filename like `base64-encoded-output.txt`, since the
+    hyphen naturally precedes "encoded" in that word. Space-anchored (a
+    leading space before the flag) instead, which real certutil syntax
+    always has and a compound filename does not.
+references:
+    - https://attack.mitre.org/techniques/T1132/001/
+author: Suburban-SOC
+date: 2026-08-05
+tags:
+    - attack.exfiltration
+    - attack.t1132.001
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith: '\certutil.exe'
+        - OriginalFileName: 'CertUtil.exe'
+    selection_flag:
+        CommandLine|contains:
+            - ' -encode'
+            - ' /encode'
+    condition: selection_img and selection_flag
+falsepositives:
+    - Rare legitimate certificate-encoding workflows (e.g. converting a binary cert to base64 PEM format for transfer) — correlate the input/output file paths against the change calendar.
+level: medium

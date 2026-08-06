@@ -146,6 +146,55 @@ class SigmaDetectionTests(unittest.TestCase):
                           "Accessibility-backdoor rule over-fired: a legitimate "
                           "sethc.exe launch from winlogon.exe should not match")
 
+    def test_bcdedit_recoveryenabled_branch_fires_independently(self):
+        # M13 US4 (#235/#236) code review: the fixtures.json true_positive
+        # only exercises the 'ignoreallfailures' branch of
+        # "recoveryenabled no OR ignoreallfailures" — the other branch never
+        # fires in any fixture, so a regression there would pass CI. Also
+        # proves the tab-delimited variant added for the same rule.
+        det = load_rule(SIGMA_DIR / "proc_creation_win_bcdedit_recovery_disabled.yml")["detection"]
+        recovery_disabled = {"Image": "C:\\Windows\\System32\\bcdedit.exe",
+                             "CommandLine": "bcdedit /set {default} recoveryenabled no"}
+        self.assertTrue(detection_matches(det, recovery_disabled),
+                         "bcdedit rule regressed: 'recoveryenabled no' branch no longer fires")
+        recovery_disabled_tab = {"Image": "C:\\Windows\\System32\\bcdedit.exe",
+                                 "CommandLine": "bcdedit /set {default} recoveryenabled\tno"}
+        self.assertTrue(detection_matches(det, recovery_disabled_tab),
+                         "bcdedit rule regressed: tab-delimited 'recoveryenabled no' no longer fires")
+
+    def test_posh_credential_harvesting_dpapi_branch_fires_independently(self):
+        # M13 US4 (#235/#236) code review: the fixtures.json true_positive
+        # only exercises selection_browser_creds — selection_dpapi (the
+        # narrower DPAPI/.NET-class branch left after security review
+        # dropped the too-common ConvertFrom-SecureString indicator) never
+        # fires in any fixture.
+        det = load_rule(SIGMA_DIR / "posh_credential_harvesting_scriptblock.yml")["detection"]
+        dpapi_only = {"EventID": 4104,
+                      "ScriptBlockText": "[System.Security.Cryptography.ProtectedData]::Unprotect($blob, $null, 0)"}
+        self.assertTrue(detection_matches(det, dpapi_only),
+                         "PowerShell credential-harvesting rule regressed: the DPAPI "
+                         "branch (no browser-path indicator) no longer fires")
+        convertfrom_alone = {"EventID": 4104,
+                             "ScriptBlockText": "$cred | ConvertFrom-SecureString | Out-File C:\\creds.xml"}
+        self.assertFalse(detection_matches(det, convertfrom_alone),
+                          "PowerShell credential-harvesting rule over-fired: bare "
+                          "ConvertFrom-SecureString (deliberately excluded, too common "
+                          "in benign ops scripting) should not match alone")
+
+    def test_posh_data_compression_staging_compress_cmdlet_branch_fires_independently(self):
+        # M13 US4 (#235/#236) code review: the fixtures.json true_positive
+        # only exercises selection_dotnet_compression — the entire second
+        # OR-branch (Compress-Archive AND a temp-style destination, the
+        # specific design named in this rule's own description) never
+        # fires in any fixture. A typo dropping a temp-path entry would
+        # pass CI silently.
+        det = load_rule(SIGMA_DIR / "posh_data_compression_staging.yml")["detection"]
+        compress_to_temp = {"EventID": 4104,
+                            "ScriptBlockText": "Compress-Archive -Path C:\\data -DestinationPath $env:TEMP\\out.zip"}
+        self.assertTrue(detection_matches(det, compress_to_temp),
+                         "PowerShell data-compression-staging rule regressed: "
+                         "Compress-Archive + temp destination branch no longer fires")
+
     def test_lazagne_survives_rename_off_lazagne_path(self):
         # M13 US2 (#232) security review: the fixtures.json true_positive for
         # this rule has "lazagne" in its own filename, so it alone cannot prove

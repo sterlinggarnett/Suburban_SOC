@@ -28,6 +28,34 @@ filebeat.inputs:
     prospector.scanner.fingerprint.enabled: true
     prospector.scanner.fingerprint.length: 64
     file_identity.fingerprint: ~
+    # #228 (M13 US5): Zeek http.log's `host` field (the Host header) is a bare
+    # string landing at the event root (target: "" above) — Filebeat's own
+    # `host.*` object (host.name etc.) is injected by the publisher pipeline
+    # AFTER input processors run and unconditionally overwrites it, destroying
+    # the value before Logstash ever sees it. Verified empirically: without
+    # this rename, a synthetic http.log line with host="evil.example.com"
+    # arrives at Logstash as {"host":{"name":"<filebeat-hostname>"}} — Zeek's
+    # value is gone, not just unmapped. Renaming here (input-processor stage,
+    # before that merge) is the only point that survives it.
+    #
+    # Scoped to http.log specifically (security-auditor + code-reviewer, #228
+    # round 1): this input's glob covers every Zeek log type, and conn.log,
+    # known_hosts.log, software.log, and known_services.log all carry their
+    # own unrelated top-level `host` field (an asset IP, not an HTTP Host
+    # header) that an unscoped rename would mislabel as zeek.http.host -
+    # worse than the pre-fix behavior, which just silently dropped it.
+    # fail_on_error deliberately left at its default (true, not false):
+    # ignore_missing already covers the legitimate no-`host`-field case: a
+    # real rename failure should surface in the Filebeat log, not repeat the
+    # exact silent-failure mode this processor exists to close.
+    processors:
+      - rename:
+          when:
+            regexp:
+              log.file.path: 'http\.log$'
+          fields:
+            - {from: "host", to: "zeek.http.host"}
+          ignore_missing: true
 
 # ============================== Tenant attribution ===========================
 # Edge-stamping (WS0.3): each deployment sets TENANT_ID so every shipped event

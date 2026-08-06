@@ -171,3 +171,115 @@ transformations:
       - type: logsource
         product: zeek
         service: files
+
+  # #228 (M13 US5): before this batch, zero transformations existed for
+  # zeek/dns, zeek/ssl, zeek/conn, or zeek/http — every field a rule in these
+  # 4 logsources selects on would compile against the pre-rename Zeek-native
+  # name, the same silent-no-op shape field-mapping-zeek-files exists to
+  # solve. Field names here match exactly what configs/logstash.conf's
+  # Category 0 branch renames real Filebeat-shipped Zeek data to (the branch
+  # real telemetry actually reaches, not the dead network_logs branch).
+  #
+  # INVARIANT (security-auditor, #228 review round 1): logstash.conf's
+  # Category 0 mutate block renames the connection 4-tuple (id.orig_h/
+  # id.resp_h/id.orig_p/id.resp_p) + proto/service UNCONDITIONALLY, for every
+  # zeek_logs event regardless of stream. Any field renamed unconditionally
+  # there must appear in every zeek/* transformation that exists below, not
+  # just field-mapping-zeek-conn, or a rule that scopes a dns/ssl/http
+  # detection to a source/destination (e.g. "burst per-source", "to a rare
+  # host") is a
+  #
+  # SCOPE (review round 2): this invariant is only satisfied for the 4
+  # logsources with a transformation (files, dns, ssl, conn, http).
+  # zeek/notice and zeek/conn's sibling zeek/intel have NO transformation at
+  # all — the two existing notice rules (net_zeek_port_scan.yml,
+  # net_zeek_ssh_bruteforce.yml) only select on `note`, which Category 0
+  # leaves untouched, so this is harmless today. It stops being harmless the
+  # moment a notice-scoped rule adds a source/destination condition — add
+  # field-mapping-zeek-notice (same 4-tuple) at that point, don't assume it's
+  # already covered because this comment is nearby.
+  # silent no-op. This is why the 4-tuple is duplicated 3x below — pySigma's
+  # rule_conditions scoping has no inheritance mechanism.
+  - id: field-mapping-zeek-dns
+    type: field_name_mapping
+    mapping:
+      id.orig_h: source.ip
+      id.resp_h: destination.ip
+      id.orig_p: source.port
+      id.resp_p: destination.port
+      proto: network.transport
+      service: network.protocol
+      query: dns.question.name
+      qtype_name: dns.question.type
+      # ECS is dns.response_code (flat, underscore), not dns.response.code —
+      # matched exactly to configs/logstash.conf's Category 0 rename target
+      # so the two halves never drift from each other, even though this
+      # deviates from the real ECS field name (recorded here so a future
+      # ECS/Security-Onion migration doesn't silently break this instead).
+      rcode_name: dns.response_code
+    rule_conditions:
+      - type: logsource
+        product: zeek
+        service: dns
+
+  - id: field-mapping-zeek-ssl
+    type: field_name_mapping
+    mapping:
+      id.orig_h: source.ip
+      id.resp_h: destination.ip
+      id.orig_p: source.port
+      id.resp_p: destination.port
+      proto: network.transport
+      service: network.protocol
+      server_name: tls.client.server_name
+      cipher: tls.cipher
+      curve: tls.curve
+      version: tls.version
+      validation_status: tls.validation_status
+    rule_conditions:
+      - type: logsource
+        product: zeek
+        service: ssl
+
+  - id: field-mapping-zeek-conn
+    type: field_name_mapping
+    mapping:
+      id.orig_h: source.ip
+      id.resp_h: destination.ip
+      id.orig_p: source.port
+      id.resp_p: destination.port
+      proto: network.transport
+      service: network.protocol
+    rule_conditions:
+      - type: logsource
+        product: zeek
+        service: conn
+
+  - id: field-mapping-zeek-http
+    type: field_name_mapping
+    mapping:
+      id.orig_h: source.ip
+      id.resp_h: destination.ip
+      id.orig_p: source.port
+      id.resp_p: destination.port
+      proto: network.transport
+      service: network.protocol
+      method: http.request.method
+      status_code: http.response.status_code
+      # code-reviewer + security-auditor both flagged this as the one that
+      # actually matters: without it, the configs/network/filebeat.yml fix
+      # for the host-header/host-metadata collision is unreachable from any
+      # Sigma rule (a rule selecting `host` would compile against the raw,
+      # unmapped name — which real ingested data uses for the ECS host.*
+      # sensor-metadata object, not the HTTP Host header).
+      host: zeek.http.host
+      # `uri` deliberately left unmapped: neither this pipeline nor
+      # logstash.conf renames it, so the raw Sigma field name and the raw
+      # ingested field name already agree — mapping it to url.path here
+      # without a matching logstash.conf rename would be a new, self-
+      # inflicted no-op of the exact shape this comment block exists to
+      # prevent. Revisit together with whichever rule first needs it.
+    rule_conditions:
+      - type: logsource
+        product: zeek
+        service: http

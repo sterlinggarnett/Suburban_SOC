@@ -187,7 +187,7 @@ The Suburban-SOC pipeline is a modular, end-to-end security monitoring and autom
 | Component | Runtime | Port | Role |
 |---|---|---|---|
 | **OpenWrt Router** | Hardware / Physical | — | Captures all boundary network traffic; receives MAC-level quarantine rules from the SOAR layer via SSH |
-| **Zeek** | Native / WSL (`/opt/zeek/bin/zeek`) | File-based | Ingests raw PCAP via SSH/tcpdump, outputs structured JSON logs with Layer-2 MAC enrichment (`mac-logging` policy) |
+| **Zeek** | Native / WSL (`/opt/zeek/bin/zeek`) | File-based | Ingests raw PCAP via SSH/tcpdump, outputs structured JSON logs. Layer-2 MAC enrichment (`mac-logging` policy) is planned but not currently loaded on any real capture path — [#286](https://github.com/voltron-1/Suburban_SOC/issues/286) |
 | **Logstash** | Docker Container | 5044 in / 9200 out | Enriches, filters, and routes JSON logs; applies GeoIP lookups and ECS field mapping |
 | **Elasticsearch** | Docker Container | 9200 | Indexes and stores all structured log data across three index patterns (`logstash-security-*`, `.alerts-security.alerts-*`, `soar-actions-*`) |
 | **Kibana** | Docker Container | 5601 | Visualizes network events and threat dashboards; hosts the Watcher rule (`soar_quarantine_alert`) that triggers the SOAR loop |

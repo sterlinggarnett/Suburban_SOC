@@ -44,7 +44,7 @@ This document contains the finalized content for the Suburban-SOC project presen
 
 *   **Objective:** Automate the transformation of raw network packets into structured, human-readable security logs.
 *   **Zeek Integration:** Processed raw PCAPs using a Zeek container natively configured (`LogAscii::use_json=T`) to output structured JSON logs.
-*   **Layer-2 Enrichment:** Loaded the `policy/protocols/conn/mac-logging` policy so every `conn.log` row carries `orig_l2_addr` and `resp_l2_addr` — the foundation for device-level (not just IP-level) response.
+*   **Layer-2 Enrichment:** Loaded the `policy/protocols/conn/mac-logging` policy so every `conn.log` row carries `orig_l2_addr` and `resp_l2_addr` — the foundation for device-level (not just IP-level) response. *(As presented; found dead code in production during #228 review — [#286](https://github.com/voltron-1/Suburban_SOC/issues/286).)*
 *   **Log Shipping:** Configured a Filebeat agent (`filebeat.yml`) to actively monitor the Zeek output directory (`*.log`).
 *   **The Flow:** Host Computer (Raw PCAP) ➔ Zeek (JSON Transformation) ➔ Filebeat (Harvests & Ships JSON files).
 
@@ -57,7 +57,7 @@ This document contains the finalized content for the Suburban-SOC project presen
 **Associated Milestone:** Milestone 4: Data Visualization (ELK Integration)
 
 *   **Objective:** Finalize data ingestion to create a human-readable, centralized security dashboard.
-*   **Logstash Routing:** Filebeat streams logs directly into Logstash (Port `5044`), which parses the data, applies GeoIP enrichment, and maps Zeek `orig_l2_addr` / `resp_l2_addr` to ECS `source.mac` / `destination.mac`.
+*   **Logstash Routing:** Filebeat streams logs directly into Logstash (Port `5044`), which parses the data, applies GeoIP enrichment, and maps Zeek `orig_l2_addr` / `resp_l2_addr` to ECS `source.mac` / `destination.mac`. *(As presented; that mapping lives in a branch real Zeek data never reaches — [#286](https://github.com/voltron-1/Suburban_SOC/issues/286).)*
 *   **Elasticsearch Storage:** Enriched logs are indexed using a scalable daily categorization strategy (`logstash-security-%{+YYYY.MM.dd}`) for rapid searching.
 *   **Kibana Dashboard:** Visualizes network trends and anomalies, allowing SOC analysts to monitor real-time and historical security events through an intuitive GUI.
 

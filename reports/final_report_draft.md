@@ -17,13 +17,13 @@ The Suburban-SOC project addresses the growing need for enhanced cybersecurity i
 
 ## Processing Pipeline (Zeek & Filebeat)
 *   **Zeek Integration:** Raw PCAPs and live streams are processed by Zeek (installed natively at `/opt/zeek/bin/zeek`), configured with `LogAscii::use_json=T` to output structured, human-readable JSON security logs.
-*   **Layer-2 Enrichment:** The `policy/protocols/conn/mac-logging` Zeek policy is loaded so every `conn.log` row carries `orig_l2_addr` and `resp_l2_addr` — the MAC addresses required for device-level (not just IP-level) quarantine response.
+*   **Layer-2 Enrichment (planned, not currently functional — [#286](https://github.com/voltron-1/Suburban_SOC/issues/286)):** The `policy/protocols/conn/mac-logging` Zeek policy would make every `conn.log` row carry `orig_l2_addr` and `resp_l2_addr` — the MAC addresses required for device-level (not just IP-level) quarantine response — but it was only ever loaded by a Zeek config file no real capture path reads, so `source.mac` has been empty in every SOAR case record to date.
 *   **Log Shipping:** A Filebeat agent (`filebeat.yml`, using `type: filestream`) continuously monitors the Zeek output directory, harvesting the generated `.log` files and forwarding them to Logstash on port `5044`.
 *   **Pipeline Flow:** OpenWrt Router (raw stream) ➔ Host Computer ➔ Zeek (JSON + MAC enrichment) ➔ Filebeat (Harvests & Ships).
 
 ## Visualization & ELK Integration
 *   **Stack:** ELK 9.3.2 (Elasticsearch, Kibana, Logstash, Filebeat) deployed via Docker Compose (`scripts/setup/docker-compose.yml`), with xpack security and TLS enabled for all inter-service communication.
-*   **Logstash Routing:** Filebeat streams logs into Logstash (port `5044`), which parses the data, applies GeoIP enrichment, and maps Zeek's `orig_l2_addr`/`resp_l2_addr` fields to ECS `source.mac`/`destination.mac`.
+*   **Logstash Routing:** Filebeat streams logs into Logstash (port `5044`), which parses the data and applies GeoIP enrichment. A `source.mac`/`destination.mac` mapping exists in Logstash's config but lives in a branch real Filebeat-shipped Zeek data never reaches — tracked in [#286](https://github.com/voltron-1/Suburban_SOC/issues/286).
 *   **Elasticsearch Storage:** Enriched logs are indexed daily (`logstash-security-%{+YYYY.MM.dd}`), enabling rapid and efficient queries.
 *   **Three-Index Architecture:**
     *   `logstash-security-*` — raw telemetry data lake (Zeek network events, endpoint logs); powers all primary SOC dashboards.

@@ -292,21 +292,47 @@ and #213 closed with the full arc summarised.
   pre-existing `-decode` rule too. 58 → 75 rules. Umbrella issue #227
   closed manually 2026-08-06.
 
-Next unstarted item: **M13 US5 — #228** (Campus Network Detection via Zeek
-Telemetry, 15 rules across 4 implementation issues: [#237](https://github.com/voltron-1/Suburban_SOC/issues/237)
-DNS tunneling/DGA/DoH/mining (5), [#238](https://github.com/voltron-1/Suburban_SOC/issues/238)
-SSL/TLS self-signed-C2/expired-certs (2), [#239](https://github.com/voltron-1/Suburban_SOC/issues/239)
-conn.log Tor/RDP/SMB/ICMP-tunnel (4), [#240](https://github.com/voltron-1/Suburban_SOC/issues/240)
-HTTP/SMTP C2/exfil/spam/phishing (4)). No plan doc written yet. Given every
-prior M13 batch has hit a silent-no-op defect in the Zeek→ECS field mapping
-or a missing collection prerequisite, the same class of check applies here
-first: confirm `configs/logstash.conf`/`suburban-soc-ecs.yml` actually map
-the `dns.*`/`ssl.*`/`conn.*`/`http.*`/`smtp.*` fields these rules will
-select on, and that the relevant Zeek scripts/log streams are enabled.
-After US5: US6 — #229 (PowerShell Deep Inspection & Windows Event Log, 8
-rules via #241/#242), US7 — #230 (Linux Auth Log + final CI verification, 5
-rules via #243), then #244 (fixtures for all 70 new rules + regenerate
-ATT&CK coverage/KQL docs, cross-cutting wrap-up for the whole milestone).
+- [~] **M13 US5 — #228 — IN REVIEW** — Campus Network Detection via Zeek
+  Telemetry, 15 rules across 4 implementation issues (#237 DNS x5, #238
+  SSL/TLS x2, #239 conn x4, #240 HTTP/SMTP x4). Split into two commits on
+  `feat/m13-us5-zeek-network-detection`: a prerequisite-fix commit (`0c416bb`,
+  Zeek/Logstash/pySigma field mapping for dns/ssl/conn/http — every prior
+  M13 batch's silent-no-op check, done up front this time instead of found
+  broken after) and the 15-rule commit (`11e0b9a`).
+  [PR #294](https://github.com/voltron-1/Suburban_SOC/pull/294) — CI running,
+  **awaiting merge sign-off**. 75 → 90 rules.
+  Two review rounds on the rule diff (security-auditor + code-reviewer
+  parallel, then a second, more thorough security-auditor pass) found and
+  fixed real defects, not style nits: `net_zeek_ssl_self_signed_c2.yml`
+  would have been a silent no-op on OpenSSL 3.x (confirmed empirically —
+  real string is "self-signed", not "self signed"); the RDP/SMB rules'
+  "boundary sensor" assumption was contradicted by this repo's own capture
+  config and rebuilt with a new `cidr` Sigma modifier; an ICMP-tunnel
+  threshold was 1000x too low because `orig_bytes` is a per-flow total, not
+  per-packet; a DGA regex had a one-character-bypass copy/paste bug; a
+  mining-pool rule's stated rationale for skipping the #222 intel-feed
+  pattern was factually wrong (corrected, not just patched around).
+  Known, stated gap: one new live-fire test (`net_zeek_dns_dga_nxdomain_burst.yml`)
+  can't be confirmed passing outside CI (no reachable Elasticsearch in the
+  authoring environment) — it's the first real test of the `re` Sigma
+  modifier's assumed Lucene full-match semantics, added for this batch.
+  Follow-ups filed: [#286](https://github.com/voltron-1/Suburban_SOC/issues/286)
+  (MAC quarantine correlation), [#287](https://github.com/voltron-1/Suburban_SOC/issues/287)
+  (static logstash.conf↔ecs.yml drift test — this defect class recurred in
+  4 consecutive PRs), [#288](https://github.com/voltron-1/Suburban_SOC/issues/288)
+  (capture-loss monitoring), [#289](https://github.com/voltron-1/Suburban_SOC/issues/289)
+  (compliance docs citing dead config), [#290](https://github.com/voltron-1/Suburban_SOC/issues/290)
+  (ES template case-normalization gap), [#291](https://github.com/voltron-1/Suburban_SOC/issues/291)
+  (leading-wildcard query cost + cross-stream duplicate-alert risk),
+  [#292](https://github.com/voltron-1/Suburban_SOC/issues/292) (DNS TXT-C2
+  download-direction mapping), [#293](https://github.com/voltron-1/Suburban_SOC/issues/293)
+  (pin the unpinned `zeek/zeek` image a rule's string match now depends on).
+
+Next unstarted item, once #294 merges: US6 — #229 (PowerShell Deep
+Inspection & Windows Event Log, 8 rules via #241/#242), then US7 — #230
+(Linux Auth Log + final CI verification, 5 rules via #243), then #244
+(fixtures for all 70 new rules + regenerate ATT&CK coverage/KQL docs,
+cross-cutting wrap-up for the whole milestone).
 
 ---
 
@@ -826,18 +852,26 @@ are implemented in code; checked off with that one caveat noted inline.
 
 ## LAST SESSION — 2026-08-06
 
-- **Housekeeping only — no new detection work this session.** This file's
-  NEXT UP was stale (still showing M13 US2/#232 as next-unstarted) despite
-  US2 (PR #282), US3 (PR #284), and US4 (PR #285) all having merged since.
-  Refreshed NEXT UP with all three phases marked done + evidence links, and
-  closed the three umbrella issues (#225, #226, #227) manually — same
-  not-auto-closed shape as #247: their PRs used "Part of #NNN" rather than
-  "Closes #NNN". Confirmed via `gh api .../milestones` (M13: 15 open / 10
-  closed at session start) and `gh api .../issues?milestone=17` rather than
-  trusting the file. Local `main` was also 1 commit behind `origin/main`
-  (US4's squash-merge, PR #285) — fast-forwarded before editing this file.
-  Next unstarted item is M13 US5 (#228, Zeek network telemetry, 15 rules) —
-  not yet started, no plan doc written.
+- **M13 US5 (#228) built end-to-end this session**, after the housekeeping
+  below. Plan written (`plans/20260806-m13-us5-zeek-network-detection.md`),
+  prerequisite Zeek/Logstash/pySigma field-mapping fixes implemented and
+  reviewed (2 rounds), then all 15 rules written, reviewed (2 more rounds),
+  fixed, and pushed as [PR #294](https://github.com/voltron-1/Suburban_SOC/pull/294) —
+  see NEXT UP for the full defect list the reviews caught (OpenSSL 3.x
+  string drift, a wrong sensor-placement assumption, an order-of-magnitude
+  threshold error, a regex bypass, a factually-wrong design rationale — all
+  fixed, not just flagged). 8 follow-up issues filed (#286-#293) for what's
+  genuinely out of scope. PR not merged — awaiting explicit sign-off.
+- **Housekeeping, start of session.** This file's NEXT UP was stale (still
+  showing M13 US2/#232 as next-unstarted) despite US2 (PR #282), US3 (PR
+  #284), and US4 (PR #285) all having merged since. Refreshed NEXT UP with
+  all three phases marked done + evidence links, and closed the three
+  umbrella issues (#225, #226, #227) manually — same not-auto-closed shape
+  as #247: their PRs used "Part of #NNN" rather than "Closes #NNN".
+  Confirmed via `gh api .../milestones` (M13: 15 open / 10 closed at
+  session start) and `gh api .../issues?milestone=17` rather than trusting
+  the file. Local `main` was also 1 commit behind `origin/main` (US4's
+  squash-merge, PR #285) — fast-forwarded before editing this file.
 
 ## LAST SESSION — 2026-08-05 (later)
 

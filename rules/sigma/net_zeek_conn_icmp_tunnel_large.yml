@@ -1,0 +1,44 @@
+title: Unusually Large ICMP Flow (Possible ICMP Tunnel)
+id: 30e58c60-d2c2-47e8-a5a1-10850f8d2ecb
+status: experimental
+description: |
+    Detects an ICMP flow where the originator sent more than 1,000,000
+    bytes total (cumulative across the whole Zeek-tracked flow, not a
+    single packet) — a volume ICMP tunneling tools (icmpsh, ptunnel,
+    icmptunnel) transferring real data can reach, but ordinary ping traffic
+    essentially never does even under sustained monitoring.
+    Round-1 threshold (1024 bytes) was wrong (security-auditor round 2):
+    Zeek's conn.log orig_bytes is the originator's cumulative payload for
+    the entire tracked flow, not per echo request, so it conflates duration
+    with size. Default Linux ping sends ~56 data bytes per echo; any
+    continuous-monitoring tool (Smokeping, Nagios, MTR, keepalive checks)
+    pinging once a second crosses 1024 bytes in under 20 seconds, making
+    the round-1 threshold noise, not signal — the description even correctly
+    stated ping's per-packet size while setting a per-flow threshold barely
+    above one packet. Raised by three orders of magnitude; a real tunneled
+    transfer of meaningful size still clears it, while routine monitoring
+    traffic essentially never does even over Zeek's full flow-inactivity
+    timeout.
+    Needed configs/logstash.conf + configs/detections/suburban-soc-ecs.yml
+    to gain an orig_bytes -> source.bytes mapping (#228 rule-writing phase;
+    this field was untouched by either pipeline before this rule needed it).
+    Uses the `gt` numeric-comparison Sigma modifier, added for this batch.
+references:
+    - https://attack.mitre.org/techniques/T1095/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.command_and_control
+    - attack.t1095
+logsource:
+    product: zeek
+    service: conn
+detection:
+    selection:
+        proto: 'icmp'
+        orig_bytes|gt: 1000000
+    condition: selection
+falsepositives:
+    - Continuous ICMP-based network monitoring (Smokeping, Nagios, MTR, keepalive checks) running for a very long, uninterrupted period against one destination without a Zeek flow-inactivity reset — check the flow duration alongside byte count before escalating.
+    - Path-MTU discovery or diagnostic tooling issuing many deliberately oversized ping payloads (e.g. `ping -s`) in one uninterrupted troubleshooting session.
+level: medium

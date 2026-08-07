@@ -1,0 +1,41 @@
+title: NXDOMAIN Response for a DGA-Characteristic Domain Name
+id: 38673e85-4662-4eaa-9422-7585956c9c7b
+status: experimental
+description: |
+    Detects an NXDOMAIN response to a query for a long, dictionary-unlikely
+    domain label — the structural shape of domain-generation-algorithm (DGA)
+    malware probing for its next-active C2 domain, most of which never
+    resolve. Sigma cannot compute real entropy or dictionary-membership;
+    length is used as the same community-standard proxy as the other DNS
+    rules in this batch.
+    "Burst per-source" (this issue's other stated criterion) is a per-source
+    cardinality-over-time measure a single Sigma detection block cannot
+    express — same limitation and same deliberate non-fix as
+    net_zeek_dns_txt_record_abuse; a threshold companion is the honest way
+    to add it later, not forcing it into this rule's single-event condition.
+    Threshold raised 15 -> 20 chars (security-auditor round 2): 15 sits
+    below the real noise floor on a campus network — googleusercontent,
+    notificationcenter, and any search-domain-suffixed internal hostname
+    clear it, and typo/WPAD/browser-connectivity-probe NXDOMAIN traffic is
+    dominated by exactly this shape. Held at level: medium (not lower)
+    despite this, since raising the floor is a mitigation, not a fix to the
+    underlying length-as-entropy-proxy limitation stated above.
+references:
+    - https://attack.mitre.org/techniques/T1568/002/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.command_and_control
+    - attack.t1568.002
+logsource:
+    product: zeek
+    service: dns
+detection:
+    selection:
+        rcode_name: 'NXDOMAIN'
+        query|re: '.*[a-zA-Z0-9]{20,}\..*'
+    condition: selection
+falsepositives:
+    - Typo'd or stale internal hostnames retried by misconfigured clients.
+    - CDN/cloud failover schemes that probe several long randomized candidate hostnames before one resolves.
+level: medium

@@ -5,7 +5,7 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**75 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**90 rules.** Each query is the exact Lucene the Sigma rule compiles to.
 
 ## AS-REP Roasting — TGT Requested for an Account Without Pre-Authentication
 
@@ -87,12 +87,100 @@ winlog.event_id:1102
 winlog.event_id:8 AND (winlog.event_data.TargetImage:*\\lsass.exe OR (NOT winlog.event_data.SourceUser:NT\ AUTHORITY\\SYSTEM))
 ```
 
+## RDP Connection Originating From Outside Private Address Space
+
+- **Rule:** `net_zeek_conn_external_rdp_inbound.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1021.001
+
+```
+(destination.port:3389 AND network.transport:tcp) AND (NOT (source.ip:10.0.0.0\/8 OR source.ip:172.16.0.0\/12 OR source.ip:192.168.0.0\/16))
+```
+
+## Unusually Large ICMP Flow (Possible ICMP Tunnel)
+
+- **Rule:** `net_zeek_conn_icmp_tunnel_large.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1095
+
+```
+network.transport:icmp AND source.bytes:>1000000
+```
+
+## SMB Connection Crossing Private/Public Address Boundary
+
+- **Rule:** `net_zeek_conn_smb_lateral_admin.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1021.002
+
+```
+(destination.port:445 AND network.transport:tcp) AND (NOT ((source.ip:10.0.0.0\/8 OR source.ip:172.16.0.0\/12 OR source.ip:192.168.0.0\/16) AND (destination.ip:10.0.0.0\/8 OR destination.ip:172.16.0.0\/12 OR destination.ip:192.168.0.0\/16)))
+```
+
+## Connection to Tor's Default OR or Directory Port
+
+- **Rule:** `net_zeek_conn_tor_exit_node.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1090.003
+
+```
+(destination.port:(9001 OR 9030)) AND network.transport:tcp
+```
+
+## DNS Query for a Known Cryptocurrency Mining Pool
+
+- **Rule:** `net_zeek_dns_crypto_mining_pool.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1496
+
+```
+dns.question.name:(*nanopool.org OR *supportxmr.com OR *hashvault.pro OR *moneroocean.stream OR *minexmr.com OR *nicehash.com OR *f2pool.com OR *2miners.com OR *c3pool.com OR *herominers.com OR *unmineable.com)
+```
+
+## NXDOMAIN Response for a DGA-Characteristic Domain Name
+
+- **Rule:** `net_zeek_dns_dga_nxdomain_burst.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1568.002
+
+```
+dns.response_code:NXDOMAIN AND dns.question.name:/.*[a-zA-Z0-9]{20,}\..*/
+```
+
+## DNS Lookup for a Known Public DNS-over-HTTPS Provider
+
+- **Rule:** `net_zeek_dns_doh_non_standard.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1572
+
+```
+dns.question.name:(*cloudflare\-dns.com OR *dns.google OR *dns.google.com OR *doh.opendns.com OR *quad9.net OR *doh.cleanbrowsing.org OR *doh.libredns.gr OR *dns.nextdns.io OR *use\-application\-dns.net)
+```
+
+## DNS Query with High-Entropy Long Subdomain Label (Possible Tunneling)
+
+- **Rule:** `net_zeek_dns_tunneling_high_entropy.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1071.004
+
+```
+dns.question.name:/.*[a-zA-Z0-9]{50,}\..*/
+```
+
+## TXT Record Query with Encoded-Looking Payload (Possible C2/Exfil Channel)
+
+- **Rule:** `net_zeek_dns_txt_record_abuse.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1071.004
+
+```
+dns.question.type:TXT AND dns.question.name:/.*[a-zA-Z0-9]{40,}\..*/
+```
+
 ## Executable or Script Payload Downloaded Over HTTP (Zeek Files)
 
 - **Rule:** `net_zeek_executable_download.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1105
 
 ```
-zeek.source:HTTP AND (mime_type:(application\/x\-dosexec OR application\/x\-msdownload OR application\/vnd.microsoft.portable\-executable OR application\/x\-elf OR application\/x\-executable OR application\/x\-sharedlib OR application\/x\-sh OR application\/x\-shellscript))
+zeek.source:HTTP AND (mime_type:(application\/x\-dosexec OR application\/x\-msdownload OR application\/vnd.microsoft.portable\-executable OR application\/x\-elf OR application\/x\-executable OR application\/x\-pie\-executable OR application\/x\-sharedlib OR application\/x\-sh OR application\/x\-shellscript))
+```
+
+## HTTP Request to a Known Default C2 Beacon URI
+
+- **Rule:** `net_zeek_http_cobalt_strike_beacon.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1071.001
+
+```
+http.request.method:GET AND (url.path:(*\/pixel.gif* OR *\/__utm.gif* OR *\/jquery\-3.3.1.min.js* OR *\/jquery\-3.3.2.min.js* OR *\/en_US\/all.js* OR *\/dpixel*))
+```
+
+## Large HTTP POST Request Body
+
+- **Rule:** `net_zeek_http_exfil_large_post.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1048.003
+
+```
+http.request.method:POST AND http.request.body.bytes:>5000000
 ```
 
 ## Network Port or Address Scan Detected (Zeek Notice)
@@ -103,12 +191,44 @@ zeek.source:HTTP AND (mime_type:(application\/x\-dosexec OR application\/x\-msdo
 note:(Scan\:\:Port_Scan OR Scan\:\:Address_Scan OR Scan\:\:Random_Scan)
 ```
 
+## Executable Payload Sent as an Email Attachment (Zeek Files)
+
+- **Rule:** `net_zeek_smtp_attachment_executable.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1566.001
+
+```
+zeek.source:SMTP AND (mime_type:(application\/x\-dosexec OR application\/x\-msdownload OR application\/vnd.microsoft.portable\-executable OR application\/x\-elf OR application\/x\-executable OR application\/x\-pie\-executable OR application\/x\-sharedlib OR application\/x\-sh OR application\/x\-shellscript))
+```
+
+## SMTP Session with an Anomalously Deep Transaction Count
+
+- **Rule:** `net_zeek_smtp_mass_outbound.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1071.003
+
+```
+trans_depth:>20
+```
+
 ## SSH Password Guessing / Brute Force (Zeek Notice)
 
 - **Rule:** `net_zeek_ssh_bruteforce.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1110
 
 ```
 note:(SSH\:\:Password_Guessing OR SSH\:\:Login_By_Password_Guesser)
+```
+
+## TLS Connection with Expired Certificate
+
+- **Rule:** `net_zeek_ssl_expired_cert_connection.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1071.001
+
+```
+tls.validation_status:*certificate\ has\ expired*
+```
+
+## TLS Connection with Self-Signed Certificate (Possible C2)
+
+- **Rule:** `net_zeek_ssl_self_signed_c2.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1573.002
+
+```
+tls.validation_status:(*self\ signed* OR *self\-signed*)
 ```
 
 ## PowerShell Credential-Harvesting Cmdlet Pattern

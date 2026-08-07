@@ -223,6 +223,37 @@ class SigmaDetectionTests(unittest.TestCase):
         self.assertTrue(detection_matches(det, vaultcmd),
                          "cmdkey/vaultcmd rule regressed: vaultcmd.exe listcreds no longer fires")
 
+    def test_self_signed_rule_catches_both_openssl_wordings(self):
+        # M13 US5 (#228) security review round 2: the round-1 rule only
+        # matched OpenSSL's older "self signed certificate" (space) wording;
+        # a real local OpenSSL 3.0.13 `openssl verify` run against a freshly
+        # generated self-signed cert produced the hyphenated "self-signed
+        # certificate" instead - confirming this would have been a second,
+        # value-level silent no-op on any current OpenSSL 3.x build. The
+        # fixture's true_positive only exercises the hyphenated (now-real)
+        # form; this proves the older form the OR-list also lists still
+        # fires, so a future edit dropping it wouldn't pass CI unnoticed.
+        det = load_rule(SIGMA_DIR / "net_zeek_ssl_self_signed_c2.yml")["detection"]
+        older_wording = {"validation_status": "self signed certificate"}
+        self.assertTrue(detection_matches(det, older_wording),
+                         "self-signed rule regressed: older 'self signed' (space) wording no longer fires")
+
+    def test_doh_rule_catches_quad9_subdomains_and_firefox_canary(self):
+        # M13 US5 (#228) security review round 2: round-1 only matched the
+        # literal `dns.quad9.net`, missing the dns9/dns10/dns11.quad9.net
+        # hostnames browsers actually configure — widened to bare
+        # `quad9.net`. Also added use-application-dns.net (Firefox's DoH
+        # canary domain, the single strongest DoH-adoption signal on this
+        # logsource). fixtures.json's true_positive only exercises
+        # dns.google; this proves both round-2 additions actually fire.
+        det = load_rule(SIGMA_DIR / "net_zeek_dns_doh_non_standard.yml")["detection"]
+        quad9_variant = {"query": "dns11.quad9.net"}
+        firefox_canary = {"query": "use-application-dns.net"}
+        self.assertTrue(detection_matches(det, quad9_variant),
+                         "DoH rule regressed: dns11.quad9.net no longer fires")
+        self.assertTrue(detection_matches(det, firefox_canary),
+                         "DoH rule regressed: Firefox's use-application-dns.net canary no longer fires")
+
 
 def coverage_report():
     rows = []

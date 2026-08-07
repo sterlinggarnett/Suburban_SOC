@@ -1,0 +1,41 @@
+title: TLS Connection with Self-Signed Certificate (Possible C2)
+id: fd1f5c16-c076-4693-9ca5-097a832a2397
+status: experimental
+description: |
+    Detects a TLS connection where Zeek's cert-chain validation reports a
+    self-signed certificate. Many C2 frameworks (default Cobalt Strike,
+    Metasploit, Sliver, Mythic) generate self-signed certs for their HTTPS
+    listeners rather than obtaining a CA-signed one.
+    Requires policy/protocols/ssl/validate-certs to be loaded (#228
+    prerequisite fix, configs/intel/config.zeek) — validation_status does
+    not exist in ssl.log without it; confirmed empirically that this rule
+    would have been a silent no-op before that fix landed.
+    Matches both "self signed" and "self-signed": OpenSSL's exact wording
+    changed between major versions (round-1 text was the older, space-
+    separated form; confirmed empirically against a local OpenSSL 3.0.13
+    `openssl verify` run that the real string is now hyphenated,
+    "self-signed certificate" — the space-only match would have been a
+    second, value-level silent no-op on any current OpenSSL 3.x build,
+    caught by security-auditor round 2 before it shipped). The zeek/zeek
+    Docker image every real capture path pulls is unpinned and untagged, so
+    this can drift again on any upstream rebuild — a real dependency for a
+    value-matching rule like this one, not just an implementation detail.
+references:
+    - https://attack.mitre.org/techniques/T1573/002/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.command_and_control
+    - attack.t1573.002
+logsource:
+    product: zeek
+    service: ssl
+detection:
+    selection:
+        validation_status|contains:
+            - 'self signed'
+            - 'self-signed'
+    condition: selection
+falsepositives:
+    - Internal services, IoT devices, printers, captive portals, and lab/dev environments routinely use self-signed certificates — expect meaningful volume on most networks; baseline and allowlist known internal self-signed endpoints by destination.
+level: low

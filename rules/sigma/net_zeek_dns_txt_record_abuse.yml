@@ -1,0 +1,36 @@
+title: TXT Record Query with Encoded-Looking Payload (Possible C2/Exfil Channel)
+id: 22be22f5-8862-445c-b9b2-5c359e4a33d8
+status: experimental
+description: |
+    Detects a TXT-record DNS query whose label contains a long alphanumeric
+    run, the same encoded-payload shape as net_zeek_dns_tunneling_high_entropy
+    but scoped to qtype TXT specifically — TXT is the record type most C2
+    frameworks (Empire, Merlin, some Cobalt Strike DNS profiles) and exfil
+    tools favor, since it carries more payload per query than A/AAAA.
+    Not a volume/burst detector: this is a per-query structural indicator.
+    "High query volume" (the other half of this issue's title) needs
+    per-source cardinality over a time window, which a single Sigma
+    detection block cannot express — the same class of limitation #217
+    handled by demoting volume-shaped rules to threshold companions.
+    Deliberately not built here; revisit as a companion
+    rules/elastic/threshold/*.ndjson rule if TXT-volume coverage is wanted.
+references:
+    - https://attack.mitre.org/techniques/T1071/004/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.command_and_control
+    - attack.exfiltration
+    - attack.t1071.004
+logsource:
+    product: zeek
+    service: dns
+detection:
+    selection:
+        qtype_name: 'TXT'
+        query|re: '.*[a-zA-Z0-9]{40,}\..*'
+    condition: selection
+falsepositives:
+    - DKIM/SPF/DMARC TXT lookups for domains with long selector or policy strings.
+    - Some SaaS domain-verification TXT records use long random tokens.
+level: medium

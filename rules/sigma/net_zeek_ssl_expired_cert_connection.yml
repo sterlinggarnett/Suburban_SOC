@@ -1,0 +1,31 @@
+title: TLS Connection with Expired Certificate
+id: e408b6fc-0023-4291-93d7-888c08ebd797
+status: experimental
+description: |
+    Detects a TLS connection where Zeek's cert-chain validation reports an
+    expired certificate — a weak but real signal for abandoned/unmaintained
+    infrastructure being reused as C2 or exfil infrastructure, and for
+    stale internal services worth flagging for hygiene reasons regardless
+    of intent.
+    Same prerequisite as net_zeek_ssl_self_signed_c2: requires
+    policy/protocols/ssl/validate-certs (#228, configs/intel/config.zeek).
+    validation_status's exact string comes from OpenSSL's
+    X509_V_ERR_CERT_HAS_EXPIRED code via Zeek's x509_verify() — confirmed
+    against Zeek's own validate-certs.zeek source, not guessed.
+references:
+    - https://attack.mitre.org/techniques/T1071/001/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.command_and_control
+    - attack.t1071.001
+logsource:
+    product: zeek
+    service: ssl
+detection:
+    selection:
+        validation_status|contains: 'certificate has expired'
+    condition: selection
+falsepositives:
+    - Legitimate internal services with lapsed certificate renewal — common enough on campus networks to warrant a hygiene ticket rather than a security incident on first sight; correlate with the destination before escalating.
+level: low

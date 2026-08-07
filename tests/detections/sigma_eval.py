@@ -19,17 +19,87 @@ test_sigma_detections.py, which fails if a rule introduces an unsupported featur
   * multiple keys in a selection block = AND
   * a selection that is a LIST of maps = OR across those maps (#232)
   * condition over named blocks with and / or / not / parentheses
+  * re: regex match (#228) - FULL-STRING match, not substring search, and
+    CASE-SENSITIVE, matching how the real Elasticsearch `regexp` query
+    behaves against this stack's keyword-mapped fields (confirmed empirically
+    against the real Lucene backend: `field:/pattern/` requires the pattern
+    to match the entire term, and keyword fields carry no analyzer to fold
+    case). Do not write `^`/`$` anchors - Lucene's regexp syntax has no
+    anchor operator; a literal `^` in a pattern is a character to match, not
+    a metacharacter, so an anchored-looking pattern silently never matches
+    real data (verified the anchor-then-realize trap firsthand while writing
+    the #228 DNS rules - full-match semantics make anchors redundant, not
+    optional).
+  * gt/gte/lt/lte: numeric comparison (#228), for Zeek count fields
+    (orig_bytes, request_body_len, trans_depth) that have no string modifier
+    equivalent - Sigma has no native "value is a number" type, so the target
+    is coerced to float for comparison regardless of how it's written in the
+    rule YAML.
+  * cidr: IP-in-network membership (#228 round 2, security-auditor), for
+    internal/external address scoping (conn_external_rdp_inbound,
+    conn_smb_lateral_admin) - confirmed compiling to a native Elasticsearch
+    IP-range query against `ip`-typed fields, not a pipeline transformation,
+    so no configs/detections/suburban-soc-ecs.yml entry is needed for it.
 
-All matching is case-insensitive (Sigma's default).
+All string matching is case-insensitive (Sigma's default) except `re`, which
+is case-sensitive (see above).
 """
 
+import ipaddress
 import re
 from typing import Optional
 
-_SUPPORTED_MODS = {"contains", "endswith", "startswith", "all", "cased"}
+_SUPPORTED_MODS = {"contains", "endswith", "startswith", "all", "cased", "re", "gt", "gte", "lt", "lte", "cidr"}
+_NUMERIC_MODS = {"gt", "gte", "lt", "lte"}
 
 
 def _match_one(value: Optional[str], mods, target) -> bool:
+    numeric_mods = _NUMERIC_MODS & set(mods)
+    if numeric_mods:
+        if len(numeric_mods) > 1:
+            raise ValueError(f"conflicting numeric modifiers: {numeric_mods}")
+        mod = numeric_mods.pop()
+        if isinstance(target, list):
+            raise ValueError(f"the {mod} modifier does not support list values")
+        if value is None:
+            return False
+        try:
+            v = float(value)
+            t = float(target)
+        except (TypeError, ValueError):
+            # Zeek emits "-" for unset count fields; production ES (dynamic
+            # mapping) simply doesn't match a non-numeric value against a
+            # numeric range query rather than erroring - a fixture with a
+            # non-numeric value should fail the same way, not abort the
+            # whole test run (security-auditor, #228 round 2).
+            return False
+        return {"gt": v > t, "gte": v >= t, "lt": v < t, "lte": v <= t}[mod]
+
+    if "cidr" in mods:
+        # IP-in-network membership. Matches Elasticsearch's native IP-range
+        # query behavior against `ip`-typed fields (source.ip/destination.ip
+        # here) - confirmed via a real `sigma convert` probe, not a pipeline
+        # transformation, so there is no configs/detections/suburban-soc-
+        # ecs.yml entry backing this the way string field renames need one.
+        if value is None:
+            return False
+        try:
+            addr = ipaddress.ip_address(str(value))
+        except ValueError:
+            return False
+        nets = target if isinstance(target, list) else [target]
+        return any(addr in ipaddress.ip_network(str(n), strict=False) for n in nets)
+
+    if "re" in mods:
+        # Case-sensitive, full-string match - see module docstring. `target`
+        # must be a plain string (Sigma's `re` modifier doesn't support list
+        # values); a rule using `re|all`/`re` with a list is a rule-authoring
+        # error, not something to silently OR/AND together.
+        if isinstance(target, list):
+            raise ValueError("the re modifier does not support list values")
+        s = str(value if value is not None else "")
+        return re.fullmatch(target, s) is not None
+
     s = str(value if value is not None else "")
     cased = "cased" in mods
     if not cased:

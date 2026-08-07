@@ -1,0 +1,61 @@
+title: DNS Query for a Known Cryptocurrency Mining Pool
+id: f7ddae10-0d45-4778-8023-c68fe9f2c425
+status: experimental
+description: |
+    Detects a DNS query for a well-known cryptomining pool hostname —
+    unauthorized cryptojacking (a compromised host, or a misused campus
+    machine) reaching a mining pool to submit shares.
+    Uses a small hardcoded reference list, not the abuse.ch/Emerging Threats
+    keyless intel feed pattern #222 built. Correction (security-auditor
+    round 2): round-1's stated blocker — that #222's feed installer,
+    systemd timer, and Intel-framework wiring couldn't support this without
+    a much larger build — was factually wrong; configs/intel/refresh_intel.sh
+    already branches non-`Intel::ADDR` entries into a `domain` field
+    (Intel::DOMAIN is already supported), and configs/intel/config.zeek
+    already loads the Notice-framework wiring #222 built. What's still
+    genuinely missing, and still out of this batch's scope: a vetted,
+    keyless, freely-redistributable mining-pool domain feed source to point
+    the installer at, and a way to disambiguate a mining-pool Intel::Notice
+    hit from any other feed's hit on the same `service: notice` logsource
+    (Zeek's Notice framework doesn't tag which feed matched without a
+    custom hook) — real design work, not a checkbox. Keeping the hardcoded
+    list for now on that basis, corrected rationale only.
+    Switched to operator-domain suffixes rather than full pool hostnames
+    (security-auditor round 2): matches every subdomain a given operator
+    uses (xmr-eu2/xmr-asia1/xmr-us-west1.nanopool.org, eu.hashvault.pro,
+    pool2.supportxmr.com, etc.) with fewer, more durable entries, instead of
+    one brittle full-hostname match per mining server. Two 2022-era entries
+    from round 1 (MineXMR, shut down; Ethermine's Ethereum pools, defunct
+    since the Merge) replaced with currently-active, higher-volume
+    operators. Needs periodic maintenance regardless; treat this list as a
+    starting point, not a complete one. Downgraded high -> medium to match
+    that residual staleness risk rather than presenting stale-list coverage
+    as high-confidence.
+references:
+    - https://attack.mitre.org/techniques/T1496/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.impact
+    - attack.t1496
+logsource:
+    product: zeek
+    service: dns
+detection:
+    selection:
+        query|endswith:
+            - 'nanopool.org'
+            - 'supportxmr.com'
+            - 'hashvault.pro'
+            - 'moneroocean.stream'
+            - 'minexmr.com'
+            - 'nicehash.com'
+            - 'f2pool.com'
+            - '2miners.com'
+            - 'c3pool.com'
+            - 'herominers.com'
+            - 'unmineable.com'
+    condition: selection
+falsepositives:
+    - Deliberate, authorized crypto/security research on an isolated segment.
+level: medium

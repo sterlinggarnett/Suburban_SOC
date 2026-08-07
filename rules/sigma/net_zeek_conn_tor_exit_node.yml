@@ -1,0 +1,42 @@
+title: Connection to Tor's Default OR or Directory Port
+id: f2c5173f-2ff9-4b86-b86e-22092a8cf47b
+status: experimental
+description: |
+    Detects a TCP connection to Tor's canonical onion-router port (9001) or
+    directory-authority port (9030) — a campus host acting as, or connecting
+    out to, a Tor relay/exit node, either for anonymized C2 or policy-
+    violating anonymization.
+    Design deviation from this issue's literal `logsource: zeek/conn` plan
+    reference to a Tor-exit-node IP list (see plans/20260806-m13-us5-zeek-
+    network-detection.md): building new keyless-intel-feed infrastructure
+    (installer, systemd timer, Notice-framework wiring, the pattern #222
+    built) for one rule was judged too large a lift for this batch, and a
+    static IP list goes stale within days regardless. Well-known Tor ports
+    are a standard, IP-list-free heuristic used by community Zeek/Tor
+    detections for exactly this reason.
+    Known gaps, stated rather than hidden: obfs4 and other pluggable-
+    transport bridges use arbitrary, non-default ports; meek and other
+    domain-fronting transports tunnel over 443 and are invisible to a
+    port-based check. This rule catches default-configuration Tor only.
+references:
+    - https://attack.mitre.org/techniques/T1090/003/
+    - https://spec.torproject.org/dir-spec/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.command_and_control
+    - attack.t1090.003
+logsource:
+    product: zeek
+    service: conn
+detection:
+    selection:
+        id.resp_p:
+            - 9001
+            - 9030
+        proto: 'tcp'
+    condition: selection
+falsepositives:
+    - A deliberately operated Tor relay/bridge on the network (unusual on a campus network but possible for a research or CS-department host — allowlist by source if intentional).
+    - Port 9001 is also a common alternate application port for unrelated services (some Tomcat, JBoss, etcd, and HSQLDB deployments default to it) — verify the destination before treating a hit as Tor (security-auditor round 2).
+level: medium

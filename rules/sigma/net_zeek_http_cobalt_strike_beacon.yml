@@ -1,0 +1,55 @@
+title: HTTP Request to a Known Default C2 Beacon URI
+id: 8328327f-8bb2-4a19-828c-03f22dc45e65
+status: experimental
+description: |
+    Detects an HTTP GET to a URI path matching a well-known default
+    (un-customized) C2 framework beacon path — several widely-used
+    malleable C2 profiles for Cobalt Strike and similar frameworks reuse
+    the same small set of stock URIs (staging pages, tracking-pixel decoys,
+    fake JS library paths) unless an operator customizes the profile.
+    A small, explicitly non-exhaustive starting list; any operator who
+    customizes their C2 profile (routine tradecraft) evades this entirely —
+    stated as a known gap, not hidden.
+    Needed a new uri -> url.path mapping (#228 rule-writing phase,
+    configs/logstash.conf + suburban-soc-ecs.yml, added together in the same
+    commit) — deliberately deferred during the prerequisite-fix phase until
+    a rule actually needed it, per that phase's own review findings.
+    Demoted medium -> low, hunt-only (security-auditor round 2): several
+    listed paths are extremely common legitimate filenames in their own
+    right — `/jquery-3.3.1.min.js` matches any site or CDN serving that
+    widely-deployed real release, `/__utm.gif` is the classic Google
+    Analytics/Urchin beacon, `/pixel.gif` is a generic tracker filename —
+    so on real traffic the false-positive:true-positive ratio is
+    realistically thousands to one. A stronger discriminator (matching on a
+    stock C2-profile User-Agent, or excluding known CDN destinations) was
+    considered and deliberately not added: a hardcoded UA/CDN allowlist
+    carries the same staleness risk already disclosed for the mining-pool
+    and DoH-provider lists, and CS profile UAs specifically have changed
+    across framework versions historically, making a wrong guess here worse
+    than no guess. Treat this as a starting point for a hunt query, not a
+    production alert, until a real discriminator is validated against
+    actual traffic.
+references:
+    - https://attack.mitre.org/techniques/T1071/001/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.command_and_control
+    - attack.t1071.001
+logsource:
+    product: zeek
+    service: http
+detection:
+    selection:
+        method: 'GET'
+        uri|contains:
+            - '/pixel.gif'
+            - '/__utm.gif'
+            - '/jquery-3.3.1.min.js'
+            - '/jquery-3.3.2.min.js'
+            - '/en_US/all.js'
+            - '/dpixel'
+    condition: selection
+falsepositives:
+    - Legitimate sites genuinely serving a matching file at that literal path (real jQuery CDNs, real analytics pixels) — check the response (status_code, response size, destination reputation) before escalating, since these are common, real filenames.
+level: low

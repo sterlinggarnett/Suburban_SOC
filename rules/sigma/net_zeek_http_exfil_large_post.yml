@@ -1,0 +1,33 @@
+title: Large HTTP POST Request Body
+id: f08a763a-4dfc-43d1-b600-86583a0f4b83
+status: experimental
+description: |
+    Detects an HTTP POST with a request body over 5 MB — a coarse but
+    useful signal for bulk data exfiltration over plain HTTP, where an
+    attacker uploads staged/archived data to an attacker-controlled or
+    abused legitimate endpoint rather than a dedicated exfil protocol.
+    5 MB is a starting threshold, not a validated baseline for any specific
+    deployment — expect meaningful false positives from legitimate large
+    uploads (backups, media, package repos) until tuned against real
+    traffic; see falsepositives.
+    Needed a new request_body_len -> http.request.body.bytes mapping (#228
+    rule-writing phase). Uses the `gt` numeric-comparison Sigma modifier,
+    added for this batch.
+references:
+    - https://attack.mitre.org/techniques/T1048/003/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.exfiltration
+    - attack.t1048.003
+logsource:
+    product: zeek
+    service: http
+detection:
+    selection:
+        method: 'POST'
+        request_body_len|gt: 5000000
+    condition: selection
+falsepositives:
+    - Legitimate large file uploads such as backups, cloud-storage sync clients, CI/CD artifact pushes, video/media uploads, or software update mirrors. Tune the threshold or allowlist known-legitimate destinations before relying on this in production.
+level: medium

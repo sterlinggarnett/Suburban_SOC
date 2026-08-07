@@ -1,0 +1,46 @@
+title: SMB Connection Crossing Private/Public Address Boundary
+id: 9a3521a4-f550-4358-8047-1c48372a895b
+status: experimental
+description: |
+    Detects a TCP connection to port 445 (SMB) where at least one endpoint
+    (originator or responder) is NOT in RFC1918 private space — SMB
+    legitimately stays entirely internal on a well-run network; a session
+    with either leg outside private address space is either external
+    exposure of an internal share or lateral-movement tooling reaching
+    across a boundary the address ranges alone can distinguish, without
+    assuming anything about where the sensor sits.
+    Same fix and same round-1 mistake as net_zeek_conn_external_rdp_inbound
+    — see that rule's description for the full "boundary sensor" reasoning
+    error security-auditor round 2 caught. Uses `not (A and B)` rather than
+    a single filter: internal-to-internal is the only traffic this rule
+    should exclude, so both endpoints being private is the exclusion
+    condition, not either one being private.
+references:
+    - https://attack.mitre.org/techniques/T1021/002/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.lateral_movement
+    - attack.t1021.002
+logsource:
+    product: zeek
+    service: conn
+detection:
+    selection:
+        id.resp_p: 445
+        proto: 'tcp'
+    filter_source_internal:
+        id.orig_h|cidr:
+            - '10.0.0.0/8'
+            - '172.16.0.0/12'
+            - '192.168.0.0/16'
+    filter_dest_internal:
+        id.resp_h|cidr:
+            - '10.0.0.0/8'
+            - '172.16.0.0/12'
+            - '192.168.0.0/16'
+    condition: selection and not (filter_source_internal and filter_dest_internal)
+falsepositives:
+    - A deliberate, firewalled cross-site file-share replication link with one leg outside private address space (allowlist the specific source/destination pair rather than excluding port 445 broadly).
+    - A misconfigured deployment where the campus's actual internal address ranges aren't fully covered by the three RFC1918 blocks above — verify against the real addressing plan before relying on this in production.
+level: high

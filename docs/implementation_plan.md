@@ -13,7 +13,7 @@ Your document proposes four dashboard layers. Here is where the current Suburban
 | Dashboard | Current State | Gap |
 |---|---|---|
 | **1. Executive / Bird's-Eye** | Partial — [weekly_ciso_report.py](file:///wsl$/Ubuntu/home/tjlam/projects/Suburban-SOC/scripts/setup/ai_agent/weekly_ciso_report.py) generates a PDF with NIST/MTTD metrics, but there is **no live Kibana dashboard** for this | Need a full Kibana dashboard with KPIs, MITRE heatmap, NIST breakdown, and MTTD trend |
-| **2. Network & Traffic** | ✅ **Mostly built** — existing NDJSON exports in [configs/server/](file:///wsl$/Ubuntu/home/tjlam/projects/Suburban-SOC/configs/server) have GeoIP map, source IP pie chart, and Talos intel table. DNS fields (`dns.question.name`, `dns.response.code`) and HTTP fields (`http.request.method`, `http.response.status_code`) are already ECS-mapped by Logstash but **not visualized** | Need: traffic volume timeline, top ports bar chart, SNI/server-name panel, cipher-suite/TLS auditing panel, DNS query panel, HTTP method breakdown |
+| **2. Network & Traffic** | ✅ **Mostly built** — existing NDJSON exports in [configs/server/](file:///wsl$/Ubuntu/home/tjlam/projects/Suburban-SOC/configs/server) have GeoIP map, source IP pie chart, and Talos intel table. DNS fields (`dns.question.name`, `dns.response_code`) and HTTP fields (`http.request.method`, `http.response.status_code`) are already ECS-mapped by Logstash but **not visualized** | Need: traffic volume timeline, top ports bar chart, SNI/server-name panel, cipher-suite/TLS auditing panel, DNS query panel, HTTP method breakdown |
 | **3. Endpoint & Host-Level** | Partial — [logstash.conf](file:///wsl$/Ubuntu/home/tjlam/projects/Suburban-SOC/configs/logstash.conf) already has Sysmon + `auth.log` parsing (Category 2), 35 Sigma rules exist in [rules/sigma/](rules/sigma). **No Kibana dashboard** surfaces this data | Need a full dashboard + Winlogbeat/Filebeat endpoint agent config |
 | **4. Data Quality & Ingestion** | ❌ **Nothing exists** | Need pipeline health metrics, agent heartbeat tracking, parsing error panels |
 
@@ -152,7 +152,7 @@ Builds on your existing [live_operations_dashboard_final.ndjson](file:///wsl$/Ub
 | **Transport Protocol Breakdown** | Pie | `network.transport.keyword` terms agg | TCP vs UDP vs ICMP distribution |
 | **GeoIP World Map** | Coordinate Map | `destination.geo.location` geohash_grid | Already exists — reuse `soc-threat-map` |
 | **DNS Query Domains** | Data Table | `dns.question.name.keyword` terms agg | Top queried domains — already ECS-mapped, just not visualized |
-| **DNS Response Codes** | Pie | `dns.response.code.keyword` terms agg | NOERROR vs NXDOMAIN vs SERVFAIL distribution (DGA/tunnel detection) |
+| **DNS Response Codes** | Pie | `dns.response_code` terms agg | NOERROR vs NXDOMAIN vs SERVFAIL distribution (DGA/tunnel detection) |
 | **HTTP Methods** | Horizontal Bar | `http.request.method.keyword` terms agg | GET/POST/PUT/DELETE breakdown — already ECS-mapped |
 | **HTTP Status Codes** | Pie | `http.response.status_code` terms agg | 200/301/403/404/500 distribution |
 | **SNI / Server Name Table** | Data Table | `tls.client.server_name.keyword` | Top outbound TLS server names (requires `ssl.log`) |

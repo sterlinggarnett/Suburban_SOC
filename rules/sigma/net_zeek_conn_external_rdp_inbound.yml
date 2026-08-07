@@ -1,0 +1,43 @@
+title: RDP Connection Originating From Outside Private Address Space
+id: fc8a700c-5335-458f-bfea-e7f03ee13210
+status: experimental
+description: |
+    Detects a TCP connection to port 3389 (RDP) where the originator's
+    address is NOT in RFC1918 private space — i.e. a genuinely
+    externally-sourced RDP session, not merely "seen by the sensor."
+    Round-1 design (a bare port match, justified as "boundary telemetry
+    only, matching net_zeek_port_scan / net_zeek_ssh_bruteforce") was wrong
+    on two counts, both caught by security-auditor round 2: those two rules
+    are Zeek Notice-framework detections with their own scan-heuristic FP
+    control, not a precedent for sensor placement; and this repo's own real
+    capture configs (configs/systemd/zeek-host-capture.service's
+    CAPTURE_IFACE=eth0, scripts/setup/zeek_connect_host.sh's `-i eth0`,
+    evidence/README.md's br-lan/bat0 vantage points) are internal/LAN
+    vantage points, not a network boundary — a bare port match there fires
+    on every internal RDP session. Uses the `cidr` Sigma modifier, added for
+    this fix — confirmed to compile to a native Elasticsearch IP-range
+    query (not a pipeline transformation) rather than a text heuristic.
+references:
+    - https://attack.mitre.org/techniques/T1021/001/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.lateral_movement
+    - attack.t1021.001
+logsource:
+    product: zeek
+    service: conn
+detection:
+    selection:
+        id.resp_p: 3389
+        proto: 'tcp'
+    filter_internal_source:
+        id.orig_h|cidr:
+            - '10.0.0.0/8'
+            - '172.16.0.0/12'
+            - '192.168.0.0/16'
+    condition: selection and not filter_internal_source
+falsepositives:
+    - An intentionally provisioned, firewalled remote-desktop gateway reachable from outside private address space (allowlist its specific source/destination pair rather than excluding port 3389 broadly).
+    - A misconfigured deployment where the campus's actual internal address ranges aren't fully covered by the three RFC1918 blocks above (e.g. carrier-grade NAT space, RFC6598 100.64.0.0/10) — verify against the real addressing plan before relying on this in production.
+level: high

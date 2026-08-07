@@ -341,6 +341,25 @@ class NetworkLiveFireTests(LiveFireTestCase):
         # + code-reviewer review, independently).
         self.assert_rule_fires_correctly("net_zeek_executable_download.yml")
 
+    def test_zeek_dns_dga_burst_fires_against_real_es(self):
+        # #228 (M13 US5): before this batch, 0 of the 5 new zeek/dns-ssl-conn-
+        # http-smtp logsources had live-fire coverage — exactly where a
+        # pipeline mapping this repo added but never proved against a real
+        # cluster could be self-consistently wrong (sigma_eval.py and the
+        # real backend both trusting the same untested assumption about how
+        # Lucene's `re` modifier behaves is not independent verification).
+        # This rule specifically exercises two things that couldn't be
+        # confirmed without a real Elasticsearch in the environment this
+        # batch was authored in: (1) that field-mapping-zeek-dns's
+        # rcode_name -> dns.response_code rename (corrected from the wrong
+        # dns.response.code during review) actually matches real ingested
+        # data, and (2) that the `re` Sigma modifier's Lucene-compiled
+        # regexp query genuinely performs the assumed full-string,
+        # no-anchors-needed match against a real keyword-mapped field, not
+        # just against sigma_eval.py's Python re.fullmatch reimplementation
+        # of that same assumption.
+        self.assert_rule_fires_correctly("net_zeek_dns_dga_nxdomain_burst.yml")
+
 
 class ThresholdLiveFireTests(LiveFireTestCase):
     """Threshold rules (rules/elastic/threshold/*.ndjson) have no fixtures.json

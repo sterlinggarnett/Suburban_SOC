@@ -1,0 +1,52 @@
+title: DNS Lookup for a Known Public DNS-over-HTTPS Provider
+id: ea6d5688-e872-4d41-b362-80d1e2bd7b56
+status: experimental
+description: |
+    Detects a plain DNS query resolving the hostname of a major public DoH
+    (DNS-over-HTTPS) resolver. This catches only the plaintext lookup phase
+    a client performs before establishing the encrypted DoH channel (or a
+    client/browser probing DoH availability) — it does not and cannot detect
+    the DoH traffic itself, which is opaque HTTPS and never produces a
+    dns.log entry for the tunneled queries. A host actually using DoH with a
+    hardcoded resolver IP (skipping this lookup entirely) is invisible to
+    this rule; see net_zeek_ssl_self_signed_c2 / conn rules in this batch for
+    complementary encrypted-channel coverage.
+    On a campus network, DoH bypasses whatever DNS-based content filtering
+    or detection the organization relies on, which is the actual risk this
+    rule flags — not that DoH itself is malicious.
+    Two fixes from security-auditor round 2: the Quad9 entry matched only
+    the literal `dns.quad9.net` and missed the hostnames browsers actually
+    configure (`dns9`/`dns10`/`dns11.quad9.net`) — widened to the bare
+    `quad9.net` suffix. Also added `use-application-dns.net`, Firefox's DoH
+    canary domain: Firefox queries this before enabling DoH and disables it
+    if the query returns NXDOMAIN, so a filtering resolver expected to
+    NXDOMAIN it makes this the single strongest DoH-adoption signal
+    available on this logsource — its absence from the round-1 list was an
+    oversight given how directly it fits this rule's exact purpose.
+references:
+    - https://attack.mitre.org/techniques/T1572/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.command_and_control
+    - attack.t1572
+logsource:
+    product: zeek
+    service: dns
+detection:
+    selection:
+        query|endswith:
+            - 'cloudflare-dns.com'
+            - 'dns.google'
+            - 'dns.google.com'
+            - 'doh.opendns.com'
+            - 'quad9.net'
+            - 'doh.cleanbrowsing.org'
+            - 'doh.libredns.gr'
+            - 'dns.nextdns.io'
+            - 'use-application-dns.net'
+    condition: selection
+falsepositives:
+    - Organization-approved DoH usage (if a deployment intentionally standardizes on one of these providers, allowlist it here rather than treating every hit as an incident).
+    - Browsers with DoH enabled by default performing routine background lookups even when not actively used for resolution.
+level: low

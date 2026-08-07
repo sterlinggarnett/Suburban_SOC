@@ -1,0 +1,57 @@
+title: Executable Payload Sent as an Email Attachment (Zeek Files)
+id: ac644b20-a43f-49fb-b488-f6b958c05a5a
+status: experimental
+description: |
+    Detects an executable or script MIME type extracted from an SMTP
+    attachment, as recorded in Zeek's files.log (shipped via Filebeat) —
+    the classic spearphishing-attachment delivery mechanism.
+    Modeled directly on net_zeek_executable_download.yml (same
+    product/service, same mime_type list, same file-extraction framework)
+    with `source: 'SMTP'` instead of `'HTTP'` — Zeek's file-analysis
+    framework tags every extracted file with the protocol that carried it
+    regardless of transport, confirmed against
+    base/protocols/smtp/entities.zeek's own `$source="SMTP"` assignment.
+    Reuses field-mapping-zeek-files (configs/detections/suburban-soc-ecs.yml)
+    entirely as-is — no new prerequisite mapping work needed for this rule.
+    Same correlation caveat as its HTTP sibling: files.log doesn't carry the
+    sender/subject (that's in smtp.log, joined only by uid, which this
+    logsource's fixture convention doesn't carry) - correlate manually
+    before escalating.
+    Real-world coverage caveat (security-auditor round 2, applies equally to
+    net_zeek_smtp_mass_outbound): Zeek's file-extraction framework can only
+    see attachment bytes in PLAINTEXT SMTP. Any session using STARTTLS or
+    implicit TLS — which is the default for SMTP submission on port 587/465
+    on essentially every modern mail client and provider — is opaque to
+    this rule entirely. This rule's practical coverage is unencrypted
+    MTA-to-MTA relay on port 25, not general inbound phishing-attachment
+    delivery; the T1566.001 tag below should be read with that scope, not
+    as blanket coverage of the technique.
+references:
+    - https://attack.mitre.org/techniques/T1566/001/
+    - https://docs.zeek.org/en/master/logs/files.html
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.initial_access
+    - attack.t1566.001
+logsource:
+    product: zeek
+    service: files
+detection:
+    selection_transport:
+        source: 'SMTP'
+    selection_payload:
+        mime_type:
+            - 'application/x-dosexec'
+            - 'application/x-msdownload'
+            - 'application/vnd.microsoft.portable-executable'
+            - 'application/x-elf'
+            - 'application/x-executable'
+            - 'application/x-pie-executable'
+            - 'application/x-sharedlib'
+            - 'application/x-sh'
+            - 'application/x-shellscript'
+    condition: selection_transport and selection_payload
+falsepositives:
+    - Legitimate IT-distributed software, scripts, or installers sent by email (uncommon practice, but occurs at some organizations) — encourage a non-email distribution channel rather than allowlisting.
+level: medium

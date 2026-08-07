@@ -1,0 +1,33 @@
+title: DNS Query with High-Entropy Long Subdomain Label (Possible Tunneling)
+id: 70fc81a6-7862-4af1-91c2-c4ce2d83f419
+status: experimental
+description: |
+    Detects a DNS query containing a run of 50+ contiguous alphanumeric
+    characters in a label — a proxy for base32/base64/hex-encoded payload
+    data, the shape tunneling tools (iodine, dnscat2, DNSExfiltrator) produce
+    when they smuggle data through subdomain labels. Sigma has no native
+    entropy function; length is the standard community proxy, since Zeek's
+    dns.log has no entropy field to select on directly.
+    Uses the `re` Sigma modifier, added for this batch — full-string match,
+    case-sensitive, no `^`/`$` anchors (Lucene's regexp syntax has none;
+    matching is inherently full-term). See tests/detections/sigma_eval.py's
+    module docstring for why this differs from contains/endswith/startswith.
+references:
+    - https://attack.mitre.org/techniques/T1071/004/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.command_and_control
+    - attack.exfiltration
+    - attack.t1071.004
+logsource:
+    product: zeek
+    service: dns
+detection:
+    selection:
+        query|re: '.*[a-zA-Z0-9]{50,}\..*'
+    condition: selection
+falsepositives:
+    - Some CDN/cloud-storage services (S3 presigned URLs, Akamai, some CDN edge nodes) use long content-hash subdomains — rare on a campus network but worth an allowlist entry if seen repeatedly from the same legitimate service.
+    - Long DKIM/SPF/verification TXT-adjacent A/AAAA lookups from mail or identity providers.
+level: medium

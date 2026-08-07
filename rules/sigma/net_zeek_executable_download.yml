@@ -15,6 +15,12 @@ description: |
     distinguish attacker staging from routine software updates without more
     context; correlate with http.log (by uid) or endpoint telemetry before
     escalating a hit from this rule.
+    Added application/x-pie-executable (#228, M13 US5 review, kept in sync
+    with the identical list in net_zeek_smtp_attachment_executable.yml):
+    modern libmagic reports this MIME type for position-independent ELF
+    executables, which is the default output of every current Linux distro's
+    toolchain — the original list without it missed the majority of
+    present-day Linux binaries.
 references:
     - https://attack.mitre.org/techniques/T1105/
     - https://docs.zeek.org/en/master/logs/files.html
@@ -36,6 +42,7 @@ detection:
             - 'application/vnd.microsoft.portable-executable'
             - 'application/x-elf'
             - 'application/x-executable'
+            - 'application/x-pie-executable'
             - 'application/x-sharedlib'
             - 'application/x-sh'
             - 'application/x-shellscript'

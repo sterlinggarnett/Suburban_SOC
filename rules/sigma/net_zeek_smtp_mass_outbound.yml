@@ -1,0 +1,55 @@
+title: SMTP Session with an Anomalously Deep Transaction Count
+id: c8c70736-aa54-46ff-8539-40651e32bb29
+status: experimental
+description: |
+    Detects a single SMTP session pushing more than 20 sequential message
+    transactions (Zeek's trans_depth, which increments per MAIL FROM/RCPT
+    TO/DATA cycle within one connection) — a normal end-user mail client
+    sends one, occasionally a handful; a single connection sustaining dozens
+    is the shape of mass-mailing malware or spam-relay abuse pipelining
+    many messages through one session rather than opening one per message.
+    This is a proxy for "many recipients/messages from one host", not a
+    literal recipient count: Zeek's rcptto is a set[string] with no native
+    Sigma modifier for cardinality, so per-recipient counting isn't
+    expressible in a single-event detection block. trans_depth is the
+    closest per-event signal Zeek actually exposes for this behavior.
+    Needed a new field-mapping-zeek-smtp pySigma transformation (#228
+    rule-writing phase) carrying the same connection 4-tuple every other
+    zeek/* transformation in this batch carries, per that file's own
+    documented invariant — trans_depth itself needs no mapping (untouched
+    by configs/logstash.conf, same as note/auth_success/mime_type).
+    Uses the `gt` numeric-comparison Sigma modifier, added for this batch.
+    Retagged T1071.003, not T1048.003 (security-auditor round 2): the
+    behavior this rule describes — pipelining many messages through one
+    mail-protocol session — is Application Layer Protocol: Mail Protocols,
+    not Exfiltration Over Unencrypted Non-C2 Protocol; the original tag was
+    a rule-authoring error, not a deliberate mapping choice.
+    Known, undisclosed-until-now limitations: Zeek writes one smtp.log line
+    PER transaction with trans_depth incrementing, so one session over the
+    threshold produces roughly (trans_depth - 20) separate alerts, not one
+    — a real fan-out this rule does not suppress. It also has no
+    directionality (the title says "outbound" but the logic doesn't check
+    which side originated the session) and, like
+    net_zeek_smtp_attachment_executable, is blind to any session using
+    STARTTLS or implicit TLS — SMTP submission (587/465) is TLS by default
+    on any modern client, and Zeek's SMTP analyzer cannot see inside it.
+    On most networks that makes this rule's real-world hit rate on
+    plaintext SMTP-25 relay abuse specifically, not general mass-mail
+    detection.
+references:
+    - https://attack.mitre.org/techniques/T1071/003/
+author: Suburban-SOC
+date: 2026-08-06
+tags:
+    - attack.command_and_control
+    - attack.t1071.003
+logsource:
+    product: zeek
+    service: smtp
+detection:
+    selection:
+        trans_depth|gt: 20
+    condition: selection
+falsepositives:
+    - A legitimate internal mail relay, mailing-list server, or bulk-notification system (registrar, LMS, alumni newsletter) pipelining many messages through one authorized connection — allowlist known relay hosts by source IP.
+level: medium

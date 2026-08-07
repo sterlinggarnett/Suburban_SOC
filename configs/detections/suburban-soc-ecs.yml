@@ -171,3 +171,148 @@ transformations:
       - type: logsource
         product: zeek
         service: files
+
+  # #228 (M13 US5): before this batch, zero transformations existed for
+  # zeek/dns, zeek/ssl, zeek/conn, or zeek/http — every field a rule in these
+  # 4 logsources selects on would compile against the pre-rename Zeek-native
+  # name, the same silent-no-op shape field-mapping-zeek-files exists to
+  # solve. Field names here match exactly what configs/logstash.conf's
+  # Category 0 branch renames real Filebeat-shipped Zeek data to (the branch
+  # real telemetry actually reaches, not the dead network_logs branch).
+  #
+  # INVARIANT (security-auditor, #228 review round 1): logstash.conf's
+  # Category 0 mutate block renames the connection 4-tuple (id.orig_h/
+  # id.resp_h/id.orig_p/id.resp_p) + proto/service UNCONDITIONALLY, for every
+  # zeek_logs event regardless of stream. Any field renamed unconditionally
+  # there must appear in every zeek/* transformation that exists below, not
+  # just field-mapping-zeek-conn, or a rule that scopes a dns/ssl/http
+  # detection to a source/destination (e.g. "burst per-source", "to a rare
+  # host") is a silent no-op. This is why the 4-tuple is duplicated below in
+  # every transformation that has one — pySigma's rule_conditions scoping
+  # has no inheritance mechanism.
+  #
+  # SCOPE (review round 2): this invariant is only satisfied for the
+  # logsources that HAVE a transformation (currently: files, dns, ssl, conn,
+  # http, smtp — six as of this batch, not the four this batch started
+  # with; update this count when the next one is added, don't let it go
+  # stale again). zeek/notice and zeek/conn's sibling zeek/intel have NO
+  # transformation at all — the two existing notice rules
+  # (net_zeek_port_scan.yml, net_zeek_ssh_bruteforce.yml) only select on
+  # `note`, which Category 0 leaves untouched, so this is harmless today. It
+  # stops being harmless the moment a notice-scoped rule adds a
+  # source/destination condition — add field-mapping-zeek-notice (same
+  # 4-tuple) at that point, don't assume it's already covered because this
+  # comment is nearby.
+  - id: field-mapping-zeek-dns
+    type: field_name_mapping
+    mapping:
+      id.orig_h: source.ip
+      id.resp_h: destination.ip
+      id.orig_p: source.port
+      id.resp_p: destination.port
+      proto: network.transport
+      service: network.protocol
+      query: dns.question.name
+      qtype_name: dns.question.type
+      # ECS is dns.response_code (flat, underscore), not dns.response.code —
+      # matched exactly to configs/logstash.conf's Category 0 rename target
+      # so the two halves never drift from each other, even though this
+      # deviates from the real ECS field name (recorded here so a future
+      # ECS/Security-Onion migration doesn't silently break this instead).
+      rcode_name: dns.response_code
+    rule_conditions:
+      - type: logsource
+        product: zeek
+        service: dns
+
+  - id: field-mapping-zeek-ssl
+    type: field_name_mapping
+    mapping:
+      id.orig_h: source.ip
+      id.resp_h: destination.ip
+      id.orig_p: source.port
+      id.resp_p: destination.port
+      proto: network.transport
+      service: network.protocol
+      server_name: tls.client.server_name
+      cipher: tls.cipher
+      curve: tls.curve
+      version: tls.version
+      validation_status: tls.validation_status
+    rule_conditions:
+      - type: logsource
+        product: zeek
+        service: ssl
+
+  - id: field-mapping-zeek-conn
+    type: field_name_mapping
+    mapping:
+      id.orig_h: source.ip
+      id.resp_h: destination.ip
+      id.orig_p: source.port
+      id.resp_p: destination.port
+      proto: network.transport
+      service: network.protocol
+      # Needed by conn_icmp_tunnel_large's volume threshold. resp_bytes
+      # deliberately omitted (code-reviewer, #228 round 2): no rule selects
+      # on it yet - add it in the same commit as whichever rule first does,
+      # per this file's own "map only when needed" convention (see uri's
+      # history in field-mapping-zeek-http below).
+      orig_bytes: source.bytes
+    rule_conditions:
+      - type: logsource
+        product: zeek
+        service: conn
+
+  # smtp.log gets the same unconditional 4-tuple rename as every other Zeek
+  # stream (Category 0), so it needs the same transformation per this file's
+  # INVARIANT even though smtp_mass_outbound doesn't select on it today -
+  # the point is the next SMTP rule that scopes by source doesn't silently
+  # inherit a gap. trans_depth (the field that rule DOES select on) needs no
+  # mapping: logstash.conf never touches it, same as note/auth_success/
+  # mime_type, so the raw name already matches on both sides.
+  - id: field-mapping-zeek-smtp
+    type: field_name_mapping
+    mapping:
+      id.orig_h: source.ip
+      id.resp_h: destination.ip
+      id.orig_p: source.port
+      id.resp_p: destination.port
+      proto: network.transport
+      service: network.protocol
+    rule_conditions:
+      - type: logsource
+        product: zeek
+        service: smtp
+
+  - id: field-mapping-zeek-http
+    type: field_name_mapping
+    mapping:
+      id.orig_h: source.ip
+      id.resp_h: destination.ip
+      id.orig_p: source.port
+      id.resp_p: destination.port
+      proto: network.transport
+      service: network.protocol
+      method: http.request.method
+      status_code: http.response.status_code
+      # code-reviewer + security-auditor both flagged this as the one that
+      # actually matters: without it, the configs/network/filebeat.yml fix
+      # for the host-header/host-metadata collision is unreachable from any
+      # Sigma rule (a rule selecting `host` would compile against the raw,
+      # unmapped name — which real ingested data uses for the ECS host.*
+      # sensor-metadata object, not the HTTP Host header).
+      host: zeek.http.host
+      # `uri` was deliberately left unmapped during the prerequisite-fix
+      # phase pending a rule that actually needs it; http_cobalt_strike_beacon
+      # is that rule. Mapped here AND in logstash.conf's Category 0 branch
+      # together, in the same commit, so the two can't drift.
+      uri: url.path
+      # `user_agent` deliberately omitted (code-reviewer, #228 round 2): no
+      # rule selects on it yet - same "map only when needed" convention.
+      # Needed by http_exfil_large_post's volume threshold.
+      request_body_len: http.request.body.bytes
+    rule_conditions:
+      - type: logsource
+        product: zeek
+        service: http

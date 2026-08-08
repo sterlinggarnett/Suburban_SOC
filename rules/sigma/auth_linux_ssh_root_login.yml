@@ -1,0 +1,35 @@
+title: Direct Root Login via SSH
+id: 3bc9274a-495f-4aa1-887b-0e2b95b0ae00
+status: experimental
+description: |
+    Detects a successful SSH login directly as root — most security
+    baselines disable direct root SSH access (`PermitRootLogin no`) and
+    require login as an unprivileged user followed by sudo/su, so a direct
+    root session is either a misconfigured host or a credential compromise
+    bypassing that control entirely.
+    Uses configs/logstash.conf's existing sshd grok (built with explicit
+    anchoring against attacker-controlled username/IP injection — see that
+    file's own security commentary), not new parsing: selects directly on
+    the final ECS fields the grok already produces (user.name,
+    event.outcome, event.module), all already-mapped and keyword-typed, so
+    no new pySigma pipeline transformation is needed for this rule at all.
+references:
+    - https://attack.mitre.org/techniques/T1078/003/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.initial_access
+    - attack.persistence
+    - attack.t1078.003
+logsource:
+    product: linux
+    service: auth
+detection:
+    selection:
+        event.module: 'system'
+        user.name: 'root'
+        event.outcome: 'success'
+    condition: selection
+falsepositives:
+    - An intentionally configured host/appliance that permits direct root SSH login (uncommon, but occurs on some legacy or vendor-managed systems) — allowlist the specific host rather than excluding root logins broadly.
+level: high

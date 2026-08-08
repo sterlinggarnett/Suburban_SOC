@@ -14,8 +14,19 @@ filebeat.inputs:
     paths:
       - /var/log/auth.log      # Debian/Ubuntu
       - /var/log/secure        # RHEL/CentOS
-    parsers:
-      - syslog: ~
+    # M13 US7 (#230/#243) security review: a `syslog: ~` parser here is
+    # mutually exclusive with configs/logstash.conf's sshd grok, which is
+    # anchored on the FULL raw line (`^%{SYSLOGTIMESTAMP} %{HOSTNAME}
+    # sshd\[...\]: ...`) including the syslog header. Filebeat's syslog
+    # parser, on success, extracts that same header into log.syslog.* and
+    # replaces `message` with only the body — removing the literal "sshd["
+    # substring the Logstash-side pre-filter (and every field the grok
+    # captures) depends on. Nothing else in this pipeline consumes
+    # log.syslog.* (grepped configs/ for it). Removed rather than rewriting
+    # the grok to match a parsed-body shape: this is the smaller, safer
+    # change, and it's what every existing auth.log rule (auth_win_*
+    # equivalents don't apply here, but the pre-existing SSH dashboard
+    # panels this grok already feeds) was built and tested against.
 
   - type: filestream
     id: syslog

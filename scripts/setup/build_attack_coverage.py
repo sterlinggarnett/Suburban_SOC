@@ -62,6 +62,9 @@ ZEEK_SERVICE_LABELS = {
     "notice": "Zeek notice.log",
     "files": "Zeek files.log",
 }
+LINUX_SERVICE_LABELS = {
+    "auth": "Filebeat (Linux auth.log)",
+}
 
 
 def logsource_label(rule_text: str) -> str:
@@ -69,8 +72,11 @@ def logsource_label(rule_text: str) -> str:
 
     Previously hardcoded to "Sysmon/Winlogbeat (process_creation)" for every Sigma
     rule regardless of its actual logsource — silently mislabeling the 3 net_zeek_*
-    rules too (issue #192). Falls back to that same string when a rule has no
-    machine-readable logsource (keeps old behavior for anything unanticipated).
+    rules too (issue #192). M13 US7 (#230/#243) found the same shape a second time:
+    the 5 auth_linux_* rules (product: linux) fell through to that same Windows-
+    specific fallback string with no linux branch to catch them. Falls back to
+    that same string only when a rule has no machine-readable logsource at all
+    (keeps old behavior for anything truly unanticipated).
     """
     m = re.search(r"^logsource:\n((?:[ \t]+\S.*\n?)+)", rule_text, re.M)
     block = m.group(1) if m else ""
@@ -83,6 +89,11 @@ def logsource_label(rule_text: str) -> str:
             return "Zeek"
         svc = service.group(1)
         return ZEEK_SERVICE_LABELS.get(svc, f"Zeek {svc}")
+    if prod == "linux":
+        if not service:
+            return "Filebeat (Linux)"
+        svc = service.group(1)
+        return LINUX_SERVICE_LABELS.get(svc, f"Filebeat (Linux {svc})")
     if prod == "windows" and category:
         return f"Sysmon/Winlogbeat ({category.group(1)})"
     if prod == "windows" and service:

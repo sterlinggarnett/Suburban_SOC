@@ -1,0 +1,45 @@
+title: su Session Opened
+id: a66c693a-b4a7-43f1-8f5d-e5c24991e809
+status: experimental
+description: |
+    Detects a `su` session being opened, per PAM's own logging
+    ("pam_unix(su:session): session opened for user <target> by <source>").
+    A user switching identity via `su` (as opposed to running a single
+    command via `sudo`) opens a persistent shell under the target account —
+    worth the same visibility as sudo usage, and specifically distinguished
+    from it here (see below).
+    Requires all of 'su', 'session', and 'opened' as separate bare-equality
+    (no modifier) selectors on `message`, ANDed — deliberately not just
+    'session' + 'opened' alone, since sshd logs an identically-worded
+    "session opened for user X by (uid=0)" line for every ordinary
+    successful SSH login (also via pam_unix). The 'su' token is what
+    isolates su-specific sessions from that much more common sshd case;
+    it's a safe, non-colliding exact-token match (not a substring wildcard)
+    since 'su', 'sudo', and 'sshd' are three distinct tokens after the
+    standard analyzer processes them, not overlapping substrings of one
+    another at the token level. See auth_linux_ssh_authorized_keys_change.yml's
+    description for why bare equality (not `contains`) is required against
+    this stack's `text`-mapped `message` field in general.
+references:
+    - https://attack.mitre.org/techniques/T1078/003/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.privilege_escalation
+    - attack.t1078.003
+logsource:
+    product: linux
+    service: auth
+detection:
+    selection:
+        event.module: 'system'
+    selection_su:
+        message: 'su'
+    selection_session:
+        message: 'session'
+    selection_opened:
+        message: 'opened'
+    condition: selection and selection_su and selection_session and selection_opened
+falsepositives:
+    - Routine, legitimate use of `su` for administrative tasks — expect regular volume on any host where staff use `su` rather than `sudo -s`; baseline expected accounts before escalating every hit.
+level: low

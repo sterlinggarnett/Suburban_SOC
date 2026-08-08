@@ -27,13 +27,20 @@ import unittest
 #   ^%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:[host][name]} sshd\[%{POSINT:[process][pid]}\]:
 #   %{WORD:[event][outcome]} %{NOTSPACE:[system][auth][method]} for (?:invalid user )?
 #   %{GREEDYDATA:[user][name]} from %{IP:[source][ip]} port %{POSINT:[source][port]}
-#   (?:\s+ssh2)?\s*$
+#   (?:\s+ssh2)?(?:\:.*)?\s*$
+# M13 US7 (#230/#243) security review: modern OpenSSH (~6.8+) appends a key-
+# fingerprint suffix to publickey lines ("... port 22 ssh2: RSA SHA256:...")
+# that the pre-fix pattern's `\s*$` right after " ssh2" could never match,
+# grokparsefailure-ing every publickey auth line - see
+# test_valid_accepted_publickey_with_fingerprint below, which is a real
+# regression test against a real modern OpenSSH log line, not a synthetic
+# example the old pattern happened to already handle.
 SSHD_PATTERN = re.compile(
     r"^(?P<timestamp>[A-Z][a-z]{2}\s+\d{1,2}\s\d{2}:\d{2}:\d{2})\s"
     r"(?P<host_name>[a-zA-Z0-9._-]+)\ssshd\[(?P<pid>[1-9][0-9]*)\]:\s"
     r"(?P<outcome>\w+)\s(?P<auth_method>\S+)\sfor\s(?:invalid user )?"
     r"(?P<user_name>.+)\sfrom\s(?P<source_ip>[0-9a-fA-F.:]+)\sport\s"
-    r"(?P<source_port>[1-9][0-9]*)(?:\s+ssh2)?\s*$"
+    r"(?P<source_port>[1-9][0-9]*)(?:\s+ssh2)?(?:\:.*)?\s*$"
 )
 
 # The pipeline's cheap literal pre-filter (configs/logstash.conf:283) — grok
@@ -71,6 +78,21 @@ class SshdGrokTests(unittest.TestCase):
     def test_valid_accepted_publickey(self):
         msg = "Jul  8 10:16:01 dragon-zord sshd[12346]: Accepted publickey for tjlam from 198.51.100.4 port 22 ssh2"
         self.assertEqual(sshd_grok_match(msg), "match")
+
+    def test_valid_accepted_publickey_with_fingerprint(self):
+        # M13 US7 (#230/#243) security review: modern OpenSSH (~6.8+) appends
+        # a key-fingerprint suffix to publickey accept/fail lines that the
+        # sibling test_valid_accepted_publickey above doesn't have - before
+        # the (?:\:.*)? fix, this line failed the grok (the trailing
+        # ": RSA SHA256:..." isn't whitespace, so `\s*$` never matched),
+        # silently suppressing auth_linux_ssh_root_login.yml for every
+        # modern OpenSSH publickey login, root or otherwise.
+        msg = ("Jul  8 10:16:01 dragon-zord sshd[12346]: Accepted publickey for root "
+               "from 198.51.100.4 port 22 ssh2: RSA SHA256:AbCdEf1234567890abcdefABCDEF1234")
+        m = SSHD_PATTERN.match(msg)
+        self.assertIsNotNone(m, "publickey line with a fingerprint suffix must still match")
+        self.assertEqual(m.group("user_name"), "root")
+        self.assertEqual(m.group("source_ip"), "198.51.100.4")
 
     def test_valid_failed_password_invalid_user(self):
         # "invalid user" phrasing INSIDE the verb+for structure — the (?:invalid

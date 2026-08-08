@@ -1,0 +1,43 @@
+title: SSH Login Attempt for a Nonexistent User
+id: bd126d3a-d41d-46c6-ac15-a0a07f035bd8
+status: experimental
+description: |
+    Detects an SSH authentication attempt against a username that does not
+    exist on the target host — OpenSSH logs this as a standalone "Invalid
+    user <name> from <ip>" line, a different format from the "Failed
+    password for ..."/"Accepted ... for ..." lines
+    configs/logstash.conf's existing sshd grok structurally parses (that
+    pattern requires an outcome verb + auth method + "for", which this line
+    doesn't have — it fails that grok's match silently and falls through
+    with no structured fields set, the same graceful-degradation behavior
+    the grok already has for any other unmatched auth.log line). This is
+    the bulk of real-world SSH brute-force/credential-stuffing traffic
+    (attackers guessing usernames, not just passwords for known accounts).
+    Uses two bare-equality (no modifier) selectors on `message`, ANDed —
+    same reasoning as auth_linux_ssh_authorized_keys_change.yml for why
+    `contains`/wildcard matching is unsafe against this stack's `text`-
+    mapped `message` field, and why two single-token bare-equality
+    selectors (rather than one two-word value) is used instead of relying
+    on unquoted multi-token query_string behavior.
+references:
+    - https://attack.mitre.org/techniques/T1110/001/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.credential_access
+    - attack.t1110.001
+logsource:
+    product: linux
+    service: auth
+detection:
+    selection:
+        event.module: 'system'
+    selection_invalid:
+        message: 'invalid'
+    selection_user:
+        message: 'user'
+    condition: selection and selection_invalid and selection_user
+falsepositives:
+    - A misconfigured monitoring/automation account or client retrying a stale/mistyped username — usually low-volume and self-correcting; sustained or high-volume hits against many distinct usernames from one source is the more meaningful signal (consider pairing with a per-source threshold companion if that volume dimension matters more than this single-event signal).
+    - MUST NOT be promoted past status:experimental without a paired rules/elastic/threshold/*.ndjson companion (security-auditor review): a single brute-force/credential-stuffing burst against invalid usernames typically writes several matching auth.log lines per attempt (the standalone "Invalid user" line, the paired "Failed password for invalid user" line, and connection-close lines), so per-document alerting on this signal alone is not operable at realistic attack volume — see auth_win_bruteforce_failed_logons.yml's paired threshold rule for the established pattern to follow.
+level: medium

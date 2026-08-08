@@ -40,7 +40,20 @@ detection:
         - Image|endswith: '\psexec64.exe'
         - OriginalFileName: 'psexec.c'
     selection_remote:
-        CommandLine|contains: '\\'
+        # '\\\\' not '\\': Sigma's own escape processing treats `\` as an
+        # escape character for its own `*`/`?`/`\` wildcards - `\\` (one
+        # escaped pair) collapses to ONE literal backslash, not the two a
+        # UNC path prefix (\\hostname\share) needs. Found live against a
+        # real running Elasticsearch (M13 US7 session, full-corpus live-
+        # fire sweep - not sigma_eval.py, which cannot catch this class of
+        # bug): the un-fixed pattern matched "contains any single
+        # backslash", which is true of nearly every real Windows command
+        # line (any local file path has one), making this filter an
+        # effective no-op rather than a genuine UNC/remote-path check -
+        # confirmed empirically: a purely local invocation
+        # (C:\Windows\System32\cmd.exe, zero UNC paths) matched the
+        # unfixed pattern, and stopped matching once fixed.
+        CommandLine|contains: '\\\\'
     condition: selection_img and selection_remote
 falsepositives:
     - Legitimate administrative use of PsExec for remote troubleshooting or software deployment — a common, real IT-operations pattern; correlate the source host and target against the change calendar and known admin workflows.

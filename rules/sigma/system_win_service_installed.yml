@@ -33,6 +33,20 @@ description: >
     in that template. (2) Real ImagePath values also commonly use
     %SystemRoot%, the bare \SystemRoot\ NT path, or the \??\ NT device
     prefix instead of C:\Windows - added those forms below.
+    Found live against a real running Elasticsearch (M13 US7 session,
+    full-corpus live-fire sweep - not sigma_eval.py, which cannot catch
+    this class of bug at all): the two `\??\` entries' leading backslash
+    was silently dropped by Sigma's OWN escape processing (`\` is Sigma's
+    escape character for its own `*`/`?` wildcards, so `\?` consumes the
+    backslash to produce a literal `?` rather than preserving the
+    backslash) - the compiled query was missing that backslash entirely,
+    so both `\??\` filter entries never matched real `\??\`-prefixed
+    ImagePath values, generating a false positive (over-alerting, not a
+    coverage gap) for every legitimate NT-device-path-notation install.
+    Fixed by doubling the leading backslash (`\\??\`) so Sigma's escape
+    processing preserves it as a literal character before the (harmless,
+    since Sigma's and Lucene's `?` wildcard both mean "any one character",
+    which still matches a literal `?`) unescaped `??`.
 logsource:
     product: windows
     service: system
@@ -52,10 +66,10 @@ detection:
             - '%SystemRoot%\'
             - '"%SystemRoot%\'
             - '\SystemRoot\'
-            - '\??\C:\Windows\'
-            - '"\??\C:\Windows\'
-            - '\??\C:\Program Files\'
-            - '"\??\C:\Program Files\'
+            - '\\??\C:\Windows\'
+            - '"\\??\C:\Windows\'
+            - '\\??\C:\Program Files\'
+            - '"\\??\C:\Program Files\'
     condition: selection and not filter_common_dirs
 falsepositives:
     - Legitimate software installers, patch management, and endpoint agents

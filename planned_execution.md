@@ -437,13 +437,26 @@ green). Merging #300 after #298/#301 surfaced a real merge conflict (both
 US6 and US7 touched `sigma_eval.py`/`fixtures.json`/the generated docs near
 the same insertion points) — resolved by hand, re-verified post-resolution
 (52/52 pytest, 105/105 live-fire against real ES, no duplicate UUIDs), documented
-above under US7.
+above under US7. #229, #230, #241, #242, #243 closed manually (PRs said
+"Part of #XXX", not "Closes"). **#244 — COMPLETE, CLOSED** — final
+cross-corpus verification against real `main`: 31/31 `tests/detections/`
++ 8/8 `test_live_fire.py` against real Elasticsearch (exceeds the original
+"5/5" estimate — the live-fire suite grew per-story), 105 rules, zero
+duplicate UUIDs, TA0009 Collection = 4 (meets `>=4`), TA0010 Exfiltration =
+2 (meets `>=2`), every rule has a fixtures.json entry, both doc generators
+re-run clean. Fixtures for each story's own rules were already added
+incrementally per-PR (per the `sigma-rule` skill), so #244's remaining scope
+was purely this final verification pass.
 
-Next unstarted item: **#244** (fixtures for all new rules + regenerate
-ATT&CK coverage/KQL docs against the complete 105-rule `main` — largely
-already done as a side effect of this session's live-fire tuning pass and
-merge-conflict resolution; #244 itself needs to be checked against its own
-acceptance criteria and formally closed).
+**M13 milestone note:** [#252](https://github.com/voltron-1/Suburban_SOC/issues/252)
+stays open, tagged to this milestone but deliberately deferred since US1
+(2026-08-02) — `ScriptBlockText`'s `ignore_above: 8191` may still be below
+real PowerShell 4104 chunk sizes; separate scope from M13's rule-count goal.
+
+Next unstarted item: pick the next milestone — **M14** (SOAR
+Approval-Plane Operability & Hardening, 7 issues, recommended next per its
+own milestone note) or **M15**/**M16** (Detection Correctness / Endpoint
+Onboarding, both smaller). See MILESTONE BACKLOG below.
 
 ---
 

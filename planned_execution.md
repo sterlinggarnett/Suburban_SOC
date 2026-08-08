@@ -334,11 +334,44 @@ and #213 closed with the full arc summarised.
   download-direction mapping), [#293](https://github.com/voltron-1/Suburban_SOC/issues/293)
   (pin the unpinned `zeek/zeek` image a rule's string match now depends on).
 
-Next unstarted item: US6 — #229 (PowerShell Deep Inspection & Windows Event
-Log, 8 rules via #241/#242), then US7 — #230 (Linux Auth Log + final CI
-verification, 5 rules via #243), then #244 (fixtures for all 70 new rules +
-regenerate ATT&CK coverage/KQL docs,
-cross-cutting wrap-up for the whole milestone).
+- [~] **M13 US6 — #229 — IN REVIEW** — PowerShell Deep Inspection & Windows
+  Event Log Detection, 10 rules (not #229's stated "8" — #241/#242's
+  detailed spec is 3+7=10, same over-delivery-vs-umbrella-estimate shape as
+  US3's 12→13; one of the 7 auth_win_* rules was then deleted after review,
+  see below, and one posh_ps_* rule was split into two, netting back to 10).
+  [PR #298](https://github.com/voltron-1/Suburban_SOC/pull/298) — CI
+  running, **awaiting merge sign-off from the repo owner** (explicit
+  instruction this session: build through #244, but review/merge is
+  reserved, not automatic on green CI). 90 → 100 rules.
+  Two review rounds (security-auditor + code-reviewer parallel, both
+  unusually thorough) found and fixed real defects: `auth_win_disabled_
+  account_logon_attempt.yml`'s hex literal was uppercase-only against a
+  field with no case normalizer — Windows renders it lowercase in the raw
+  EVTX XML Winlogbeat parses, same class of bug as US5's OpenSSL string
+  mismatch; `auth_win_after_hours_admin_logon.yml` was DELETED after
+  round-2 review found it was a strictly-worse, unfiltered superset of the
+  already-`stable` `auth_win_sedebug_special_logon.yml` (same EventID, same
+  tag, but that rule already filters correctly) — its own "compensating
+  control" (a Kibana off-hours rule schedule) turned out not to exist as a
+  real feature; `auth_win_sensitive_group_recon.yml` used unanchored
+  `contains` for SID RID suffixes (false-fires broadly across a domain),
+  fixed to `endswith` matching a sibling rule's already-correct pattern;
+  `posh_ps_ad_recon_module.yml` was split into two severity-differentiated
+  rules (PowerView high, official ADModule cmdlets low) rather than one
+  rule with an unworkable signal-to-noise ratio. Added the first-ever
+  live-fire test coverage for the Security-channel pipeline. Follow-ups
+  filed: [#295](https://github.com/voltron-1/Suburban_SOC/issues/295)
+  (ScriptBlockText truncation risk across the whole 4104 rule surface),
+  [#296](https://github.com/voltron-1/Suburban_SOC/issues/296) (never-
+  implemented NIST/CIS tag mandate), [#297](https://github.com/voltron-1/Suburban_SOC/issues/297)
+  (possible pre-existing logstash.conf type-comparison bug, unrelated to
+  any Sigma rule's own compiled query).
+
+Next unstarted item, once #298 merges: US7 — #230 (Linux Auth Log + final
+CI verification, 5 rules via #243), then #244 (fixtures for all 70 new
+rules + regenerate ATT&CK coverage/KQL docs — needs US6 AND US7 actually
+merged first, since it operates on the complete rule set, not just PR'd
+branches).
 
 ---
 
@@ -855,6 +888,19 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-07
+
+- **M13 US6 (#229) built end-to-end this session** — plan written
+  (`plans/20260807-m13-us6-powershell-security-rules.md`), prerequisite
+  winlogbeat/pySigma fixes, 10 rules, 2 review rounds (real defects found
+  and fixed, not style nits — see NEXT UP for detail), pushed as
+  [PR #298](https://github.com/voltron-1/Suburban_SOC/pull/298). CI running
+  at session end. **Explicit instruction this session**: keep building
+  through US7 (#230) and #244 without waiting for individual merge
+  sign-off between phases, but review/merge itself is reserved for the
+  repo owner — do not merge any of these PRs automatically on green CI.
+  3 more follow-up issues filed (#295-#297).
 
 ## LAST SESSION — 2026-08-06
 

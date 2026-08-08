@@ -9,6 +9,51 @@ Status: `[ ]` todo · `[~]` in-progress · `[x]` done · `[!]` blocked
 
 ## NEXT UP
 
+**Current milestone: [M14 — SOAR Approval-Plane Operability & Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/18).**
+Started 2026-08-08, immediately after M13 closed (35 → 105 Sigma rules, all 7
+user stories merged). M12/M13 sections below are retained as history, not
+active work — see the M14 entry further down (search "M14 — SOAR
+Approval-Plane") for the live status of each of its issues. Multi-phase
+execution gating applies: each issue is its own gated unit, no unattended
+multi-issue runs.
+
+- [~] **#275 (P0, bug) — IN REVIEW** — `slo_metrics_reader` never granted
+  `soc-agent-health-*`. Live-verified against a real, security-enabled,
+  native Elasticsearch (not just reading the role file) that the actual
+  failure mode is a SILENT false-healthy 0, not the loud exit-3 the issue
+  assumed. [PR #307](https://github.com/voltron-1/Suburban_SOC/pull/307) —
+  15/15 CI green, **awaiting merge sign-off**. Filed 4 follow-ups from
+  security-auditor review, out of scope for this fix: #302 (unrelated
+  pre-existing test-isolation bug, found incidentally), #303 (P0 —
+  docker-compose.yml's `provision` service command breaks under
+  shell-word-splitting on any apostrophe, blocking ALL role/user
+  provisioning via `docker compose up`, likely the real cause behind
+  README's pre-existing "docker compose is broken" note), #304 (generalize
+  the new role-sync test to all 6 role files; `logstash_writer`'s inline
+  copy has already drifted), #305 (add a live `_has_privileges` self-check),
+  #306 (remaining cleartext-password lines + `logstash_writer`'s over-broad
+  `manage` privilege on `soc-agent-health-*`).
+- [ ] **#277 (P0, security)** — next up once #275 is merged. Broker's
+  `/webhook/dispatch` response is unauthenticated; an on-path attacker can
+  forge success or force a permanent stuck claim.
+- [ ] **#276, #278 (P1)** — no operator tool for a stuck claim; an `unknown`
+  isolation outcome has no reconciliation path. Related, likely one PR.
+- [ ] **#286 (P2)** — MAC-based device quarantine is non-functional (two
+  stacked pipeline breaks: no `orig_l2_addr`→`source.mac` rename in the
+  reachable Logstash branch, and no conn.log↔intel.log join even after
+  that).
+- [ ] **#256, #257 (P2)** — checkpoint TTL retention; hardening follow-ups
+  from #245's review.
+- [ ] **#259 (tech-debt)** — `slo_metrics.py`'s `.env` parser breaks on
+  inline comments.
+
+Next unstarted item once #275 merges: **#277**.
+
+---
+
+<details>
+<summary>M12/M13 history (both complete) — click to expand</summary>
+
 **Milestone: [M12 - Approval Gate Integrity & Detection Engineering Tuning](https://github.com/voltron-1/Suburban_SOC/milestone/16).**
 Filed 2026-08-01 after fact-checking a detection-capability evaluation against
 the repo. Verifying the evaluation's weakest item (SOAR action dedup)
@@ -453,40 +498,21 @@ stays open, tagged to this milestone but deliberately deferred since US1
 (2026-08-02) — `ScriptBlockText`'s `ignore_above: 8191` may still be below
 real PowerShell 4104 chunk sizes; separate scope from M13's rule-count goal.
 
-Next unstarted item: pick the next milestone — **M14** (SOAR
-Approval-Plane Operability & Hardening, 7 issues, recommended next per its
-own milestone note) or **M15**/**M16** (Detection Correctness / Endpoint
-Onboarding, both smaller). See MILESTONE BACKLOG below.
+M14 started 2026-08-08 — see NEXT UP at the top of this file for its live
+status.
+
+</details>
 
 ---
 
-## MILESTONE BACKLOG — M14/M16, opened 2026-08-05
+## MILESTONE BACKLOG — M15/M16, opened 2026-08-05 (M14 moved to NEXT UP, started 2026-08-08)
 
 13 open issues had accumulated with **no milestone at all** — every one filed as
 a follow-up during an M11/M12 security review, real but deliberately out of
 scope for the issue being fixed at the time. Triaged into three milestones so
-they stop being invisible. None is started.
+they stop being invisible.
 
-**[M14 — SOAR Approval-Plane Operability & Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/18)** (7) —
-the operational tail of the plane M12 just rebuilt. Recommended next after M13 US2.
-- [ ] **#275** (P0, bug) — `slo_metrics_reader` never granted `soc-agent-health-*`,
-  which `metric_audit_write_failures()` queries every run. `slo-metrics.timer`
-  therefore exits 3 every 15 minutes in production; **#184's metric has never
-  actually worked**. Small fix, live defect.
-- [ ] **#277** (P0, security) — the broker's `/webhook/dispatch` *response* is
-  unauthenticated. An on-path attacker on `soc-mesh-net` can forge
-  `{"executed": true}` (agent closes the case and resolves the claim while no
-  router was touched) or black-hole a successful call to permanently stick the
-  claim. #247 made that response the sole arbiter of both outcomes.
-- [ ] **#276** (P1) — no operator tool to clear a genuinely stuck claim;
-  `agent.py`'s own log line points at a capability that does not exist.
-- [ ] **#278** (P1) — an `unknown` isolation outcome is permanently terminal, no
-  reconciliation path. Pairs with #276.
-- [ ] **#256** (P2) — `agent-checkpoints` has no retention mechanism (ILM does not
-  fit a non-rolling upsert-by-id index).
-- [ ] **#257** (P2) — hardening follow-ups from #245's review.
-- [ ] **#259** (tech-debt) — `slo_metrics.py`'s hand-rolled `.env` parser breaks on
-  inline comments.
+M14 is now IN PROGRESS — see NEXT UP at the top of this file, not here.
 
 **[M15 — Detection Correctness & Pipeline Fidelity](https://github.com/voltron-1/Suburban_SOC/milestone/19)** (3) —
 whether the *existing* corpus behaves as written, as distinct from M13's count.

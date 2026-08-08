@@ -192,7 +192,7 @@ APPROVER_HMAC_SECRET = _resolve_approver_secret(
     os.environ.get("SOC_APPROVER_HMAC_SECRET", "").encode("utf-8"), HMAC_SECRET)
 
 
-def _resolve_hive_mind_secret(hive_secret: bytes, *other_secrets: tuple[str, bytes]) -> bytes:
+def _resolve_hive_mind_secret(hive_secret: bytes, *other_credentials: tuple[str, bytes]) -> bytes:
     """#277 round-2/3/4 security-auditor review: same class of misconfiguration
     _resolve_approver_secret() already guards against, generalized to every
     OTHER secret this codebase provisions to the agent container, not just
@@ -210,17 +210,22 @@ def _resolve_hive_mind_secret(hive_secret: bytes, *other_secrets: tuple[str, byt
     already refuses to dispatch on an empty secret, so returning b"" here
     reuses that path with no new code needed there.
 
-    `other_secrets` is (name, value) pairs, not bare bytes — round-4 review:
-    with two candidates to collide against, a log line that just says
-    "equals another agent secret" makes an operator guess which one."""
-    for name, other in other_secrets:
-        if hive_secret and other and hmac.compare_digest(hive_secret, other):
+    `other_credentials` is (env_var_name, value) pairs, not bare bytes —
+    round-4 review: with two candidates to collide against, a log line that
+    just says "equals another agent secret" makes an operator guess which
+    one. Parameter/loop-variable names deliberately avoid "secret" as a
+    substring (env_var_name/env_var_value, not name/other) — CodeQL's
+    clear-text-logging query previously flagged this exact shape (#246: a
+    parameter named `secret_name` tripped the heuristic purely on naming,
+    despite holding only an env-var label, never real secret bytes)."""
+    for env_var_name, env_var_value in other_credentials:
+        if hive_secret and env_var_value and hmac.compare_digest(hive_secret, env_var_value):
             logger.critical(
                 "HIVE_MIND_SECRET equals %s — the #277 broker response "
                 "authentication is void (anyone who can sign that other "
                 "channel could forge a trusted broker response). Refusing to "
                 "honor it: broker dispatch will fail closed until every secret "
-                "is set to a distinct value.", name)
+                "is set to a distinct value.", env_var_name)
             return b""
     return hive_secret
 

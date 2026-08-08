@@ -59,6 +59,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1562.002",
+      "tactic": "defense-evasion",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Audit Policy Changed \u2014 rules/sigma/auth_win_audit_policy_changed.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1110",
       "tactic": "credential-access",
       "score": 75,
@@ -83,6 +91,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1078.002",
+      "tactic": "defense-evasion",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Logon Attempt Against a Disabled Account \u2014 rules/sigma/auth_win_disabled_account_logon_attempt.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1110.003",
       "tactic": "credential-access",
       "score": 75,
@@ -99,11 +115,27 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1550.002",
+      "tactic": "lateral-movement",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Pass-the-Hash Logon Pattern (LogonType 9, Negotiate) \u2014 rules/sigma/auth_win_pass_the_hash_logon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1098",
       "tactic": "persistence",
       "score": 75,
       "color": "#2ca02c",
       "comment": "Privileged Group Membership Change (Windows Security 4732/4728/4756) \u2014 rules/sigma/auth_win_priv_group_membership_change.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1021.001",
+      "tactic": "lateral-movement",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Interactive Logon via RDP (LogonType 10) \u2014 rules/sigma/auth_win_rdp_logon_type10.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -120,6 +152,22 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "Special-Privilege Logon Assigning SeDebugPrivilege (Windows Security 4672) \u2014 rules/sigma/auth_win_sedebug_special_logon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1069.002",
+      "tactic": "discovery",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Object Access Against a Privileged AD Group \u2014 rules/sigma/auth_win_sensitive_group_recon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1136.001",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "User Account Created (Windows Security 4720) \u2014 rules/sigma/auth_win_user_account_created.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -291,11 +339,43 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1087.002",
+      "tactic": "discovery",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Active Directory Query via Official ActiveDirectory Module \u2014 rules/sigma/posh_ps_ad_recon_admodule.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1087.002",
+      "tactic": "discovery",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Active Directory Reconnaissance via PowerView \u2014 rules/sigma/posh_ps_ad_recon_powerview.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1562.001",
+      "tactic": "defense-evasion",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "PowerShell AMSI Bypass Attempt \u2014 rules/sigma/posh_ps_amsi_bypass_attempt.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1059.001",
       "tactic": "execution",
       "score": 75,
       "color": "#2ca02c",
       "comment": "Obfuscated or Encoded PowerShell Script Block \u2014 rules/sigma/posh_ps_obfuscated_scriptblock.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1059.001",
+      "tactic": "execution",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "PowerShell Reverse Shell via TCPClient \u2014 rules/sigma/posh_ps_reverse_shell.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -804,7 +884,7 @@
   "metadata": [
     {
       "name": "detections",
-      "value": "97"
+      "value": "107"
     },
     {
       "name": "source",

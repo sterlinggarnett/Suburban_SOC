@@ -524,7 +524,7 @@ process.executable:*\\nltest.exe AND (process.args:(*\/dclist\:* OR *\/domain_tr
 - **Rule:** `proc_creation_win_psexec_client_side_launch.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1569.002
 
 ```
-(process.executable:*\\psexec.exe OR process.executable:*\\psexec64.exe OR process.pe.original_file_name:psexec.c) AND process.args:*\\*
+(process.executable:*\\psexec.exe OR process.executable:*\\psexec64.exe OR process.pe.original_file_name:psexec.c) AND process.args:*\\\\*
 ```
 
 ## Password-Protected Archive Staging via RAR/WinRAR
@@ -708,7 +708,7 @@ winlog.event_id:7045 AND winlog.event_data.ServiceName:PSEXESVC
 - **Rule:** `system_win_service_installed.yml` · **level:** medium · **status:** stable · **ATT&CK:** T1543.003
 
 ```
-winlog.event_id:7045 AND (NOT (winlog.event_data.ImagePath:(C\:\\Windows\\System32\\* OR \"C\:\\Windows\\System32\\* OR C\:\\Windows\\SysWOW64\\* OR \"C\:\\Windows\\SysWOW64\\* OR C\:\\Program\ Files\\* OR \"C\:\\Program\ Files\\* OR C\:\\Program\ Files\ \(x86\)\\* OR \"C\:\\Program\ Files\ \(x86\)\\* OR %SystemRoot%\\* OR \"%SystemRoot%\\* OR \\SystemRoot\\* OR \??\\C\:\\Windows\\* OR \"\??\\C\:\\Windows\\* OR \??\\C\:\\Program\ Files\\* OR \"\??\\C\:\\Program\ Files\\*)))
+winlog.event_id:7045 AND (NOT (winlog.event_data.ImagePath:(C\:\\Windows\\System32\\* OR \"C\:\\Windows\\System32\\* OR C\:\\Windows\\SysWOW64\\* OR \"C\:\\Windows\\SysWOW64\\* OR C\:\\Program\ Files\\* OR \"C\:\\Program\ Files\\* OR C\:\\Program\ Files\ \(x86\)\\* OR \"C\:\\Program\ Files\ \(x86\)\\* OR %SystemRoot%\\* OR \"%SystemRoot%\\* OR \\SystemRoot\\* OR \\??\\C\:\\Windows\\* OR \"\\??\\C\:\\Windows\\* OR \\??\\C\:\\Program\ Files\\* OR \"\\??\\C\:\\Program\ Files\\*)))
 ```
 
 ## New Service Installed With a LOLBin as its Binary

@@ -463,6 +463,14 @@
       {
         "EventID": 7045,
         "ImagePath": "\\??\\C:\\Program Files\\Vendor\\agent.exe"
+      },
+      {
+        "EventID": 7045,
+        "ImagePath": "\\??\\C:\\Windows\\System32\\drivers\\svc.sys"
+      },
+      {
+        "EventID": 7045,
+        "ImagePath": "\"\\??\\C:\\Program Files\\Vendor\\agent.exe\""
       }
     ]
   },

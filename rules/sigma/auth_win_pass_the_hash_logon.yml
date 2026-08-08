@@ -1,0 +1,45 @@
+title: Pass-the-Hash Logon Pattern (LogonType 9, Negotiate)
+id: b0b1c01d-21be-4358-9609-fc813988a90c
+status: experimental
+description: |
+    Detects a successful logon (Security 4624) with LogonType 9
+    (NewCredentials) and AuthenticationPackageName Negotiate — two of the
+    commonly-cited indicators of a pass-the-hash logon performed via
+    `runas /netonly` or an equivalent credential-injection technique
+    (Mimikatz's sekurlsa::pth and similar tools use this exact mechanism:
+    a new logon session is created using supplied credentials — often an
+    NTLM hash rather than a plaintext password — without terminating or
+    replacing the current interactive session).
+    Deliberately NOT claiming full signature completeness (security-auditor
+    round 1 caught an earlier draft overclaiming this): the fuller published
+    pattern also checks LogonProcessName ("seclogo"), which this rule
+    doesn't select on — adding it would need a new field mapping this batch
+    doesn't otherwise require, and real-world casing for that field wasn't
+    independently confirmed the way the SubStatus casing issue was caught
+    elsewhere in this batch. Broader net, on the two fields already mapped
+    for this batch, rather than a narrower one built on an unverified guess.
+    LogonType 9 has a legitimate, narrow use (an administrator deliberately
+    running `runas /netonly` for a specific network-only credential
+    context) — see falsepositives. It is otherwise a fairly rare logon
+    type on a typical endpoint, which is part of why the combination with
+    Negotiate is a meaningful signal rather than routine noise.
+references:
+    - https://attack.mitre.org/techniques/T1550/002/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.lateral_movement
+    - attack.defense_evasion
+    - attack.t1550.002
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4624
+        LogonType: 9
+        AuthenticationPackageName: 'Negotiate'
+    condition: selection
+falsepositives:
+    - Legitimate administrative use of `runas /netonly` (a documented, if uncommon, pattern for running network-only tooling under different credentials without a full re-login) — baseline expected accounts/hosts for this before escalating every hit.
+level: high

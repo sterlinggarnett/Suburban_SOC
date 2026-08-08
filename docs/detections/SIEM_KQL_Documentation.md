@@ -5,7 +5,7 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**90 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**100 rules.** Each query is the exact Lucene the Sigma rule compiles to.
 
 ## AS-REP Roasting — TGT Requested for an Account Without Pre-Authentication
 
@@ -13,6 +13,14 @@
 
 ```
 (winlog.event_id:4768 AND winlog.event_data.PreAuthType:0) AND (NOT winlog.event_data.TargetUserName:*$)
+```
+
+## Audit Policy Changed
+
+- **Rule:** `auth_win_audit_policy_changed.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1562.002
+
+```
+winlog.event_id:4719
 ```
 
 ## Repeated Failed Sign-Ins (Windows Security 4625)
@@ -39,6 +47,14 @@ winlog.event_id:4625
 (winlog.event_id:4662 AND winlog.event_data.AccessMask:0x100 AND (winlog.event_data.Properties:(*1131f6aa\-9c07\-11d1\-f79f\-00c04fc2dcd2* OR *1131f6ad\-9c07\-11d1\-f79f\-00c04fc2dcd2* OR *89e95b76\-444d\-4c62\-991a\-0facbeda640c*))) AND (NOT winlog.event_data.SubjectUserName:*$)
 ```
 
+## Logon Attempt Against a Disabled Account
+
+- **Rule:** `auth_win_disabled_account_logon_attempt.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1078.002
+
+```
+winlog.event_id:4625 AND ((winlog.event_data.SubStatus:(0xC0000072 OR 0xc0000072)) OR (winlog.event_data.Status:(0xC0000072 OR 0xc0000072)))
+```
+
 ## Explicit-Credential Sign-In Recorded (Windows Security 4648)
 
 - **Rule:** `auth_win_explicit_cred_account_sweep.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1110.003
@@ -55,12 +71,28 @@ winlog.event_id:4648
 (winlog.event_id:4769 AND winlog.event_data.TicketEncryptionType:0x17 AND winlog.event_data.Status:0x0) AND (NOT winlog.event_data.ServiceName:*$) AND (NOT winlog.event_data.ServiceName:krbtgt*)
 ```
 
+## Pass-the-Hash Logon Pattern (LogonType 9, Negotiate)
+
+- **Rule:** `auth_win_pass_the_hash_logon.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1550.002
+
+```
+winlog.event_id:4624 AND winlog.event_data.LogonType:9 AND winlog.event_data.AuthenticationPackageName:Negotiate
+```
+
 ## Privileged Group Membership Change (Windows Security 4732/4728/4756)
 
 - **Rule:** `auth_win_priv_group_membership_change.yml` · **level:** high · **status:** stable · **ATT&CK:** T1098, T1078
 
 ```
 (winlog.event_id:(4732 OR 4728 OR 4756)) AND ((winlog.event_data.TargetUserName:(Administrators OR Domain\ Admins OR Enterprise\ Admins)) OR (winlog.event_data.TargetSid:(*\-544 OR *\-512 OR *\-519)))
+```
+
+## Interactive Logon via RDP (LogonType 10)
+
+- **Rule:** `auth_win_rdp_logon_type10.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1021.001
+
+```
+winlog.event_id:4624 AND winlog.event_data.LogonType:10
 ```
 
 ## Security Audit Log Cleared (Windows Security 1102)
@@ -77,6 +109,22 @@ winlog.event_id:1102
 
 ```
 (winlog.event_id:4672 AND winlog.event_data.PrivilegeList:*SeDebugPrivilege*) AND (NOT winlog.event_data.SubjectUserSid:S\-1\-5\-18)
+```
+
+## Object Access Against a Privileged AD Group
+
+- **Rule:** `auth_win_sensitive_group_recon.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1069.002
+
+```
+winlog.event_id:4661 AND ((winlog.event_data.ObjectName:(*Domain\ Admins* OR *Enterprise\ Admins* OR *Schema\ Admins* OR *Administrators*)) OR (winlog.event_data.ObjectName:(*\-512 OR *\-519 OR *\-518 OR *\-544)))
+```
+
+## User Account Created (Windows Security 4720)
+
+- **Rule:** `auth_win_user_account_created.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1136.001
+
+```
+winlog.event_id:4720
 ```
 
 ## Suspicious CreateRemoteThread Target or Source (Sysmon EventID 8)
@@ -247,12 +295,44 @@ winlog.event_id:4104 AND ((winlog.event_data.ScriptBlockText:(*Login\ Data* OR *
 winlog.event_id:4104 AND (winlog.event_data.ScriptBlockText:*System.IO.Compression* OR (winlog.event_data.ScriptBlockText:*Compress\-Archive* AND (winlog.event_data.ScriptBlockText:(*\\Temp\\* OR *\\AppData\\Local\\Temp\\* OR *$env\:TEMP*))))
 ```
 
+## Active Directory Query via Official ActiveDirectory Module
+
+- **Rule:** `posh_ps_ad_recon_admodule.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1087.002
+
+```
+winlog.event_id:4104 AND (winlog.event_data.ScriptBlockText:(*Get\-ADUser* OR *Get\-ADGroup* OR *Get\-ADGroupMember* OR *Get\-ADDomainController*))
+```
+
+## Active Directory Reconnaissance via PowerView
+
+- **Rule:** `posh_ps_ad_recon_powerview.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1087.002
+
+```
+winlog.event_id:4104 AND (winlog.event_data.ScriptBlockText:(*Get\-NetDomain* OR *Get\-NetUser* OR *Get\-NetGroup* OR *Get\-NetComputer* OR *Get\-DomainUser* OR *Get\-DomainController* OR *Get\-DomainTrust* OR *Invoke\-ShareFinder* OR *Find\-DomainShare*))
+```
+
+## PowerShell AMSI Bypass Attempt
+
+- **Rule:** `posh_ps_amsi_bypass_attempt.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1562.001
+
+```
+winlog.event_id:4104 AND (winlog.event_data.ScriptBlockText:(*AmsiUtils* OR *amsiInitFailed* OR *AmsiScanBuffer* OR *AMSI_RESULT_NOT_DETECTED*))
+```
+
 ## Obfuscated or Encoded PowerShell Script Block
 
 - **Rule:** `posh_ps_obfuscated_scriptblock.yml` · **level:** high · **status:** stable · **ATT&CK:** T1059.001, T1027
 
 ```
 winlog.event_id:4104 AND (((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ * OR *\|IEX* OR *\|\ IEX* OR *;IEX* OR *;\ IEX* OR *Invoke\-Expression* OR *\[scriptblock\]\:\:Create* OR *.Invoke\(\)*)) AND ((winlog.event_data.ScriptBlockText:(*DownloadString* OR *DownloadFile* OR *DownloadData* OR *Net.WebClient* OR *Invoke\-WebRequest* OR *Invoke\-RestMethod* OR *Start\-BitsTransfer* OR *\ iwr\ * OR *\|iwr\ * OR *;iwr\ * OR *\=iwr\ * OR *\ irm\ * OR *\|irm\ * OR *;irm\ * OR *\=irm\ *)) OR (winlog.event_data.ScriptBlockText:(iwr\ * OR irm\ *)))) OR ((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ * OR *\|IEX* OR *\|\ IEX* OR *;IEX* OR *;\ IEX* OR *Invoke\-Expression* OR *\[scriptblock\]\:\:Create* OR *.Invoke\(\)*)) AND (winlog.event_data.ScriptBlockText:(*\-bxor* OR *\-bnot* OR *FromBase64String* OR *\-EncodedCommand* OR *\-enc\ *))) OR (((winlog.event_data.ScriptBlockText:(*DownloadString* OR *DownloadFile* OR *DownloadData* OR *Net.WebClient* OR *Invoke\-WebRequest* OR *Invoke\-RestMethod* OR *Start\-BitsTransfer* OR *\ iwr\ * OR *\|iwr\ * OR *;iwr\ * OR *\=iwr\ * OR *\ irm\ * OR *\|irm\ * OR *;irm\ * OR *\=irm\ *)) OR (winlog.event_data.ScriptBlockText:(iwr\ * OR irm\ *))) AND (winlog.event_data.ScriptBlockText:(*\-bxor* OR *\-bnot* OR *FromBase64String* OR *\-EncodedCommand* OR *\-enc\ *))))
+```
+
+## PowerShell Reverse Shell via TCPClient
+
+- **Rule:** `posh_ps_reverse_shell.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1059.001
+
+```
+winlog.event_id:4104 AND winlog.event_data.ScriptBlockText:*Net.Sockets.TCPClient* AND (winlog.event_data.ScriptBlockText:(*GetStream\(\)* OR *NetworkStream* OR *.Read\(* OR *.Write\(*))
 ```
 
 ## Accessibility Feature Backdoor via Image/OriginalFileName Mismatch

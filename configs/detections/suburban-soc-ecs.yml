@@ -82,6 +82,18 @@ transformations:
       # (code-reviewer + security-auditor, US2 review) — no rule in the corpus
       # selects on either; add them back only alongside a rule that actually uses
       # them, so this list never silently drifts ahead of what's deployed.
+      # M13 US6 (#229/#242) — RDP/PtH/disabled-account/group-recon fields.
+      # Same #217-shape requirement as the US2 comment above: every field a
+      # Security-channel rule selects on must be listed here.
+      # NOT mapped here: ObjectType — round-1 added it speculatively for
+      # auth_win_sensitive_group_recon.yml, but that rule only selects on
+      # ObjectName; caught by code-reviewer as violating the exact
+      # unused-field convention this comment itself was citing. Add it back
+      # only alongside a rule that actually uses it.
+      LogonType: winlog.event_data.LogonType
+      AuthenticationPackageName: winlog.event_data.AuthenticationPackageName
+      SubStatus: winlog.event_data.SubStatus
+      ObjectName: winlog.event_data.ObjectName
     rule_conditions:
       - type: logsource
         product: windows

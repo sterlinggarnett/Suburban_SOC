@@ -1,0 +1,32 @@
+title: Audit Policy Changed
+id: b3c04dc9-e7c0-4609-9dd4-b453dd39f743
+status: experimental
+description: |
+    Detects a Windows audit policy change (Security 4719, "System audit
+    policy was changed"). Attackers who gain administrative access commonly
+    disable or narrow specific audit subcategories before performing further
+    actions, so those actions no longer generate the events this repo's own
+    detections depend on — this rule is partly a detection-integrity control
+    for the rest of the corpus, not just a standalone technique detection.
+    Needed configs/endpoint/winlogbeat.yml to add EventID 4719 to the
+    collected Security-channel list (#229 prerequisite fix; not collected
+    by any prior M13 batch). On by default wherever the baseline "Audit
+    Policy Change" subcategory is enabled — on by default in most modern
+    Windows security baselines, per that same file's own documentation.
+references:
+    - https://attack.mitre.org/techniques/T1562/002/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.defense_evasion
+    - attack.t1562.002
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4719
+    condition: selection
+falsepositives:
+    - Legitimate, deliberate audit-policy tuning by IT/security staff (e.g. enabling a new subcategory as part of a hardening rollout) — expect occasional, planned hits; correlate with change-management records before escalating.
+level: high

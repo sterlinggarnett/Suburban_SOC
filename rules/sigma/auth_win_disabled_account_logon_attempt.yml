@@ -1,0 +1,50 @@
+title: Logon Attempt Against a Disabled Account
+id: 7881b9af-1828-4d4d-936b-17da47b1d858
+status: experimental
+description: |
+    Detects a failed logon (Security 4625) whose SubStatus is 0xC0000072
+    ("account disabled") — the specific Windows failure code for a logon
+    attempt against an account an administrator has deliberately disabled.
+    A disabled account has no legitimate reason to ever authenticate again;
+    a repeated or unexpected hit here is a strong signal of either stale
+    credential reuse (a former employee's account, or a service account
+    that should have been rotated) or an attacker who obtained old
+    credentials without knowing the account was already deprovisioned.
+    Matches both hex casings, and both the Status and SubStatus fields
+    (security-auditor round 1): Windows renders this NTSTATUS code in
+    lowercase in the raw EVTX EventData XML that Winlogbeat parses
+    (`0xc0000072`), not the uppercase form the human-readable event message
+    shows — this stack's ECS pipeline has no case-normalizer on this field
+    (unlike ScriptBlockText/ImagePath, which do), so an uppercase-only
+    literal risks being a silent no-op against real data, the same class of
+    trap the OpenSSL self-signed-cert string mismatch caught in M13 US5.
+    Microsoft documents this code under a single table that applies to
+    either Status or SubStatus depending on the logon path, so both fields
+    are checked (Status is already mapped in this pipeline for the
+    Kerberoasting rule, so this costs no new field mapping).
+references:
+    - https://attack.mitre.org/techniques/T1078/002/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.defense_evasion
+    - attack.persistence
+    - attack.t1078.002
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4625
+    selection_substatus:
+        SubStatus:
+            - '0xC0000072'
+            - '0xc0000072'
+    selection_status:
+        Status:
+            - '0xC0000072'
+            - '0xc0000072'
+    condition: selection and (selection_substatus or selection_status)
+falsepositives:
+    - An account disabled very recently while a client still has cached credentials and periodically retries (browser sync, mapped drive, scheduled task) — expect a short-lived burst right after any account disable, tapering off; sustained recurrence past that window is the more meaningful signal.
+level: medium

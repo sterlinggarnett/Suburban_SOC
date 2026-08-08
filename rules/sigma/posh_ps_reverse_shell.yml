@@ -1,0 +1,54 @@
+title: PowerShell Reverse Shell via TCPClient
+id: 24f92c8c-c2b9-4588-b22f-13afb70f1bee
+status: experimental
+description: |
+    Detects PowerShell script-block content constructing a raw TCP socket
+    AND reading/writing its network stream — the core mechanic of every
+    public PowerShell reverse-shell one-liner (Nishang's
+    Invoke-PowerShellTcp, the classic "PowerShell reverse shell" snippets
+    circulated widely enough to be a canonical T1059.001 pattern).
+    Requires the "Turn on PowerShell Script Block Logging" Group Policy for
+    EventID 4104, same prerequisite as this repo's other posh_ps_* rules.
+    Requires BOTH the TCPClient construction and stream I/O indicators
+    together, mirroring posh_ps_obfuscated_scriptblock.yml's established
+    "≥2 co-occurring categories, not one bare indicator" design (#217): a
+    bare `Net.Sockets.TCPClient` reference alone is common in benign
+    network-diagnostic or port-check scripts and would be pure noise on its
+    own; pairing it with GetStream()/NetworkStream/Read/Write usage is
+    specific to scripts that actually pipe data over a socket, not just
+    test connectivity to one. Scoped to TCPClient (the reverse-shell case
+    this rule is named and described for) — a corresponding TcpListener
+    (bind-shell) indicator was considered and dropped rather than silently
+    included under a title that doesn't cover it.
+    Known imprecision, stated rather than hidden: the two indicator
+    categories aren't proven to reference the *same* socket object — a
+    script with an unrelated `.Read(`/`.Write(` call elsewhere alongside a
+    TCPClient reference for a different purpose would still match. This
+    stack's substring-matching model (no AST/variable-binding analysis) has
+    no way to express that binding; see falsepositives.
+references:
+    - https://attack.mitre.org/techniques/T1059/001/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.execution
+    - attack.t1059.001
+logsource:
+    product: windows
+    service: powershell
+detection:
+    selection:
+        EventID: 4104
+    selection_socket:
+        ScriptBlockText|contains:
+            - 'Net.Sockets.TCPClient'
+    selection_stream:
+        ScriptBlockText|contains:
+            - 'GetStream()'
+            - 'NetworkStream'
+            - '.Read('
+            - '.Write('
+    condition: selection and selection_socket and selection_stream
+falsepositives:
+    - Legitimate network-diagnostic, port-scanning, or custom TCP-based automation tooling written in PowerShell that constructs a TCPClient and separately reads/writes any stream elsewhere in the same script — uncommon but possible for internal network tooling; correlate with the destination and surrounding script content before escalating.
+level: high

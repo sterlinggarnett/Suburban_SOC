@@ -361,6 +361,21 @@ class NetworkLiveFireTests(LiveFireTestCase):
         self.assert_rule_fires_correctly("net_zeek_dns_dga_nxdomain_burst.yml")
 
 
+class WindowsSecurityLiveFireTests(LiveFireTestCase):
+    def test_pass_the_hash_logon_fires_against_real_es(self):
+        # M13 US6 (#229/#242): before this batch, field-mapping-windows-
+        # security had never been live-fire tested at all — every prior
+        # Security-channel rule's coverage came from sigma_eval.py fixtures
+        # only. This batch adds 5 new fields to that mapping (LogonType,
+        # AuthenticationPackageName, SubStatus, ObjectType, ObjectName);
+        # auth_win_pass_the_hash_logon.yml exercises two of them together
+        # (LogonType + AuthenticationPackageName), proving the rename
+        # actually lands as winlog.event_data.* against a real,
+        # realistically-mapped index rather than just against
+        # suburban-soc-ecs.yml's own self-consistent assumption about it.
+        self.assert_rule_fires_correctly("auth_win_pass_the_hash_logon.yml")
+
+
 class ThresholdLiveFireTests(LiveFireTestCase):
     """Threshold rules (rules/elastic/threshold/*.ndjson) have no fixtures.json
     entry — sigma_eval.py can't express cardinality logic at all (see that

@@ -334,15 +334,13 @@ and #213 closed with the full arc summarised.
   download-direction mapping), [#293](https://github.com/voltron-1/Suburban_SOC/issues/293)
   (pin the unpinned `zeek/zeek` image a rule's string match now depends on).
 
-- [~] **M13 US6 — #229 — IN REVIEW** — PowerShell Deep Inspection & Windows
-  Event Log Detection, 10 rules (not #229's stated "8" — #241/#242's
+- [x] **M13 US6 — #229 — COMPLETE, MERGED** — PowerShell Deep Inspection &
+  Windows Event Log Detection, 10 rules (not #229's stated "8" — #241/#242's
   detailed spec is 3+7=10, same over-delivery-vs-umbrella-estimate shape as
   US3's 12→13; one of the 7 auth_win_* rules was then deleted after review,
   see below, and one posh_ps_* rule was split into two, netting back to 10).
-  [PR #298](https://github.com/voltron-1/Suburban_SOC/pull/298) — CI
-  running, **awaiting merge sign-off from the repo owner** (explicit
-  instruction this session: build through #244, but review/merge is
-  reserved, not automatic on green CI). 90 → 100 rules.
+  [PR #298](https://github.com/voltron-1/Suburban_SOC/pull/298) merged
+  2026-08-08 (squash), 12/12 CI green. 90 → 100 rules.
   Two review rounds (security-auditor + code-reviewer parallel, both
   unusually thorough) found and fixed real defects: `auth_win_disabled_
   account_logon_attempt.yml`'s hex literal was uppercase-only against a
@@ -367,16 +365,26 @@ and #213 closed with the full arc summarised.
   (possible pre-existing logstash.conf type-comparison bug, unrelated to
   any Sigma rule's own compiled query).
 
-- [~] **M13 US7 — #230 — IN REVIEW** — Linux Auth Log Detection & Final CI
-  Verification, 5 rules (auth_linux_ssh_root_login, auth_linux_ssh_
+- [x] **M13 US7 — #230 — COMPLETE, MERGED** — Linux Auth Log Detection &
+  Final CI Verification, 5 rules (auth_linux_ssh_root_login, auth_linux_ssh_
   authorized_keys_change, auth_linux_sudo_privilege_escalation,
   auth_linux_invalid_user_ssh_attempt, auth_linux_su_session_opened) via
   #243. **First Linux-telemetry batch in this whole corpus** — everything
   before this has been Windows or Zeek.
-  [PR #300](https://github.com/voltron-1/Suburban_SOC/pull/300) — CI
-  running, **awaiting merge sign-off from the repo owner**. Branched off
-  main before US6 (#298) merged, so this PR alone shows 90 → 95 rules; the
-  eventual combined total with US6 is 105.
+  [PR #300](https://github.com/voltron-1/Suburban_SOC/pull/300) merged
+  2026-08-08 (squash), 12/12 CI green. 90 → 105 rules. Branched off main
+  before US6 (#298)/the escape-semantics fix (#301) merged, so landing it
+  required resolving a real merge conflict (not just an "update branch"
+  fast-forward) in `sigma_eval.py`, `fixtures.json`, `test_live_fire.py`,
+  and the generated docs — both US6 and US7 had independently added content
+  near the same insertion points. Resolved by hand: `sigma_eval.py`'s
+  conflict combined US7's own `_TEXT_MAPPED_FIELDS`/word-boundary matching
+  with #301's `_sigma_wildcard_to_regex()`, since both are real, independent
+  fixes to the same `cmp()` function, not competing versions of one fix;
+  the docs were regenerated fresh from the merged 105-rule corpus rather
+  than hand-merged. Re-verified post-resolution: 52/52 pytest, ruff clean,
+  105/105 rules pass a full live-fire sweep against real Elasticsearch, no
+  duplicate UUIDs.
   Central mechanism, novel to this corpus: `message` is the first field
   ever selected on that's mapped `text` (analyzed) rather than `keyword` —
   required extending sigma_eval.py (`_TEXT_MAPPED_FIELDS`) and switching
@@ -399,33 +407,43 @@ and #213 closed with the full arc summarised.
   [#299](https://github.com/voltron-1/Suburban_SOC/issues/299) (rule
   descriptions carry ES-analyzer detail into the Kibana alert flyout).
 
-- [~] **Live-ES tuning pass — no issue, session-initiated** — started a real
-  Elasticsearch (native 9.3.2, matching CI) and swept the entire rule corpus's
-  actually-compiled queries against it, rather than trusting `sigma_eval.py`'s
-  local re-implementation alone. Found 2 real, pre-existing bugs (predate this
-  session, not in US6/US7's own new rules) sharing one root cause — Sigma's
-  own `*`/`?`/`\` value-escaping being silently mishandled by rule authors,
-  never modeled by `sigma_eval.py` at all: `system_win_service_installed.yml`'s
-  `\??\` NT-path filters had their leading backslash silently eaten
-  (`\?`→literal `?`), never matching real `\??\`-prefixed paths — a false
-  positive/over-alert; `proc_creation_win_psexec_client_side_launch.yml`'s
-  `contains: '\\'` UNC-path check collapsed to matching any single backslash,
-  an effective no-op on any local file path. Also closed the structural gap:
+- [x] **Live-ES tuning pass — no issue, session-initiated — COMPLETE, MERGED**
+  — started a real Elasticsearch (native 9.3.2, matching CI) and swept the
+  entire rule corpus's actually-compiled queries against it, rather than
+  trusting `sigma_eval.py`'s local re-implementation alone. Found 2 real,
+  pre-existing bugs (predate this session, not in US6/US7's own new rules)
+  sharing one root cause — Sigma's own `*`/`?`/`\` value-escaping being
+  silently mishandled by rule authors, never modeled by `sigma_eval.py` at
+  all: `system_win_service_installed.yml`'s `\??\` NT-path filters had their
+  leading backslash silently eaten (`\?`→literal `?`), never matching real
+  `\??\`-prefixed paths — a false positive/over-alert;
+  `proc_creation_win_psexec_client_side_launch.yml`'s `contains: '\\'`
+  UNC-path check collapsed to matching any single backslash, an effective
+  no-op on any local file path. Also closed the structural gap:
   `sigma_eval.py` now has `_sigma_wildcard_to_regex()` so future rules can't
-  hide the same class of bug from local fixture tests. Delivered as a minimal,
-  focused fix against `main` (not bundled into US6/US7, since these bugs
-  predate both): [PR #301](https://github.com/voltron-1/Suburban_SOC/pull/301)
-  — 26/26 pytest, ruff clean, 90/90 rules pass a full live-fire sweep against
-  real ES, **awaiting merge sign-off**. The same live-fire sweep (run against
-  a local-only merge of main+US6+US7, not pushed) also confirmed all 15 of
-  US6/US7's own rules pass live with no further findings — no separate fix
-  needed there.
+  hide the same class of bug from local fixture tests. Delivered as a
+  minimal, focused fix against `main` (not bundled into US6/US7, since these
+  bugs predate both): [PR #301](https://github.com/voltron-1/Suburban_SOC/pull/301)
+  merged 2026-08-08 (squash), 12/12 CI green. The same live-fire sweep (run
+  against a local-only merge of main+US6+US7, not pushed) also confirmed all
+  15 of US6/US7's own rules passed live with no further findings — no
+  separate fix needed there.
 
-Next unstarted item: once #298, #300, AND #301 are all merged, #244 (fixtures
-for all 70 new rules + regenerate ATT&CK coverage/KQL docs — needs the
-complete rule set actually on `main`, not just PR'd branches, since that's
-what the issue's own acceptance criteria check: "pytest passes for all 105
-rules", "ls rules/sigma/*.yml | wc -l >= 100", no duplicate UUIDs).
+**M13 is COMPLETE** — all 7 user stories (#224-#230) merged, 35 → 105 Sigma
+rules. #298, #300, #301 merged 2026-08-08 (no GitHub-side human review —
+explicit review-bypass confirmed by the repo owner before merging; all three
+had 2 rounds of security-auditor/code-reviewer sub-agent review and 12/12 CI
+green). Merging #300 after #298/#301 surfaced a real merge conflict (both
+US6 and US7 touched `sigma_eval.py`/`fixtures.json`/the generated docs near
+the same insertion points) — resolved by hand, re-verified post-resolution
+(52/52 pytest, 105/105 live-fire against real ES, no duplicate UUIDs), documented
+above under US7.
+
+Next unstarted item: **#244** (fixtures for all new rules + regenerate
+ATT&CK coverage/KQL docs against the complete 105-rule `main` — largely
+already done as a side effect of this session's live-fire tuning pass and
+merge-conflict resolution; #244 itself needs to be checked against its own
+acceptance criteria and formally closed).
 
 ---
 

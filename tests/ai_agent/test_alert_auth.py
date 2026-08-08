@@ -25,6 +25,7 @@ import json
 import time
 import types
 import hmac
+import uuid
 import hashlib
 import tempfile
 import threading
@@ -498,6 +499,15 @@ class AlertResponseTests(unittest.TestCase):
 class TenantResolverTests(unittest.TestCase):
     """WS0.3 helper unit tests (no Flask client)."""
 
+    def setUp(self):
+        # #277: verify_signature() (now also used on dispatch_block_via_broker's
+        # response side) consumes the SAME module-level nonce cache request-side
+        # verification uses. Two tests in this class that happen to sign an
+        # identical body within the same second would otherwise collide and
+        # spuriously fail as a "replayed signature" — clear it per-test, same
+        # as the other test class in this file that already does this.
+        agent._seen_sigs.clear()
+
     def test_safe_tenant(self):
         self.assertEqual(agent.safe_tenant("Home-Smith"), "home-smith")
         self.assertEqual(agent.safe_tenant("bad slug!"), "unassigned")
@@ -523,21 +533,71 @@ class TenantResolverTests(unittest.TestCase):
     # collapsed into a blanket confirmed-false — a genuinely ambiguous result
     # (the broker itself unsure, or a mid-dispatch failure) must raise
     # IsolationOutcomeUnknown, never return (False, ...) ---------------------
-    def _fake_response(self, status_code, json_body=None, text=""):
+    # #277: matches the b"secret" every test in this class patches
+    # agent.HIVE_MIND_SECRET to — _fake_response() signs its body with this
+    # SAME secret (and the SAME domain tag agent.py's BROKER_RESPONSE_DOMAIN
+    # uses) by default so existing classification tests keep representing a
+    # legitimately-signed broker response, not an accidentally-unsigned one
+    # now that dispatch_block_via_broker() checks for a signature. Tests
+    # that specifically exercise forged/missing/tampered signatures pass
+    # sign=False or tamper_signature=True.
+    _FAKE_BROKER_SECRET = b"secret"
+    _RESPONSE_DOMAIN = b"broker-response:"
+    # Every dispatch_block_via_broker() call in this class dispatches this
+    # exact IP — auto-injected into json_body so each test doesn't need to
+    # repeat it, matching what the real broker now always echoes back.
+    # NOT a security check as of round-3: request_id (see
+    # _post_echoing_request_id() below) is the actual binding mechanism the
+    # agent verifies; attacker_ip is echoed for observability only, same as
+    # in the real broker response (app.py's _signed_json_response()
+    # docstring). attacker_ip=None opts a test OUT of auto-injection, for a
+    # test that wants full control over the mocked json_body's keys.
+    _DEFAULT_DISPATCHED_IP = "1.2.3.4"
+
+    def _fake_response(self, status_code, json_body=None, text="", sign=True,
+                       tamper_signature=False, attacker_ip=_DEFAULT_DISPATCHED_IP):
         resp = mock.Mock()
         resp.status_code = status_code
+        if json_body is not None and attacker_ip is not None and "attacker_ip" not in json_body:
+            json_body = {**json_body, "attacker_ip": attacker_ip}
         resp.text = text or str(json_body or "")
         if json_body is not None:
             resp.json.return_value = json_body
+            body = json.dumps(json_body).encode("utf-8")
         else:
             resp.json.side_effect = ValueError("no JSON")
+            body = (text or "").encode("utf-8")
+        resp.content = body
+        if sign:
+            ts = str(int(time.time()))
+            sig = "sha256=" + hmac.new(
+                self._FAKE_BROKER_SECRET, self._RESPONSE_DOMAIN + f"{ts}.".encode("utf-8") + body,
+                hashlib.sha256).hexdigest()
+            if tamper_signature:
+                sig = sig[:-1] + ("0" if sig[-1] != "0" else "1")
+            resp.headers = {"x-elastic-signature": sig, "x-elastic-timestamp": ts}
+        else:
+            resp.headers = {}
         return resp
 
+    def _post_echoing_request_id(self, status_code, json_body=None, **fake_response_kwargs):
+        """#277 round-3: dispatch_block_via_broker() generates a fresh random
+        request_id per call (so it can bind the response to this exact call
+        — see agent.py's own comment on that check) that a statically-built
+        mock response can't know in advance. Returns a side_effect for
+        mock.patch.object(agent.requests, "post", ...) that reads the REAL
+        outbound request body and echoes back whatever request_id it finds,
+        the same way the real broker does."""
+        def _side_effect(*args, **kwargs):
+            outbound = json.loads(kwargs["data"])
+            body = {**(json_body or {}), "request_id": outbound.get("request_id")}
+            return self._fake_response(status_code, body, **fake_response_kwargs)
+        return _side_effect
+
     def test_dispatch_confirmed_success_when_broker_reports_it(self):
-        resp = self._fake_response(200, {"executed": True, "success_count": 1,
-                                          "unknown_count": 0, "message": "blocked"})
         with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
-             mock.patch.object(agent.requests, "post", return_value=resp):
+             mock.patch.object(agent.requests, "post", side_effect=self._post_echoing_request_id(
+                 200, {"executed": True, "success_count": 1, "unknown_count": 0, "message": "blocked"})):
             ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
         self.assertTrue(ok)
 
@@ -572,11 +632,10 @@ class TenantResolverTests(unittest.TestCase):
         # — not the {"executed": True, "success_count": 0, ...} shape the
         # all-routers-confirmed-failed test below uses (a different, also-real
         # scenario). Both must classify as confirmed non-dispatch.
-        resp = self._fake_response(200, {
-            "status": "no_routers", "executed": False,
-            "message": "No routers configured for tenant 'home-smith' — nothing to block."})
         with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
-             mock.patch.object(agent.requests, "post", return_value=resp):
+             mock.patch.object(agent.requests, "post", side_effect=self._post_echoing_request_id(
+                 200, {"status": "no_routers", "executed": False,
+                      "message": "No routers configured for tenant 'home-smith' — nothing to block."})):
             ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
         self.assertFalse(ok)
 
@@ -597,20 +656,20 @@ class TenantResolverTests(unittest.TestCase):
     def test_dispatch_unknown_when_no_router_confirmed_but_some_unconfirmed(self):
         # success_count=0 AND unknown_count>0: at least one router's outcome
         # could not be confirmed — the block may already be live there.
-        resp = self._fake_response(200, {"executed": True, "success_count": 0,
-                                          "unknown_count": 1, "message": "1 unconfirmed"})
         with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
-             mock.patch.object(agent.requests, "post", return_value=resp):
+             mock.patch.object(agent.requests, "post", side_effect=self._post_echoing_request_id(
+                 200, {"executed": True, "success_count": 0,
+                      "unknown_count": 1, "message": "1 unconfirmed"})):
             with self.assertRaises(agent.IsolationOutcomeUnknown):
                 agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
 
     def test_dispatch_confirmed_success_ignores_a_coexisting_unknown_router(self):
         # At least one router IS confirmed blocked — the overall containment
         # goal is met even if a different router's outcome is unconfirmed.
-        resp = self._fake_response(200, {"executed": True, "success_count": 1,
-                                          "unknown_count": 1, "message": "1 ok, 1 unconfirmed"})
         with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
-             mock.patch.object(agent.requests, "post", return_value=resp):
+             mock.patch.object(agent.requests, "post", side_effect=self._post_echoing_request_id(
+                 200, {"executed": True, "success_count": 1,
+                      "unknown_count": 1, "message": "1 ok, 1 unconfirmed"})):
             ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
         self.assertTrue(ok)
 
@@ -618,18 +677,18 @@ class TenantResolverTests(unittest.TestCase):
         # Distinct from "no routers configured" (tested above): routers exist
         # and dispatch was attempted, but every one confirmed-failed (e.g. bad
         # SSH keys) with none unknown — still a safe, confirmed non-dispatch.
-        resp = self._fake_response(200, {"executed": True, "success_count": 0,
-                                          "unknown_count": 0, "message": "0/2 routers blocked"})
         with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
-             mock.patch.object(agent.requests, "post", return_value=resp):
+             mock.patch.object(agent.requests, "post", side_effect=self._post_echoing_request_id(
+                 200, {"executed": True, "success_count": 0,
+                      "unknown_count": 0, "message": "0/2 routers blocked"})):
             ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
         self.assertFalse(ok)
 
     def test_dispatch_unknown_on_non_integer_counts(self):
-        resp = self._fake_response(200, {"executed": True, "success_count": "not-a-number",
-                                          "unknown_count": 0, "message": "malformed"})
         with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
-             mock.patch.object(agent.requests, "post", return_value=resp):
+             mock.patch.object(agent.requests, "post", side_effect=self._post_echoing_request_id(
+                 200, {"executed": True, "success_count": "not-a-number",
+                      "unknown_count": 0, "message": "malformed"})):
             with self.assertRaises(agent.IsolationOutcomeUnknown):
                 agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
 
@@ -647,6 +706,152 @@ class TenantResolverTests(unittest.TestCase):
             with self.assertRaises(agent.IsolationOutcomeUnknown):
                 agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
 
+    # --- #277: an on-path attacker forging (or blocking/mangling) the broker's
+    # response must never be trusted as a confirmed success or confirmed
+    # failure — only as IsolationOutcomeUnknown, regardless of how convincing
+    # the forged JSON body looks. --------------------------------------------
+    def test_dispatch_unknown_on_forged_success_with_no_signature(self):
+        # The exact attack #277 fixes: a forged {"executed": True, ...} body
+        # with no signature at all must NOT be trusted as a confirmed success.
+        resp = self._fake_response(200, {"executed": True, "success_count": 1,
+                                          "unknown_count": 0, "message": "blocked"}, sign=False)
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_tampering_alerts_mask_the_ip_by_default(self):
+        # #277 round-4: ntfy.sh is a public third-party service — the same
+        # #177/AC-4 masking policy every OTHER send_soc_alert() call in this
+        # file already honors must also apply to the two new alerts this
+        # fix's own tampering-detection paths raise. A round-4 review found
+        # these two call sites were pushing the raw attacker_ip unmasked.
+        resp = self._fake_response(200, {"executed": True, "success_count": 1,
+                                          "unknown_count": 0, "message": "blocked"}, sign=False)
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent, "NOTIFY_INCLUDE_RAW_IOCS", False), \
+             mock.patch.object(agent.requests, "post", return_value=resp), \
+             mock.patch.object(agent, "send_soc_alert") as mock_alert:
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("203.0.113.42", "home-smith")
+        mock_alert.assert_called_once()
+        alert_message = mock_alert.call_args[0][1]
+        self.assertNotIn("203.0.113.42", alert_message)
+        self.assertIn(agent._mask_ip("203.0.113.42"), alert_message)
+
+    def test_dispatch_unknown_on_forged_failure_with_no_signature(self):
+        # The other half of #277's threat model: a forged {"executed": False}
+        # must not be trusted as a confirmed non-dispatch either — the real
+        # dispatch may have already succeeded before the attacker interfered.
+        resp = self._fake_response(200, {"status": "no_routers", "executed": False,
+                                          "message": "No routers configured"}, sign=False)
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_unknown_on_tampered_signature(self):
+        resp = self._fake_response(200, {"executed": True, "success_count": 1,
+                                          "unknown_count": 0, "message": "blocked"},
+                                   tamper_signature=True)
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_unknown_when_signed_with_wrong_secret(self):
+        # A response signed with a DIFFERENT secret than the agent's own
+        # HIVE_MIND_SECRET (e.g. a compromised/misconfigured broker, or an
+        # attacker who somehow holds a different valid-looking secret) must
+        # fail verification exactly like an unsigned response.
+        payload = {"executed": True, "success_count": 1, "unknown_count": 0,
+                  "message": "blocked", "attacker_ip": "1.2.3.4"}
+        body = json.dumps(payload).encode("utf-8")
+        ts = str(int(time.time()))
+        wrong_sig = "sha256=" + hmac.new(
+            b"not-the-real-secret", self._RESPONSE_DOMAIN + f"{ts}.".encode("utf-8") + body,
+            hashlib.sha256).hexdigest()
+        resp = mock.Mock()
+        resp.status_code = 200
+        resp.text = str(payload)
+        resp.json.return_value = payload
+        resp.content = body
+        resp.headers = {"x-elastic-signature": wrong_sig, "x-elastic-timestamp": ts}
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_unknown_on_reflected_own_request_as_fake_response(self):
+        # #277 round-2: the exact reflection attack domain separation exists
+        # to prevent — an on-path attacker captures the agent's OWN genuine
+        # signed REQUEST and returns those SAME bytes back as if they were
+        # the broker's response. Without a domain tag this verifies
+        # successfully (confirmed empirically during the fix) and resolves
+        # to a CONFIRMED non-dispatch (data.get("executed") is absent on a
+        # request body), enabling an unsafe retry. Must be IsolationOutcomeUnknown.
+        request_body = json.dumps({
+            "attacker_ip": "1.2.3.4", "tenant_id": "home-smith",
+            "source_mac": "", "approver": "soc-ai-agent"}).encode("utf-8")
+        ts, sig = agent.sign_request(b"secret", request_body)  # the REQUEST domain (empty)
+        resp = mock.Mock()
+        resp.status_code = 200
+        resp.text = request_body.decode()
+        resp.json.return_value = json.loads(request_body)
+        resp.content = request_body
+        resp.headers = {"x-elastic-signature": sig, "x-elastic-timestamp": ts}
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_unknown_on_replayed_response_for_a_different_request(self):
+        # #277 round-3: a genuine, correctly-signed response for a DIFFERENT
+        # dispatch call — captured earlier, never consumed by the agent so
+        # its signature was never cached, then replayed against THIS call —
+        # must not be accepted as confirming this one. request_id is a fresh
+        # random value per call, so a response carrying any OTHER call's
+        # request_id (even one that's a validly-formatted, genuinely-issued
+        # id from a real earlier dispatch) can never legitimately match.
+        # This is the general case #277 round-2's narrower "different IP
+        # only" version missed: same IP different tenant, or same IP+tenant
+        # replayed later, are both instances of "different request_id."
+        resp = self._fake_response(200, {"executed": True, "success_count": 1,
+                                          "unknown_count": 0, "message": "blocked",
+                                          "request_id": uuid.uuid4().hex})  # a DIFFERENT call's id
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_unknown_on_genuinely_signed_response_missing_request_id(self):
+        # #277 round-4: a correctly-signed 200 response that simply omits
+        # request_id entirely (e.g. an older/mismatched broker deployment,
+        # or a bug on the broker's own echo path) must degrade to UNKNOWN,
+        # not be silently trusted just because the signature checks out —
+        # data.get("request_id") is None here, which can never equal the
+        # real uuid4 hex the agent generated for this call.
+        resp = self._fake_response(200, {"executed": True, "success_count": 1,
+                                          "unknown_count": 0, "message": "blocked"})
+        # _fake_response() only auto-injects attacker_ip, not request_id —
+        # so this body genuinely has no request_id key at all.
+        self.assertNotIn("request_id", resp.json.return_value)
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_confirmed_success_with_genuinely_signed_response(self):
+        # Positive control: a properly-signed response (the default
+        # _fake_response() behavior) still classifies normally — #277's
+        # acceptance criterion that existing signed round-trips are unaffected.
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", side_effect=self._post_echoing_request_id(
+                 200, {"executed": True, "success_count": 1,
+                      "unknown_count": 0, "message": "blocked"})):
+            ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+        self.assertTrue(ok)
+
     # --- #246: an operator misconfiguring the two secrets to be equal must not
     # silently revert the /alert-vs-/approve separation this issue introduced ---
     def test_resolve_approver_secret_rejects_equal_secrets(self):
@@ -661,6 +866,39 @@ class TenantResolverTests(unittest.TestCase):
         # Empty approver secret is the ordinary "not configured" fail-closed case,
         # not the equal-secrets case — must not be compared/misreported as such.
         self.assertEqual(agent._resolve_approver_secret(b"", b"alert_secret"), b"")
+
+    # --- #277 round-2: same misconfiguration class as #246's approver-secret
+    # guard, for HIVE_MIND_SECRET vs the /alert-signing HMAC_SECRET -----------
+    def test_resolve_hive_mind_secret_rejects_equal_secrets(self):
+        same = b"same_value_for_both"
+        self.assertEqual(agent._resolve_hive_mind_secret(same, ("SOC_AGENT_HMAC_SECRET", same)), b"")
+
+    def test_resolve_hive_mind_secret_keeps_distinct_secrets(self):
+        hive, alert = b"hive_secret", b"alert_secret"
+        self.assertEqual(agent._resolve_hive_mind_secret(hive, ("SOC_AGENT_HMAC_SECRET", alert)), hive)
+
+    def test_resolve_hive_mind_secret_leaves_unset_secret_unset(self):
+        self.assertEqual(
+            agent._resolve_hive_mind_secret(b"", ("SOC_AGENT_HMAC_SECRET", b"alert_secret")), b"")
+
+    def test_resolve_hive_mind_secret_rejects_collision_with_approver_secret(self):
+        # #277 round-4: the guard is variadic (checks against every OTHER
+        # agent secret, not just HMAC_SECRET) — this exercises the SECOND
+        # position specifically, the exact case a round-2.5 review flagged
+        # as untested (a collision with APPROVER_HMAC_SECRET, not HMAC_SECRET).
+        hive = b"same_value"
+        self.assertEqual(agent._resolve_hive_mind_secret(
+            hive, ("SOC_AGENT_HMAC_SECRET", b"alert_secret"), ("SOC_APPROVER_HMAC_SECRET", hive)), b"")
+
+    def test_verify_signature_rejects_non_ascii_header_without_raising(self):
+        # #277 round-2: hmac.compare_digest() raises TypeError on a non-ASCII
+        # str signature header — requests/urllib3 decode response headers as
+        # latin-1, so an attacker-controlled response can trigger this. Must
+        # degrade to a clean rejection, never an uncaught exception out of
+        # the isolation path.
+        result = agent.verify_signature(b"body", "sha256=\xe9not-hex", str(int(time.time())),
+                                        secret=b"secret")
+        self.assertFalse(result)
 
     def test_hosted_llm_egress_disabled_degrades_gracefully(self):
         # WS1.1 regression: LLM_ALLOW_HOSTED was referenced but never defined, so

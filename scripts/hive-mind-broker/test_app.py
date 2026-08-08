@@ -152,6 +152,27 @@ def _post_dispatch(payload, sign=True, tamper=False, ts=None):
                        headers=_signed_headers(body, sign, tamper, ts))
 
 
+# #277 round-2: must match app.py's _RESPONSE_DOMAIN / agent.py's
+# BROKER_RESPONSE_DOMAIN exactly, or every response would fail this check.
+_RESPONSE_DOMAIN = b"broker-response:"
+
+
+def _response_signature_valid(r) -> bool:
+    """#277: verify a /webhook/dispatch response's own x-elastic-signature the
+    same way agent.py's dispatch_block_via_broker() does — against the exact
+    response body bytes and the SAME HMAC_SECRET the request was signed with,
+    domain-separated so this check can't be satisfied by a reflected request
+    signature."""
+    sig = r.headers.get("x-elastic-signature")
+    ts = r.headers.get("x-elastic-timestamp")
+    if not sig or not ts:
+        return False
+    expected = "sha256=" + hmac.new(
+        HMAC_SECRET, _RESPONSE_DOMAIN + f"{ts}.".encode("utf-8") + r.content,
+        hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, sig)
+
+
 # --- #109: /webhook/dispatch — immediate, pre-approved block -------------------
 def test_dispatch_missing_signature():
     assert client.post("/webhook/dispatch", json={"attacker_ip": "9.9.9.9"}).status_code == 401
@@ -175,6 +196,9 @@ def test_dispatch_executes_to_tenant_routers(_no_real_ssh):
     assert routers_arg and all(rt.get("tenant") == TENANT for rt in routers_arg)
     # Recorded as executed (not left pending).
     assert _get_pending().json()["count"] == 0
+    # #277: dispatch_block_via_broker() trusts this response's executed/
+    # success_count fields only if it's genuinely signed by this broker.
+    assert _response_signature_valid(r)
 
 
 def test_dispatch_excluded_ip_refused(_no_real_ssh):
@@ -183,6 +207,7 @@ def test_dispatch_excluded_ip_refused(_no_real_ssh):
     assert r.json()["executed"] is False
     assert "exclusion list" in r.json()["message"].lower()
     _no_real_ssh.assert_not_awaited()
+    assert _response_signature_valid(r)  # #277: the "confirmed non-dispatch" path too
 
 
 # --- audit #164: attacker_ip must be a valid IP before it reaches nft/SSH ------
@@ -212,6 +237,58 @@ def test_dispatch_unknown_tenant_is_no_op(_no_real_ssh):
     assert r.json()["executed"] is False
     assert "no routers" in r.json()["message"].lower()
     _no_real_ssh.assert_not_awaited()
+    assert _response_signature_valid(r)
+
+
+# --- #277: /webhook/dispatch's response must carry a valid HIVE_MIND_SECRET
+# signature — an unsigned or wrongly-signed response is exactly what an
+# on-path attacker forging {"executed": true} (or a fake failure) would send,
+# and dispatch_block_via_broker() must never trust either without one. -------
+def test_dispatch_response_signature_changes_per_request(_no_real_ssh):
+    # Two different, real dispatch responses must not share a signature —
+    # confirms the signature is actually derived from THIS response's body/
+    # timestamp, not a static or cached value.
+    r1 = _post_dispatch({"attacker_ip": "9.9.9.9", "tenant_id": TENANT})
+    r2 = _post_dispatch({"attacker_ip": "8.8.8.8", "tenant_id": TENANT})
+    assert r1.headers["x-elastic-signature"] != r2.headers["x-elastic-signature"]
+
+
+# --- #277 round-3: the response must echo request_id — the actual field
+# dispatch_block_via_broker() binds a response to its request with (attacker_ip
+# is included too, but only for observability; request_id is the real check).
+# Without a test asserting this, deleting the echo from any branch would
+# break production containment (every response becomes request_id=None,
+# permanently mismatching) while every OTHER test stays green, since the
+# agent-side tests auto-inject whatever request_id the mock needs. ----------
+def test_dispatch_executed_response_echoes_request_id(_no_real_ssh):
+    r = _post_dispatch({"attacker_ip": "9.9.9.9", "tenant_id": TENANT, "request_id": "abc123"})
+    assert r.json()["request_id"] == "abc123"
+
+
+def test_dispatch_excluded_response_echoes_request_id(_no_real_ssh):
+    r = _post_dispatch({"attacker_ip": EXCLUDED_IP, "tenant_id": TENANT, "request_id": "abc123"})
+    assert r.json()["request_id"] == "abc123"
+
+
+def test_dispatch_no_routers_response_echoes_request_id(_no_real_ssh):
+    r = _post_dispatch({"attacker_ip": "9.9.9.9", "tenant_id": "ghost-tenant", "request_id": "abc123"})
+    assert r.json()["request_id"] == "abc123"
+
+
+def test_dispatch_response_signature_is_wrong_against_a_different_secret(_no_real_ssh):
+    # An attacker without the real HIVE_MIND_SECRET cannot produce a
+    # signature that verifies against it — the actual security property
+    # this fix depends on, not just "a header is present."
+    r = _post_dispatch({"attacker_ip": "9.9.9.9", "tenant_id": TENANT})
+    forged_secret = b"attacker-does-not-have-the-real-secret"
+    sig = r.headers["x-elastic-signature"]
+    ts = r.headers["x-elastic-timestamp"]
+    # Same domain prefix as the real signature — isolates "wrong secret" as
+    # the only difference, not domain too.
+    forged_expected = "sha256=" + hmac.new(
+        forged_secret, _RESPONSE_DOMAIN + f"{ts}.".encode("utf-8") + r.content,
+        hashlib.sha256).hexdigest()
+    assert sig != forged_expected
 
 
 def test_approve_dispatches_only_to_tenant_routers(_no_real_ssh):

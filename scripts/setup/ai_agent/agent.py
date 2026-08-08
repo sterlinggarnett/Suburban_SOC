@@ -20,6 +20,7 @@ import os
 import re
 import json
 import time
+import uuid
 import hmac
 import hashlib
 import ipaddress
@@ -154,6 +155,13 @@ HMAC_TS_HEADER     = "x-elastic-timestamp"
 HMAC_SECRET        = os.environ.get("SOC_AGENT_HMAC_SECRET", "").encode("utf-8")
 HMAC_REPLAY_WINDOW = int(os.environ.get("HMAC_REPLAY_WINDOW", "300"))  # seconds
 
+# #277: domain tag for verifying the broker's /webhook/dispatch RESPONSE —
+# see _signed_payload()'s docstring for why request/response signatures must
+# not be cryptographically interchangeable. Mirrored independently in
+# scripts/hive-mind-broker/app.py's sign_response() (no shared Python path
+# between the two separately-deployed services).
+BROKER_RESPONSE_DOMAIN = b"broker-response:"
+
 # #246: /approve executes a real isolation action and /pending discloses the
 # drafted-action queue — a materially higher-privilege operation than /alert
 # (Logstash's untrusted-input intake). Logstash holds HMAC_SECRET so it can sign
@@ -182,6 +190,43 @@ def _resolve_approver_secret(approver_secret: bytes, alert_secret: bytes) -> byt
 
 APPROVER_HMAC_SECRET = _resolve_approver_secret(
     os.environ.get("SOC_APPROVER_HMAC_SECRET", "").encode("utf-8"), HMAC_SECRET)
+
+
+def _resolve_hive_mind_secret(hive_secret: bytes, *other_secrets: tuple[str, bytes]) -> bytes:
+    """#277 round-2/3/4 security-auditor review: same class of misconfiguration
+    _resolve_approver_secret() already guards against, generalized to every
+    OTHER secret this codebase provisions to the agent container, not just
+    HMAC_SECRET. HIVE_MIND_SECRET now authenticates the broker's dispatch
+    RESPONSE (not just the agent's outbound request) — an operator who sets
+    it equal to HMAC_SECRET (Logstash-held, a much larger attack surface
+    than the broker) would let anyone who can sign /alert also mint a
+    trusted-looking broker response; equal to APPROVER_HMAC_SECRET would let
+    a signed /approve or /pending request be reflected as one too (domain
+    separation independently blocks the reflection either way, but this
+    guard exists so cross-channel secret reuse is caught generally, matching
+    why _resolve_approver_secret checks this class of mistake at all). Fail
+    closed rather than serve a guarantee that's void:
+    dispatch_block_via_broker()'s existing `if not HIVE_MIND_SECRET` check
+    already refuses to dispatch on an empty secret, so returning b"" here
+    reuses that path with no new code needed there.
+
+    `other_secrets` is (name, value) pairs, not bare bytes — round-4 review:
+    with two candidates to collide against, a log line that just says
+    "equals another agent secret" makes an operator guess which one."""
+    for name, other in other_secrets:
+        if hive_secret and other and hmac.compare_digest(hive_secret, other):
+            logger.critical(
+                "HIVE_MIND_SECRET equals %s — the #277 broker response "
+                "authentication is void (anyone who can sign that other "
+                "channel could forge a trusted broker response). Refusing to "
+                "honor it: broker dispatch will fail closed until every secret "
+                "is set to a distinct value.", name)
+            return b""
+    return hive_secret
+
+
+HIVE_MIND_SECRET = _resolve_hive_mind_secret(
+    HIVE_MIND_SECRET, ("SOC_AGENT_HMAC_SECRET", HMAC_SECRET), ("SOC_APPROVER_HMAC_SECRET", APPROVER_HMAC_SECRET))
 # The identity recorded as "approver" of record. A shared-secret HMAC scheme
 # cannot cryptographically distinguish which human holds APPROVER_HMAC_SECRET,
 # but it CAN prove *someone* holding it authenticated the request — so the
@@ -192,6 +237,12 @@ APPROVER_HMAC_SECRET = _resolve_approver_secret(
 APPROVER_IDENTITY = os.environ.get("SOC_APPROVER_IDENTITY") or "soc-analyst"
 
 # Replay/nonce cache: signature -> expiry epoch. Bounded by the window (pruned on use).
+# Shared across every signed direction this process verifies — inbound
+# /alert, /approve, /pending requests AND (since #277) the broker's outbound
+# dispatch RESPONSE. Safe: domain separation plus HMAC's output space make a
+# cross-direction signature collision non-existent in practice, and a raw
+# signature string colliding across independent secrets is cryptographically
+# negligible (see verify_signature()'s own comment on this same point).
 _seen_sigs: dict[str, int] = {}
 _seen_sigs_lock = threading.Lock()
 
@@ -205,9 +256,27 @@ _MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$")
 _TECHNIQUE_RE = re.compile(r"^T\d{4}(\.\d{3})?$")
 
 
-def _signed_payload(timestamp: str, raw_body: bytes) -> bytes:
-    """The exact bytes both sides HMAC: '<timestamp>.' + raw_body."""
-    return f"{timestamp}.".encode("utf-8") + raw_body
+def _signed_payload(timestamp: str, raw_body: bytes, domain: bytes = b"") -> bytes:
+    """The exact bytes both sides HMAC: <domain> + '<timestamp>.' + raw_body.
+
+    `domain` defaults to empty (every pre-#277 request-signing caller: /alert,
+    /approve, /pending, the agent's own outbound broker request) so nothing
+    about the existing wire format changes for them. #277's broker-RESPONSE
+    verification passes a non-empty domain (BROKER_RESPONSE_DOMAIN below) —
+    without this, a captured genuine signed REQUEST (agent -> broker) and a
+    genuine signed RESPONSE (broker -> agent) are cryptographically
+    indistinguishable (same secret, same header names, same construction),
+    so an on-path attacker could reflect the agent's OWN signed request back
+    as if it were the broker's response. Confirmed empirically: without a
+    domain tag, verify_signature() on the reflected bytes returns True. The
+    reflected request has no `executed`/`success_count` keys, so it resolves
+    to a CONFIRMED non-dispatch (ok=False) rather than a confirmed success —
+    but a confirmed non-dispatch is exactly the "safe to retry" signal that
+    enables a double-dispatch if the real request had, in fact, already
+    succeeded before the attacker interfered. Domain-separating the two
+    directions makes this reflection cryptographically impossible rather
+    than relying on the two message shapes never accidentally overlapping."""
+    return domain + f"{timestamp}.".encode("utf-8") + raw_body
 
 
 def _nonce_is_fresh(signature: str, now: int) -> bool:
@@ -233,14 +302,18 @@ def sign_request(secret: bytes, raw_body: bytes, timestamp: str | None = None):
 def verify_signature(raw_body: bytes, signature_header: str | None,
                      timestamp_header: str | None = None,
                      secret: bytes = HMAC_SECRET,
-                     hmac_env_var: str = "SOC_AGENT_HMAC_SECRET") -> bool:
+                     hmac_env_var: str = "SOC_AGENT_HMAC_SECRET",
+                     domain: bytes = b"") -> bool:
     """Constant-time HMAC verification with timestamp-freshness + replay protection.
 
-    Verifies sha256=HMAC(secret, '<timestamp>.' + raw_body), requires the timestamp
-    within +/- HMAC_REPLAY_WINDOW of now, and refuses a previously-seen signature.
-    `secret` defaults to HMAC_SECRET (/alert's, Logstash-held); callers gating a
-    different-trust-level endpoint (e.g. /approve) pass APPROVER_HMAC_SECRET (and
-    its name, for the log line below) instead — see _require_signature().
+    Verifies sha256=HMAC(secret, domain + '<timestamp>.' + raw_body), requires the
+    timestamp within +/- HMAC_REPLAY_WINDOW of now, and refuses a previously-seen
+    signature. `secret` defaults to HMAC_SECRET (/alert's, Logstash-held); callers
+    gating a different-trust-level endpoint (e.g. /approve) pass APPROVER_HMAC_SECRET
+    (and its name, for the log line below) instead — see _require_signature().
+    `domain` defaults to empty for request verification (unchanged wire format);
+    #277's broker-response verification passes BROKER_RESPONSE_DOMAIN — see
+    _signed_payload()'s docstring for why this is load-bearing, not decorative.
     """
     if not secret:
         logger.critical("%s is not set — refusing all signed requests.", hmac_env_var)
@@ -255,8 +328,20 @@ def verify_signature(raw_body: bytes, signature_header: str | None,
     if abs(now - ts) > HMAC_REPLAY_WINDOW:
         logger.warning("Rejected request: timestamp outside the +/-%ss replay window.", HMAC_REPLAY_WINDOW)
         return False
-    expected = "sha256=" + hmac.new(secret, _signed_payload(timestamp_header, raw_body), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, signature_header):
+    expected = "sha256=" + hmac.new(
+        secret, _signed_payload(timestamp_header, raw_body, domain), hashlib.sha256).hexdigest()
+    try:
+        matches = hmac.compare_digest(expected, signature_header)
+    except TypeError:
+        # compare_digest raises on a non-ASCII str (requests/urllib3 decode header
+        # values as latin-1, so an attacker-supplied header can contain one) — an
+        # attacker-controlled response header must never be able to raise an
+        # uncaught exception out of the isolation path (#277 round-2 security-
+        # auditor review: this was reachable from the new response-verification
+        # call site with no guard anywhere above it in dispatch_block_via_broker()).
+        logger.warning("Rejected request: malformed signature header.")
+        return False
+    if not matches:
         return False
     # Consult/record the nonce cache only AFTER the signature is proven valid, so an
     # attacker cannot poison it with forged signatures. The nonce cache is shared
@@ -350,14 +435,49 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
     when the outcome is CONFIRMED (either way); raises IsolationOutcomeUnknown when
     it genuinely isn't (see that class's docstring) — #247 callers must handle the
     two cases differently, not collapse them into one.
+
+    #277: the broker's response is ALSO required to carry a valid, domain-
+    separated HIVE_MIND_SECRET signature AND echo the exact request_id this
+    call generated before its executed/success_count/unknown_count fields
+    are trusted for a 200-status response. Domain separation
+    (BROKER_RESPONSE_DOMAIN) stops the agent's own signed REQUEST from
+    verifying as a fake response (reflection); the request_id check stops a
+    captured genuine response from a DIFFERENT dispatch call — same IP,
+    different tenant; same IP and tenant, different time; anything — from
+    being replayed for this one, since the signature alone only proves "the
+    broker signed this," not "in answer to this specific call." An earlier
+    draft bound only on attacker_ip, which a round-2 security-auditor review
+    found missed the different-tenant and different-time cases; request_id's
+    per-call uniqueness (a fresh random value, not a value that can
+    legitimately repeat across calls) closes all of them at once. Both gaps
+    were real, empirically-confirmed, not theoretical hardening. A non-200
+    response's status code alone still determines the outcome without a
+    body-signature check (see #308 for that narrower, separate, deliberately
+    deferred residual risk — #277's own acceptance criteria are met for the
+    200-status/executed-field trust decision this function makes; #308 is
+    the tracked follow-up for authenticating the error-status paths too).
     """
     if not HIVE_MIND_SECRET:
         return False, "HIVE_MIND_SECRET unset — refusing to dispatch (broker unreachable/unsigned)"
+    # #277 round-3: a random per-call id, echoed back inside the broker's
+    # SIGNED response body and checked below before trusting it. A valid
+    # signature only proves "the broker signed this," not "in answer to
+    # THIS specific call" — without a nonce, a genuine signed response
+    # captured from an earlier dispatch (for the same IP, a different
+    # tenant, or simply an earlier point in time) could be replayed against
+    # a later, different dispatch within the timestamp-freshness window and
+    # accepted as confirming it. Checking attacker_ip alone (an earlier
+    # draft of this fix) closed the different-IP case but missed same-IP
+    # cross-tenant replay and same-IP same-tenant replay-across-time —
+    # both closed by binding to this unique id instead of a value that can
+    # coincidentally repeat.
+    request_id = uuid.uuid4().hex
     body = json.dumps({
         "attacker_ip": attacker_ip,
         "tenant_id":   tenant,
         "source_mac":  source_mac,
         "approver":    "soc-ai-agent",
+        "request_id":  request_id,
     }).encode("utf-8")
     ts, sig = sign_request(HIVE_MIND_SECRET, body)  # replay-protected (audit P1-1)
     try:
@@ -387,6 +507,19 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
             detail = data.get("message", detail)
     except Exception:
         pass
+    # #277 round-3: every status code EXCEPT the verified-200 path below
+    # reaches a human (case comment) or a durable record (audit row, ntfy)
+    # via this function's return value / raised exception message WITHOUT
+    # ever having its signature checked — #308 tracks fully closing that
+    # (signing the broker's HTTPException-driven 4xx/5xx too). Until then,
+    # the body-derived `detail` text itself must not be forwarded verbatim:
+    # an attacker forging any non-200 (or a malformed 200) can otherwise
+    # inject arbitrary analyst-facing text with no signature needed at all.
+    # A digest preserves forensic correlation value without the injection
+    # channel (round-2 security-auditor review flagged this as incomplete
+    # when only the NEW verified-response-failure paths below were sanitized).
+    body_digest = hashlib.sha256(resp.content).hexdigest()[:16]
+    unverified_detail = f"unverified broker response, body_sha256={body_digest}"
 
     # #247 security-auditor review: a broker-side failure is not automatically
     # a CONFIRMED non-dispatch — the broker's dispatcher already distinguishes
@@ -403,18 +536,96 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
     # the broker's own 503 for "HMAC secret not configured" fires before any
     # dispatch attempt is even possible) — is a confirmed non-dispatch.
     if resp.status_code in (500, 504):
-        logger.error("broker dispatch outcome UNKNOWN (broker returned HTTP %s): %s",
-                    resp.status_code, detail)
+        logger.error("broker dispatch outcome UNKNOWN (broker returned HTTP %s, body_sha256=%s)",
+                    resp.status_code, body_digest)
         raise IsolationOutcomeUnknown(
-            f"broker returned HTTP {resp.status_code} — outcome unknown: {detail}")
+            f"broker returned HTTP {resp.status_code} — outcome unknown: {unverified_detail}")
     if resp.status_code != 200:
-        return False, detail
+        # #277 round-4: this response's body is unverified (see unverified_detail's
+        # own comment) so it must never reach an analyst-facing surface raw — but
+        # a container's own stdout log is not that surface, and losing the broker's
+        # actual error text here (e.g. a genuine misconfigured-secret 401) cost
+        # real debugging time in round-4 review. %r escapes newlines/control
+        # characters, so this can't be abused as a log-injection channel either.
+        logger.warning("broker dispatch confirmed non-dispatch: HTTP %s body=%r",
+                       resp.status_code, resp.content[:200])
+        return False, unverified_detail
     if not data:
         # A 200 with an unparseable/non-object body shouldn't happen in practice
         # (the handler always returns a well-formed JSON object) — if it somehow
         # does, don't assume it's a confirmed non-dispatch either.
-        logger.error("broker dispatch outcome UNKNOWN (unparseable 200 response): %s", detail)
-        raise IsolationOutcomeUnknown(f"unparseable broker response — outcome unknown: {detail}")
+        logger.error("broker dispatch outcome UNKNOWN (unparseable 200 response, body_sha256=%s)",
+                    body_digest)
+        raise IsolationOutcomeUnknown(f"unparseable broker response — outcome unknown: {unverified_detail}")
+
+    # #277: the broker's /webhook/dispatch response was previously unauthenticated
+    # — an on-path attacker (or DNS control over the broker hostname) could forge
+    # {"executed": true} to falsely close a case/resolve a claim, or forge
+    # {"executed": false} to trigger an unsafe "confirmed non-dispatch" retry.
+    # verify_signature() reuses the SAME shared HIVE_MIND_SECRET the request was
+    # signed with (the broker's _signed_json_response() signs its response the
+    # same way), domain-separated (BROKER_RESPONSE_DOMAIN) so the agent's OWN
+    # signed request can never verify as a valid response (round-2 security-
+    # auditor review: without this, reflecting the agent's own request back
+    # verifies successfully and resolves to a confirmed non-dispatch, since
+    # `data.get("executed")` is absent/falsy on a reflected request body — a
+    # confirmed non-dispatch is exactly the "safe to retry" signal that
+    # enables a double-dispatch if the real request had already succeeded).
+    # A missing or invalid response signature is NEVER treated as a confirmed
+    # answer either way. body_digest (computed above, before this response
+    # body was known to be genuine) is used in place of the raw body in every
+    # log/audit/alert here — see its own comment for why.
+    # #277 round-4 security-auditor review: ntfy.sh is a public third-party
+    # service (same masking policy #177/AC-4 already enforces for every
+    # other send_soc_alert() call in this file, e.g. notify_ip below) — the
+    # raw attacker_ip must not appear in either alert body below. write_audit()
+    # calls keep the raw IP (ES's soc-audit-* index, an internal system, is
+    # not the public-disclosure boundary this policy is about).
+    notify_ip = attacker_ip if NOTIFY_INCLUDE_RAW_IOCS else _mask_ip(attacker_ip)
+    if not verify_signature(resp.content, resp.headers.get(HMAC_HEADER),
+                            resp.headers.get(HMAC_TS_HEADER),
+                            secret=HIVE_MIND_SECRET, hmac_env_var="HIVE_MIND_SECRET",
+                            domain=BROKER_RESPONSE_DOMAIN):
+        logger.error("broker dispatch outcome UNKNOWN (response signature missing/invalid, "
+                    "body_sha256=%s)", body_digest)
+        write_audit("broker_response_signature_invalid", "soc-ai-agent", tenant,
+                   outcome="unknown", target=attacker_ip, detail=f"body_sha256={body_digest}")
+        send_soc_alert("Broker response signature invalid",
+                      f"A /webhook/dispatch response for {notify_ip} (tenant '{tenant}') "
+                      f"failed HMAC verification — possible on-path tampering. "
+                      f"Isolation outcome is UNKNOWN; the approval claim is left stuck for "
+                      f"manual reconciliation, not retried. body_sha256={body_digest}",
+                      priority=5, tenant=tenant)
+        raise IsolationOutcomeUnknown(
+            f"broker response signature missing or invalid — outcome unknown (body_sha256={body_digest})")
+
+    # #277 round-3: the signature alone proves "signed by this broker," not
+    # "in answer to THIS request" — nothing in the signed bytes ties a
+    # response to a specific dispatch call. An earlier draft of this fix
+    # checked only the broker's echoed attacker_ip, which closed a
+    # different-IP replay but missed two related cases a round-2 security-
+    # auditor review found: (a) the same IP dispatched for a DIFFERENT
+    # tenant (a shared botnet/scanner IP hitting two subscribers is routine,
+    # not exotic), and (b) the same IP re-dispatched later, within the
+    # timestamp-freshness window. Binding to request_id — a fresh random
+    # value generated per call, above, that the broker can only echo
+    # correctly by having genuinely parsed THIS exact request — closes all
+    # three: it's unique per call regardless of IP, tenant, or timing, so
+    # there is no legitimate way for two different dispatch calls to ever
+    # expect the same value.
+    if data.get("request_id") != request_id:
+        logger.error("broker dispatch outcome UNKNOWN (response request_id mismatch, "
+                    "body_sha256=%s)", body_digest)
+        write_audit("broker_response_request_id_mismatch", "soc-ai-agent", tenant,
+                   outcome="unknown", target=attacker_ip, detail=f"body_sha256={body_digest}")
+        send_soc_alert("Broker response request_id mismatch",
+                      f"A /webhook/dispatch response for {notify_ip} (tenant '{tenant}') did not "
+                      f"echo the request_id this specific dispatch sent — possible replay of a "
+                      f"captured earlier response. Isolation outcome is UNKNOWN.",
+                      priority=5, tenant=tenant)
+        raise IsolationOutcomeUnknown(
+            f"broker response request_id does not match this dispatch — outcome unknown "
+            f"(body_sha256={body_digest})")
 
     try:
         success_count = int(data.get("success_count", 0))

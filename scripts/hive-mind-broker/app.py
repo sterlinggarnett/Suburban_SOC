@@ -11,6 +11,7 @@ SSH via dispatcher.py.
 """
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse
 import uvicorn
 import hmac
 import hashlib
@@ -300,6 +301,83 @@ async def _verify_and_parse(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
 
+
+# #277 round-2 security-auditor review: request and response signing MUST NOT
+# share the same signed-bytes construction. Both directions use the same
+# HIVE_MIND_SECRET and the same header names, so with no distinguishing tag
+# the agent's own genuine signed REQUEST verifies successfully if replayed
+# back to it as if it were the broker's RESPONSE (confirmed empirically) —
+# an on-path attacker doesn't need to forge anything, just reflect. Mirrored
+# independently in agent.py's BROKER_RESPONSE_DOMAIN (no shared Python path
+# between the two separately-deployed services); the two constants' VALUES
+# must match, their names don't need to.
+_RESPONSE_DOMAIN = b"broker-response:"
+
+
+def _signed_json_response(payload: dict) -> JSONResponse:
+    """#277: sign the response body the same way _verify() checks a request's
+    (sha256=HMAC(secret, '<timestamp>.' + raw_body)), so a caller that trusts
+    this response (agent.py's dispatch_block_via_broker()) can prove it
+    actually came from THIS broker holding HIVE_MIND_SECRET, not an on-path
+    attacker who forged {"executed": true} or a fake failure to force an
+    unsafe retry / a falsely-closed case. Signs response.body (the exact
+    rendered bytes JSONResponse will send), not a re-serialization of
+    `payload` — Starlette's JSON encoding is deterministic for a given dict,
+    but signing the ACTUAL bytes closes off any theoretical drift between
+    what's signed and what's sent, matching how _verify() signs the exact
+    raw request body rather than a re-parsed/re-serialized copy of it.
+
+    Scoped to /webhook/dispatch's own 200-status responses only (the ones
+    dispatch_block_via_broker() makes a trust decision from) — not every
+    endpoint, and not this endpoint's own HTTPException-driven 4xx/5xx
+    error responses (raised before this helper is ever reached, e.g. by
+    _verify()/_verify_and_parse() or dispatch_block()'s own validation).
+    Those already can't cause dispatch_block_via_broker() to trust a
+    forged CONFIRMED-success outcome (no 200, no executed/success_count
+    fields to trust) — see #308 for the narrower, separate residual risk
+    of a forged 4xx forcing an unsafe "confirmed non-dispatch" retry.
+
+    `payload` is expected to carry "attacker_ip" and "request_id" (dispatch_block()
+    always includes both) — the agent checks request_id against the fresh
+    random value it generated for THIS specific call, since the signature
+    alone only proves "the broker signed this," not "in answer to this
+    specific request." attacker_ip is included too, for observability, but
+    is NOT the binding mechanism (round-2 security-auditor review: checking
+    only attacker_ip missed a captured response being replayed against a
+    dispatch for the same IP under a DIFFERENT tenant, or the same IP
+    re-dispatched later — request_id's per-call uniqueness closes both).
+    """
+    response = JSONResponse(content=payload)
+    ts, sig = sign_response(bytes(response.body))
+    response.headers["x-elastic-signature"] = sig
+    response.headers["x-elastic-timestamp"] = ts
+    # #277 round-4: the agent logs a body_sha256 digest instead of this
+    # response's raw (unverified-until-checked) text on any failure path —
+    # logged here too, so that digest is actually correlatable against the
+    # broker's own logs rather than an orphaned value only the agent has.
+    logger.info("Signed /webhook/dispatch response for request_id=%s, body_sha256=%s",
+               payload.get("request_id"), hashlib.sha256(response.body).hexdigest()[:16])
+    return response
+
+
+def sign_response(body: bytes) -> tuple[str, str]:
+    """(timestamp, 'sha256=<hmac>') for a broker-originated response — same
+    scheme _verify() checks incoming requests with (sha256=HMAC(secret,
+    '<timestamp>.' + raw_body)), reused bidirectionally per #277's own
+    suggested fix rather than provisioning a second secret for this one
+    channel, but domain-separated via _RESPONSE_DOMAIN (round-2 review — see
+    that constant's comment) so a request signature can never pass as a
+    response signature or vice versa. Independently reimplemented here rather
+    than imported from agent.py — the two services are separately deployed
+    containers with no shared Python path, matching how _verify() already
+    reimplements agent.py's sign_request()/verify_signature() scheme rather
+    than importing it."""
+    ts = str(int(time.time()))
+    sig = "sha256=" + hmac.new(
+        HMAC_SECRET, _RESPONSE_DOMAIN + f"{ts}.".encode("utf-8") + body, hashlib.sha256).hexdigest()
+    return ts, sig
+
+
 @app.post("/webhook/alert")
 async def receive_alert(request: Request, background_tasks: BackgroundTasks):
     """
@@ -380,6 +458,15 @@ async def dispatch_block(request: Request):
         validate_ip(attacker_ip)
     except ValueError:
         raise HTTPException(status_code=400, detail="attacker_ip is not a valid IP address")
+    # #277 round-3: echoed into every response below so dispatch_block_via_
+    # broker() can bind a response to the exact request that produced it —
+    # a valid signature alone only proves "the broker signed this," not
+    # "in answer to this specific call" (round-2 security-auditor review:
+    # checking attacker_ip alone missed same-IP-different-tenant and
+    # same-IP-different-time replay of a captured earlier response). Falls
+    # back to None if an older/different caller doesn't send one, which the
+    # agent's mismatch check already treats as unsafe-to-trust, not a crash.
+    request_id = payload.get("request_id")
     # #273: identity of record comes from the authenticated credential's
     # configured label; the body's "approver" is retained only as a claim
     # (computed below, past the early returns — neither writes an audit row).
@@ -388,16 +475,20 @@ async def dispatch_block(request: Request):
     # §12.4: refuse protected infrastructure, signed or not.
     if is_excluded_ip(attacker_ip):
         logger.warning("REFUSED dispatch: %s is on the exclusion list.", attacker_ip)
-        return {"status": "refused", "executed": False,
-                "message": f"IP {attacker_ip} is on the exclusion list — no block dispatched."}
+        return _signed_json_response({
+            "status": "refused", "executed": False, "attacker_ip": attacker_ip,
+            "request_id": request_id,
+            "message": f"IP {attacker_ip} is on the exclusion list — no block dispatched."})
 
     # WS0.3: only this tenant's routers are ever touched; unknown tenant => no-op.
     tenant = safe_tenant(payload.get("tenant_id"))
     routers = inv.get_routers_for_tenant(tenant)
     if not routers:
         logger.warning("No routers for tenant '%s' — refusing to dispatch %s.", tenant, attacker_ip)
-        return {"status": "no_routers", "executed": False,
-                "message": f"No routers configured for tenant '{tenant}' — nothing to block."}
+        return _signed_json_response({
+            "status": "no_routers", "executed": False, "attacker_ip": attacker_ip,
+            "request_id": request_id,
+            "message": f"No routers configured for tenant '{tenant}' — nothing to block."})
 
     count, unknown_count = await dispatch_block_to_all(routers, attacker_ip)
     _append_action(_with_claim({
@@ -411,11 +502,13 @@ async def dispatch_block(request: Request):
     # success_count, never folded into it — a caller (agent.py's
     # dispatch_block_via_broker) that treated an unconfirmed router the same as
     # a confirmed failure would risk a real double-dispatch on retry.
-    return {"status": "executed", "executed": True, "tenant": tenant,
-            "router_count": len(routers), "success_count": count,
-            "unknown_count": unknown_count,
-            "message": f"IP {attacker_ip} blocked on {count}/{len(routers)} "
-                       f"router(s) for tenant '{tenant}' ({unknown_count} unknown)."}
+    return _signed_json_response({
+        "status": "executed", "executed": True, "tenant": tenant, "attacker_ip": attacker_ip,
+        "request_id": request_id,
+        "router_count": len(routers), "success_count": count,
+        "unknown_count": unknown_count,
+        "message": f"IP {attacker_ip} blocked on {count}/{len(routers)} "
+                   f"router(s) for tenant '{tenant}' ({unknown_count} unknown)."})
 
 
 @app.get("/pending")

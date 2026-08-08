@@ -1,0 +1,47 @@
+title: Sudo Command Execution Logged
+id: 27bd2127-4ad7-4ebe-8c9f-a0f8907c8862
+status: experimental
+description: |
+    Detects a sudo command invocation recorded in Linux auth.log — sudo's
+    own logging format includes a literal `COMMAND=` field for every
+    invocation, so requiring both the `sudo` and `command` tokens
+    co-occurring is a reasonable proxy for "a sudo command ran" without
+    needing new log parsing.
+    Uses two bare-equality (no modifier) selectors on `message`, ANDed,
+    rather than one `contains` value spanning both words — see
+    auth_linux_ssh_authorized_keys_change.yml's description for why a
+    `contains`/wildcard match against this stack's `text`-mapped `message`
+    field is unsafe, and why bare equality against a single token is the
+    safe alternative. Splitting into two single-token selectors (rather
+    than one two-word bare-equality value) avoids relying on how
+    Elasticsearch's query_string parser would combine an unquoted
+    multi-token term internally, which isn't something this repo could
+    verify without a real cluster.
+    Deliberately broad, not narrowed to specific commands: this flags every
+    logged sudo invocation, not just suspicious ones. Baselining routine
+    sudo usage per host/account and tuning from there is expected — this is
+    intended as the visibility layer other, more targeted rules (like
+    auth_linux_ssh_authorized_keys_change.yml) build on, not a standalone
+    high-confidence alert.
+references:
+    - https://attack.mitre.org/techniques/T1548/003/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.privilege_escalation
+    - attack.t1548.003
+logsource:
+    product: linux
+    service: auth
+detection:
+    selection:
+        event.module: 'system'
+    selection_sudo:
+        message: 'sudo'
+    selection_command:
+        message: 'command'
+    condition: selection and selection_sudo and selection_command
+falsepositives:
+    - Routine, expected administrative sudo usage — this rule is deliberately broad (see description); tune with an allowlist of expected accounts/commands per host rather than treating every hit as an incident.
+    - MUST NOT be promoted past status:experimental without a paired rules/elastic/threshold/*.ndjson companion, or without narrowing selection_command to specific commands of interest (security-auditor review): as written, this fires on literally every logged sudo invocation on every monitored host, which is not operable as a per-document alert at any realistic fleet size.
+level: low

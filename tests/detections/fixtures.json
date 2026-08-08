@@ -1572,6 +1572,94 @@
       }
     ]
   },
+  "auth_linux_ssh_root_login.yml": {
+    "true_positive": {
+      "event.module": "system",
+      "user.name": "root",
+      "event.outcome": "success"
+    },
+    "true_negatives": [
+      {
+        "event.module": "system",
+        "user.name": "alice",
+        "event.outcome": "success"
+      },
+      {
+        "event.module": "system",
+        "user.name": "root",
+        "event.outcome": "failure"
+      },
+      {
+        "event.module": "windows",
+        "user.name": "root",
+        "event.outcome": "success"
+      }
+    ]
+  },
+  "auth_linux_ssh_authorized_keys_change.yml": {
+    "true_positive": {
+      "event.module": "system",
+      "message": "sudo:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/vim /home/alice/.ssh/authorized_keys"
+    },
+    "true_negatives": [
+      {
+        "event.module": "system",
+        "message": "sudo:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/bin/bash"
+      },
+      {
+        "event.module": "windows",
+        "message": "authorized_keys mentioned here too"
+      }
+    ]
+  },
+  "auth_linux_sudo_privilege_escalation.yml": {
+    "true_positive": {
+      "event.module": "system",
+      "message": "sudo:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/bin/bash"
+    },
+    "true_negatives": [
+      {
+        "event.module": "system",
+        "message": "su: pam_unix(su:session): session opened for user root by alice(uid=1000)"
+      },
+      {
+        "event.module": "system",
+        "message": "sudo: pam_unix(sudo:session): session opened for user alice"
+      }
+    ]
+  },
+  "auth_linux_invalid_user_ssh_attempt.yml": {
+    "true_positive": {
+      "event.module": "system",
+      "message": "sshd[1234]: Invalid user bob from 203.0.113.5"
+    },
+    "true_negatives": [
+      {
+        "event.module": "system",
+        "message": "sshd[1234]: Failed password for alice from 203.0.113.5 port 22 ssh2"
+      },
+      {
+        "event.module": "system",
+        "message": "sshd[1234]: pam_unix(sshd:session): session opened for user alice by (uid=0)"
+      }
+    ]
+  },
+  "auth_linux_su_session_opened.yml": {
+    "true_positive": {
+      "event.module": "system",
+      "message": "su: pam_unix(su:session): session opened for user root by alice(uid=1000)"
+    },
+    "true_negatives": [
+      {
+        "event.module": "system",
+        "message": "sshd[1234]: pam_unix(sshd:session): session opened for user alice by (uid=0)"
+      },
+      {
+        "event.module": "system",
+        "message": "sudo: pam_unix(sudo:session): session opened for user alice"
+      }
+    ]
+  },
   "posh_ps_amsi_bypass_attempt.yml": {
     "true_positive": {
       "EventID": 4104,

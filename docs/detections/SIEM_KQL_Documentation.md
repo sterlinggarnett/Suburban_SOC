@@ -5,7 +5,47 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**100 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**105 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+
+## SSH Login Attempt for a Nonexistent User
+
+- **Rule:** `auth_linux_invalid_user_ssh_attempt.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1110.001
+
+```
+event.module:system AND message:invalid AND message:user
+```
+
+## Reference to authorized_keys in Linux Auth Log
+
+- **Rule:** `auth_linux_ssh_authorized_keys_change.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1098.004
+
+```
+event.module:system AND message:authorized_keys
+```
+
+## Direct Root Login via SSH
+
+- **Rule:** `auth_linux_ssh_root_login.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1078.003
+
+```
+event.module:system AND user.name:root AND event.outcome:success
+```
+
+## su Session Opened
+
+- **Rule:** `auth_linux_su_session_opened.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1078.003
+
+```
+event.module:system AND message:su AND message:session AND message:opened
+```
+
+## Sudo Command Execution Logged
+
+- **Rule:** `auth_linux_sudo_privilege_escalation.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1548.003
+
+```
+event.module:system AND message:sudo AND message:command
+```
 
 ## AS-REP Roasting — TGT Requested for an Account Without Pre-Authentication
 

@@ -11,6 +11,46 @@
   "hideDisabled": false,
   "techniques": [
     {
+      "techniqueID": "T1110.001",
+      "tactic": "credential-access",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "SSH Login Attempt for a Nonexistent User \u2014 rules/sigma/auth_linux_invalid_user_ssh_attempt.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1098.004",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Reference to authorized_keys in Linux Auth Log \u2014 rules/sigma/auth_linux_ssh_authorized_keys_change.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1078.003",
+      "tactic": "initial-access",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Direct Root Login via SSH \u2014 rules/sigma/auth_linux_ssh_root_login.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1078.003",
+      "tactic": "privilege-escalation",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "su Session Opened \u2014 rules/sigma/auth_linux_su_session_opened.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1548.003",
+      "tactic": "privilege-escalation",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Sudo Command Execution Logged \u2014 rules/sigma/auth_linux_sudo_privilege_escalation.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1558.004",
       "tactic": "credential-access",
       "score": 75,
@@ -844,7 +884,7 @@
   "metadata": [
     {
       "name": "detections",
-      "value": "102"
+      "value": "107"
     },
     {
       "name": "source",

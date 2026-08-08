@@ -40,6 +40,11 @@ test_sigma_detections.py, which fails if a rule introduces an unsupported featur
     conn_smb_lateral_admin) - confirmed compiling to a native Elasticsearch
     IP-range query against `ip`-typed fields, not a pipeline transformation,
     so no configs/detections/suburban-soc-ecs.yml entry is needed for it.
+  * bare equality (no modifier) against a field in _TEXT_MAPPED_FIELDS
+    (#229/#243) matches if the target is a WHOLE WORD anywhere in the
+    value, not whole-string equality - see _TEXT_MAPPED_FIELDS' own comment
+    for why this is a real backend-behavior difference (Elasticsearch
+    `text` mapping vs `keyword`), not an evaluator quirk invented here.
   * Sigma's OWN wildcard/escape syntax inside values, independent of any
     modifier (live-ES verification session, 2026-08-08): `*` = any
     sequence, `?` = any single char, `\*`/`\?`/`\\` = literal *, ?, \, and
@@ -71,8 +76,31 @@ from typing import Optional
 _SUPPORTED_MODS = {"contains", "endswith", "startswith", "all", "cased", "re", "gt", "gte", "lt", "lte", "cidr"}
 _NUMERIC_MODS = {"gt", "gte", "lt", "lte"}
 
+# Fields mapped `text` (analyzed, tokenized) rather than `keyword` (exact,
+# unanalyzed) in configs/elasticsearch/logstash-security-template.json.
+# Every field the other 100+ rules in this corpus select on is `keyword`
+# (or a Sigma-native raw name later renamed to one), where bare Sigma field
+# equality and real Elasticsearch's `field:value` query_string term both
+# mean the SAME thing: the whole value equals the target. `message` (#229
+# US7, first rule batch to select on it) is the first exception: Elastic-
+# search's query_string DOES run bare (non-wildcard) terms through the
+# field's analyzer at query time, so `message:invalid` matches any
+# document where "invalid" is ONE OF THE TOKENS in message, not where
+# message's entire value literally equals "invalid" - confirmed via a real
+# `sigma convert` probe showing bare equality compiles to a plain
+# query_string term (`message:su`), distinct from `contains`'s unanalyzed
+# wildcard (`message:*su*`), which is unsafe here for a different reason
+# (wildcard/regexp queries are NOT analyzed, so they'd need to match
+# already-tokenized, already-lowercased index terms exactly - see the
+# per-rule descriptions in rules/sigma/auth_linux_*.yml for the full
+# reasoning). This set exists so sigma_eval.py can mirror THAT specific
+# real-backend behavior for `message` without changing bare-equality
+# semantics for every other (keyword-mapped) field a bare match already
+# correctly treats as exact equality.
+_TEXT_MAPPED_FIELDS = {"message"}
 
-def _match_one(value: Optional[str], mods, target) -> bool:
+
+def _match_one(value: Optional[str], mods, target, field: str = "") -> bool:
     numeric_mods = _NUMERIC_MODS & set(mods)
     if numeric_mods:
         if len(numeric_mods) > 1:
@@ -146,6 +174,22 @@ def _match_one(value: Optional[str], mods, target) -> bool:
             return re.search(pattern + "$", s) is not None
         if "startswith" in mods:
             return re.match(pattern, s) is not None
+        if not mods and field in _TEXT_MAPPED_FIELDS:
+            # Word-boundary match, not whole-string equality - see
+            # _TEXT_MAPPED_FIELDS' comment for why this field is different.
+            # Python's \b is defined by \w ([A-Za-z0-9_]); a target that
+            # doesn't start/end on a word character makes \b anchor to the
+            # WRONG side (security-auditor review: e.g. '.ssh' would compile
+            # to \b\.ssh\b, whose leading \b demands a word char immediately
+            # before the dot - the opposite of "standalone token"). Fail
+            # loudly at test time rather than silently mismatching.
+            if not re.match(r"^(\w.*\w|\w)$", t):
+                raise ValueError(
+                    f"text-field target {t!r} must start and end with a word "
+                    f"character for \\b word-boundary matching to mean what "
+                    f"it looks like it means - rephrase the target or add a "
+                    f"cased/contains modifier instead")
+            return re.search(rf"\b{re.escape(t)}\b", s) is not None
         return re.fullmatch(pattern, s) is not None
 
     if isinstance(target, list):
@@ -196,7 +240,7 @@ def _block_match(block, event: dict) -> bool:
         bad = [m for m in mods if m not in _SUPPORTED_MODS]
         if bad:
             raise ValueError(f"unsupported Sigma modifier(s) {bad} in '{key}'")
-        if not _match_one(event.get(field), mods, target):
+        if not _match_one(event.get(field), mods, target, field):
             return False
     return True
 

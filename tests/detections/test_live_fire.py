@@ -361,6 +361,31 @@ class NetworkLiveFireTests(LiveFireTestCase):
         self.assert_rule_fires_correctly("net_zeek_dns_dga_nxdomain_burst.yml")
 
 
+class LinuxAuthLiveFireTests(LiveFireTestCase):
+    def test_su_session_opened_fires_against_real_es(self):
+        # M13 US7 (#230/#243): `message` is the first field this whole rule
+        # corpus has ever selected on that's mapped `text` (analyzed,
+        # tokenized) rather than `keyword` in the real index template -
+        # every other field in every other rule is keyword-mapped, where
+        # bare Sigma field equality and Elasticsearch's query_string term
+        # mean the same "whole value equals target" thing. For a `text`
+        # field they don't: a bare (non-wildcard) query_string term IS
+        # analyzed at query time, so it matches any document where the
+        # target is ONE OF THE TOKENS in the field, not where the field's
+        # entire value equals it. sigma_eval.py was extended to model this
+        # (_TEXT_MAPPED_FIELDS, word-boundary match instead of whole-string
+        # equality) based on that reasoning plus a `sigma convert` probe
+        # showing the compiled query shape - but neither of those proves
+        # real Elasticsearch's query_string parser actually behaves this
+        # way for an unquoted bare term against a `text` field. This rule
+        # is the best stress test available: FOUR separate bare-equality
+        # word selectors ANDed together (su, session, opened, plus
+        # event.module) against one message value, the most co-occurring
+        # conditions any rule in this batch asks the real backend to
+        # satisfy at once.
+        self.assert_rule_fires_correctly("auth_linux_su_session_opened.yml")
+
+
 class WindowsSecurityLiveFireTests(LiveFireTestCase):
     def test_pass_the_hash_logon_fires_against_real_es(self):
         # M13 US6 (#229/#242): before this batch, field-mapping-windows-

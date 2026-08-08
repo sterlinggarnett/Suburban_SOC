@@ -1,0 +1,55 @@
+title: Reference to authorized_keys in Linux Auth Log
+id: 68c3ed07-e140-4d19-8214-eabe35946c07
+status: experimental
+description: |
+    Detects a mention of `authorized_keys` in a Linux auth.log line —
+    SSH public-key persistence (T1098.004) works by adding an attacker's
+    key to a user's `~/.ssh/authorized_keys` file, most commonly performed
+    via a logged privileged command (e.g. `sudo vim ~/.ssh/authorized_keys`,
+    which auth.log records via the sudo COMMAND field this repo's Linux
+    auth.log ingest already captures for auth_linux_sudo_privilege_
+    escalation.yml).
+    Real, significant scope limit, stated rather than hidden: this only
+    catches edits made through a mechanism that gets LOGGED to auth.log
+    (sudo, or any other command auth.log happens to record). A process
+    running as the account's own UID writing directly to its own
+    authorized_keys file (no sudo, no privilege change) produces no
+    auth.log entry at all and is invisible to this rule — that requires
+    file-integrity monitoring (auditd watching the file path), which this
+    repo does not currently collect. Treat this as a narrow, best-effort
+    signal, not authorized_keys change detection in general.
+    Uses bare Sigma field equality (no `contains`/`endswith` modifier) on
+    `message` deliberately: `message` is mapped `text` in this stack's
+    Elasticsearch index template (configs/elasticsearch/logstash-security-
+    template.json), with no keyword sub-field and no normalizer — the first
+    field this rule corpus has ever selected on with that mapping shape.
+    Confirmed via a real `sigma convert` probe that a WILDCARD-producing
+    modifier like `contains` compiles to an unanalyzed literal-substring
+    match against the field's *stored terms*, which for a `text` field are
+    already tokenized (split on whitespace/most punctuation) — a wildcard
+    containing a space could never match anything, and even a single-word
+    wildcard's case must exactly match the analyzer's lowercased output
+    with no guarantee it does. Bare equality (no modifier) compiles to a
+    plain query_string term instead, which real query_string clauses (as
+    opposed to wildcard/regexp) DO run through the field's analyzer at
+    query time — case-insensitive, exact-token, the same way `match`
+    queries behave. `authorized_keys` survives the standard analyzer as one
+    token (underscores aren't split), so bare equality on it is safe.
+references:
+    - https://attack.mitre.org/techniques/T1098/004/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.persistence
+    - attack.t1098.004
+logsource:
+    product: linux
+    service: auth
+detection:
+    selection:
+        event.module: 'system'
+        message: 'authorized_keys'
+    condition: selection
+falsepositives:
+    - Legitimate key-management automation (Ansible/Puppet/Chef pushing SSH keys, a user rotating their own key via a logged sudo command) — expect routine hits in any environment that manages authorized_keys this way; correlate with change-management records before escalating.
+level: medium

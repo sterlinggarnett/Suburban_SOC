@@ -24,11 +24,35 @@ from pathlib import Path
 import yaml
 
 HERE = Path(__file__).resolve().parent
-from sigma_eval import detection_matches  # noqa: E402
+from sigma_eval import _TEXT_MAPPED_FIELDS, detection_matches  # noqa: E402
 
 ROOT = HERE.parents[1]
 SIGMA_DIR = ROOT / "rules" / "sigma"
 FIXTURES = json.loads((HERE / "fixtures.json").read_text(encoding="utf-8"))
+INDEX_TEMPLATE_PATH = ROOT / "configs" / "elasticsearch" / "logstash-security-template.json"
+
+
+def _text_mapped_fields_in_template() -> set:
+    """Every field path mapped `type: text` in the real index template, at
+    any nesting depth, as a dotted Sigma-style field name (#230/#243
+    security review: sigma_eval.py's _TEXT_MAPPED_FIELDS is a hardcoded set
+    used to decide word-boundary vs whole-string bare-equality matching -
+    this walks the SAME template test_live_fire.py already loads, so a
+    future field added/changed to `text` fails this test loudly instead of
+    silently desyncing the two)."""
+    props = json.loads(INDEX_TEMPLATE_PATH.read_text(encoding="utf-8"))["template"]["mappings"]["properties"]
+
+    def walk(node, prefix=""):
+        found = set()
+        for key, val in node.items():
+            path = f"{prefix}{key}"
+            if val.get("type") == "text":
+                found.add(path)
+            if "properties" in val:
+                found |= walk(val["properties"], path + ".")
+        return found
+
+    return walk(props)
 
 # Tiers that require a passing test before a rule may carry them (promotion gate).
 TESTED_STATUSES = {"test", "stable"}
@@ -88,6 +112,22 @@ class SigmaDetectionTests(unittest.TestCase):
         # Every rule must have a fixture entry (rule -> test mapping is complete).
         missing = [p.name for p in self.rules if p.name not in FIXTURES]
         self.assertEqual([], missing, f"rules without fixtures: {missing}")
+
+    def test_text_mapped_fields_matches_real_index_template(self):
+        # M13 US7 (#230/#243) security review (LOW): sigma_eval.py's
+        # _TEXT_MAPPED_FIELDS is a hardcoded set, keyed on the pre-pipeline
+        # Sigma field name, that decides whether bare equality does word-
+        # boundary or whole-string matching. It's correct today (verified:
+        # `message` is the only `text`-mapped field in the whole template,
+        # and no pySigma transformation renames anything to/from it), but
+        # nothing enforced that staying true. This fails loudly the day
+        # someone adds a second `text` field or converts `message` to
+        # `keyword`, instead of silently letting the two drift apart.
+        actual = _text_mapped_fields_in_template()
+        self.assertEqual(_TEXT_MAPPED_FIELDS, actual,
+                          f"sigma_eval.py's _TEXT_MAPPED_FIELDS {_TEXT_MAPPED_FIELDS} "
+                          f"no longer matches the real index template's text-mapped "
+                          f"fields {actual} — update both together")
 
     def test_sharphound_flags_only_branch_fires_without_name_match(self):
         # M13 US3 (#233) security review: fixtures.json's true_positive only

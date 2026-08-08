@@ -1,0 +1,42 @@
+title: PowerShell AMSI Bypass Attempt
+id: 6fc993e4-c68a-4928-87c2-1dd177242de7
+status: experimental
+description: |
+    Detects PowerShell script-block content referencing AMSI internals in
+    ways consistent with a bypass attempt — reflectively patching the
+    amsiInitFailed field, referencing AmsiUtils/AmsiScanBuffer directly, or
+    forcing the AMSI_RESULT_NOT_DETECTED scan result. AMSI (Antimalware
+    Scan Interface) is the mechanism Windows Defender and other AV/EDR
+    products use to inspect PowerShell script content before execution;
+    disabling or patching it is a standard precursor to running otherwise-
+    detectable malicious script content.
+    Requires the "Turn on PowerShell Script Block Logging" Group Policy
+    (Administrative Templates > Windows Components > Windows PowerShell) for
+    EventID 4104, same prerequisite as posh_ps_obfuscated_scriptblock.yml.
+    Known scope limit, same as this repo's other 4104 rules: substring
+    matching only, not regex — trivial string-splitting/concatenation of
+    these literal tokens evades it. Treat as a tripwire against the common,
+    copy-pasted public bypass one-liners, not a comprehensive control.
+references:
+    - https://attack.mitre.org/techniques/T1562/001/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.defense_evasion
+    - attack.t1562.001
+logsource:
+    product: windows
+    service: powershell
+detection:
+    selection:
+        EventID: 4104
+    selection_amsi:
+        ScriptBlockText|contains:
+            - 'AmsiUtils'
+            - 'amsiInitFailed'
+            - 'AmsiScanBuffer'
+            - 'AMSI_RESULT_NOT_DETECTED'
+    condition: selection and selection_amsi
+falsepositives:
+    - Legitimate AMSI research, red-team tooling, or security-product testing performed by authorized staff on an isolated host.
+level: high

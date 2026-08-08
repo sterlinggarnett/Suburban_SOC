@@ -463,6 +463,14 @@
       {
         "EventID": 7045,
         "ImagePath": "\\??\\C:\\Program Files\\Vendor\\agent.exe"
+      },
+      {
+        "EventID": 7045,
+        "ImagePath": "\\??\\C:\\Windows\\System32\\drivers\\svc.sys"
+      },
+      {
+        "EventID": 7045,
+        "ImagePath": "\"\\??\\C:\\Program Files\\Vendor\\agent.exe\""
       }
     ]
   },
@@ -1649,6 +1657,169 @@
       {
         "event.module": "system",
         "message": "sudo: pam_unix(sudo:session): session opened for user alice"
+      }
+    ]
+  },
+  "posh_ps_amsi_bypass_attempt.yml": {
+    "true_positive": {
+      "EventID": 4104,
+      "ScriptBlockText": "[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "Get-Process | Where-Object {$_.CPU -gt 100}"
+      },
+      {
+        "EventID": 4103,
+        "ScriptBlockText": "AmsiUtils reference in a 4103 event, wrong EventID"
+      }
+    ]
+  },
+  "posh_ps_reverse_shell.yml": {
+    "true_positive": {
+      "EventID": 4104,
+      "ScriptBlockText": "$client = New-Object System.Net.Sockets.TCPClient('10.0.0.5',4444); $stream = $client.GetStream(); $stream.Read($bytes,0,$bytes.Length)"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "$client = New-Object System.Net.Sockets.TCPClient('10.0.0.5',4444); $client.Connected"
+      },
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "$fs = [System.IO.File]::Open('c:\\temp\\a.txt','Open'); $fs.Read($b,0,10)"
+      }
+    ]
+  },
+  "auth_win_rdp_logon_type10.yml": {
+    "true_positive": {
+      "EventID": 4624,
+      "LogonType": 10
+    },
+    "true_negatives": [
+      {
+        "EventID": 4624,
+        "LogonType": 3
+      },
+      {
+        "EventID": 4625,
+        "LogonType": 10
+      }
+    ]
+  },
+  "auth_win_pass_the_hash_logon.yml": {
+    "true_positive": {
+      "EventID": 4624,
+      "LogonType": 9,
+      "AuthenticationPackageName": "Negotiate"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4624,
+        "LogonType": 9,
+        "AuthenticationPackageName": "NTLM"
+      },
+      {
+        "EventID": 4624,
+        "LogonType": 2,
+        "AuthenticationPackageName": "Negotiate"
+      }
+    ]
+  },
+  "auth_win_disabled_account_logon_attempt.yml": {
+    "true_positive": {
+      "EventID": 4625,
+      "SubStatus": "0xc0000072"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4625,
+        "SubStatus": "0xC000006A"
+      },
+      {
+        "EventID": 4624,
+        "SubStatus": "0xc0000072"
+      }
+    ]
+  },
+  "auth_win_audit_policy_changed.yml": {
+    "true_positive": {
+      "EventID": 4719
+    },
+    "true_negatives": [
+      {
+        "EventID": 4624
+      }
+    ]
+  },
+  "auth_win_sensitive_group_recon.yml": {
+    "true_positive": {
+      "EventID": 4661,
+      "ObjectName": "S-1-5-21-1111111111-2222222222-3333333333-512"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4661,
+        "ObjectName": "S-1-5-21-1111111111-5129999999-3333333333-1105"
+      },
+      {
+        "EventID": 4661,
+        "ObjectName": "S-1-5-21-1111111111-2222222222-3333333333-1105"
+      },
+      {
+        "EventID": 4662,
+        "ObjectName": "S-1-5-21-1111111111-2222222222-3333333333-512"
+      }
+    ]
+  },
+  "auth_win_user_account_created.yml": {
+    "true_positive": {
+      "EventID": 4720
+    },
+    "true_negatives": [
+      {
+        "EventID": 4722
+      }
+    ]
+  },
+  "posh_ps_ad_recon_powerview.yml": {
+    "true_positive": {
+      "EventID": 4104,
+      "ScriptBlockText": "Get-DomainUser -SPN | Get-DomainTrust"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "Get-Process | Select-Object Name,Id"
+      },
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "Get-ADUser -Filter *"
+      },
+      {
+        "EventID": 4103,
+        "ScriptBlockText": "Get-DomainUser -SPN"
+      }
+    ]
+  },
+  "posh_ps_ad_recon_admodule.yml": {
+    "true_positive": {
+      "EventID": 4104,
+      "ScriptBlockText": "Get-ADUser -Filter * | Get-ADGroupMember 'Domain Admins'"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "Get-Process | Select-Object Name,Id"
+      },
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "Get-DomainUser -SPN"
+      },
+      {
+        "EventID": 4103,
+        "ScriptBlockText": "Get-ADUser -Filter *"
       }
     ]
   }

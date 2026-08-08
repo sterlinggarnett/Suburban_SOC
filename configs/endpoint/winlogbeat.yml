@@ -40,8 +40,29 @@ winlogbeat.event_logs:
   #               not emitted for them by default even with the subcategory on.
   # 4662 is high-volume: the DCSync rule filters to AccessMask 0x100 plus the
   # two replication GUIDs, but collection volume should be watched after rollout.
+  # 4661/4719 added by M13 US6 (#229/#242) for auth_win_sensitive_group_recon
+  # and auth_win_audit_policy_changed — without collection those rules deploy
+  # and can never fire, same shape as the 4768/4769/4662 gap above.
+  # Audit-policy prerequisites:
+  #   4661 — "Audit SAM" (Object Access — not Account Management, despite
+  #          the similar name) and/or "Audit Directory Service Access" (DS
+  #          Access), whichever governs the object being handled, AND a
+  #          SACL configured on the target object(s); not emitted for
+  #          arbitrary objects by default even with the subcategory on.
+  #          Same high-volume caveat as 4662 above if enabled broadly:
+  #          "Audit SAM" Success is one of the highest-volume advanced
+  #          audit subcategories Microsoft publishes — scope the SACL
+  #          narrowly to the specific privileged-group objects this rule
+  #          cares about, do not enable it domain-wide to satisfy this rule.
+  #   4719 — on by default whenever "Audit Policy Change" (on by default in
+  #          most modern baselines) is enabled; no extra subcategory needed.
+  # Also newly load-bearing for M13 US6's other rules, though already
+  # collected for other reasons: "Audit Logon" (Logon/Logoff) for 4624/4625
+  # (auth_win_rdp_logon_type10, auth_win_pass_the_hash_logon,
+  # auth_win_disabled_account_logon_attempt), and "Audit User Account
+  # Management" (Account Management) for 4720 (auth_win_user_account_created).
   - name: Security
-    event_id: 1102, 4624, 4625, 4648, 4662, 4672, 4720, 4728, 4732, 4756, 4768, 4769
+    event_id: 1102, 4624, 4625, 4648, 4661, 4662, 4672, 4719, 4720, 4728, 4732, 4756, 4768, 4769
 
   # Windows System — reboots / service control manager, event-log cleared (104),
   # service start-type changes (7040), new service installs (7045). See

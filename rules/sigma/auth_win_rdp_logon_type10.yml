@@ -1,0 +1,31 @@
+title: Interactive Logon via RDP (LogonType 10)
+id: c6a04193-48e7-460e-be5d-57a3668589a1
+status: experimental
+description: |
+    Detects a successful logon (Security 4624) with LogonType 10
+    (RemoteInteractive) — a session established over RDP (or another
+    remote-desktop protocol Windows classifies the same way). RDP is a
+    primary lateral-movement and hands-on-keyboard post-exploitation
+    vector; this is the network-independent, endpoint-side complement to
+    net_zeek_conn_external_rdp_inbound.yml's boundary-network view — this
+    rule fires on the target host itself regardless of what the network
+    sensor can see, and works even when the campus network sensor has no
+    visibility into the specific segment involved.
+references:
+    - https://attack.mitre.org/techniques/T1021/001/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.lateral_movement
+    - attack.t1021.001
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4624
+        LogonType: 10
+    condition: selection
+falsepositives:
+    - Legitimate remote administration via RDP by IT staff or the account owner — expect routine volume on any host RDP is intentionally enabled on; baseline expected source hosts/accounts and alert on deviation rather than every hit.
+level: medium

@@ -1,0 +1,42 @@
+title: Active Directory Query via Official ActiveDirectory Module
+id: 3d65d231-2ef4-49ad-9361-8ffcddadf35a
+status: experimental
+description: |
+    Detects PowerShell script-block content invoking the official Microsoft
+    ActiveDirectory module's query cmdlets — legitimate, signed, and
+    routinely used for ordinary IT/helpdesk AD administration, but also
+    usable for reconnaissance by an attacker who prefers built-in tooling
+    over a custom framework like PowerView (see the separate, higher-
+    severity posh_ps_ad_recon_powerview.yml) specifically to blend in with
+    that routine administrative traffic.
+    Split from a single merged rule (security-auditor round 1) — see
+    posh_ps_ad_recon_powerview.yml's description for why. Kept at a lower
+    severity here rather than dropped entirely: the cmdlets are harder to
+    rename than PowerView's own functions (they're dot-sourced from a
+    signed module), so a hit is still worth a look, just not one that
+    should compete for triage attention with a PowerView hit.
+    Requires the "Turn on PowerShell Script Block Logging" Group Policy for
+    EventID 4104, same prerequisite as this repo's other posh_ps_* rules.
+references:
+    - https://attack.mitre.org/techniques/T1087/002/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.discovery
+    - attack.t1087.002
+logsource:
+    product: windows
+    service: powershell
+detection:
+    selection:
+        EventID: 4104
+    selection_recon:
+        ScriptBlockText|contains:
+            - 'Get-ADUser'
+            - 'Get-ADGroup'
+            - 'Get-ADGroupMember'
+            - 'Get-ADDomainController'
+    condition: selection and selection_recon
+falsepositives:
+    - Legitimate IT/helpdesk administration scripts using the official ActiveDirectory module for routine account or group management — expect meaningful, expected volume in any environment where AD administration is done via PowerShell rather than the GUI.
+level: low

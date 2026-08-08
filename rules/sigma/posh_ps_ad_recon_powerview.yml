@@ -1,0 +1,50 @@
+title: Active Directory Reconnaissance via PowerView
+id: 977c0390-939d-432c-885d-cf3521742d82
+status: experimental
+description: |
+    Detects PowerShell script-block content invoking well-known PowerView
+    cmdlets — a widely-used post-exploitation Active Directory enumeration
+    toolkit with no comparable legitimate-administration use case, unlike
+    the official ActiveDirectory module (see the separate, lower-severity
+    posh_ps_ad_recon_admodule.yml).
+    Split from a single merged rule (security-auditor round 1): the
+    original combined PowerView and official-module cmdlets in one
+    selector at one severity, which buried PowerView's high-signal hits
+    inside the official module's routine-helpdesk-administration noise —
+    an attacker using PowerView would have been statistically invisible in
+    that combined alert stream. Two rules at two severities are simpler to
+    triage than one rule with an unworkable signal-to-noise ratio.
+    Requires the "Turn on PowerShell Script Block Logging" Group Policy for
+    EventID 4104, same prerequisite as this repo's other posh_ps_* rules.
+    Known scope limit, stated rather than hidden: PowerView's function
+    names are ordinary PowerShell functions an attacker can trivially
+    rename before importing — the same rename-resistance gap M13 US2's
+    LaZagne rule documented for a different tool.
+references:
+    - https://attack.mitre.org/techniques/T1087/002/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.discovery
+    - attack.t1087.002
+logsource:
+    product: windows
+    service: powershell
+detection:
+    selection:
+        EventID: 4104
+    selection_recon:
+        ScriptBlockText|contains:
+            - 'Get-NetDomain'
+            - 'Get-NetUser'
+            - 'Get-NetGroup'
+            - 'Get-NetComputer'
+            - 'Get-DomainUser'
+            - 'Get-DomainController'
+            - 'Get-DomainTrust'
+            - 'Invoke-ShareFinder'
+            - 'Find-DomainShare'
+    condition: selection and selection_recon
+falsepositives:
+    - Authorized security assessments or red-team exercises using PowerView on an isolated/scoped host.
+level: high

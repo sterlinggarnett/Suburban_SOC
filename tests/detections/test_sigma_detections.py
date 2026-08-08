@@ -294,6 +294,38 @@ class SigmaDetectionTests(unittest.TestCase):
         self.assertTrue(detection_matches(det, firefox_canary),
                          "DoH rule regressed: Firefox's use-application-dns.net canary no longer fires")
 
+    def test_sensitive_group_recon_catches_name_branch_independently(self):
+        # M13 US6 (#229/#242) code review: round-1 used ObjectName|contains
+        # for the RID suffixes ('-512' etc), which false-fires on any object
+        # whose domain-identifier component happens to contain those digits
+        # (a domain SID's sub-authority is shared by every object in the
+        # domain). Fixed to ObjectName|endswith for the RID arm, split into
+        # its own named block OR'd with the name-based arm. fixtures.json's
+        # true_positive only exercises the RID branch after that fix; this
+        # proves the name-based branch (selection_name) still fires too.
+        det = load_rule(SIGMA_DIR / "auth_win_sensitive_group_recon.yml")["detection"]
+        name_branch = {"EventID": 4661, "ObjectName": "CN=Domain Admins,CN=Users,DC=example,DC=com"}
+        self.assertTrue(detection_matches(det, name_branch),
+                         "sensitive-group-recon rule regressed: name-based branch no longer fires")
+
+    def test_disabled_account_rule_catches_uppercase_substatus_and_status_field(self):
+        # M13 US6 (#229/#242) security review: round-1 matched only the
+        # uppercase SubStatus wording; Windows renders this NTSTATUS code in
+        # lowercase in the raw EVTX EventData XML Winlogbeat actually parses,
+        # so the fixture's true_positive was switched to the real lowercase
+        # form. This proves the uppercase form (kept for robustness against
+        # any source that does render it that way) and the separate Status
+        # field (some logon paths report the code there instead of
+        # SubStatus, per Microsoft's own single shared code table) both
+        # still fire independently.
+        det = load_rule(SIGMA_DIR / "auth_win_disabled_account_logon_attempt.yml")["detection"]
+        uppercase_substatus = {"EventID": 4625, "SubStatus": "0xC0000072"}
+        status_field = {"EventID": 4625, "Status": "0xc0000072"}
+        self.assertTrue(detection_matches(det, uppercase_substatus),
+                         "disabled-account rule regressed: uppercase SubStatus no longer fires")
+        self.assertTrue(detection_matches(det, status_field),
+                         "disabled-account rule regressed: Status-field branch no longer fires")
+
 
 def coverage_report():
     rows = []

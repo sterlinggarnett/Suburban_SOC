@@ -1,0 +1,41 @@
+title: User Account Created (Windows Security 4720)
+id: ee03cf22-9905-4f8b-93dd-5199514eb31a
+status: experimental
+description: |
+    Detects a new user account being created (Security 4720) — a common
+    persistence mechanism (T1136.001): an attacker with
+    administrative access creates a new account for durable access that
+    doesn't depend on a compromised existing credential surviving a
+    password reset.
+    Stated scope limit, not hidden: EventID 4720 alone means "an account
+    was created" (local on a workstation, domain if raised on a DC), not
+    "an admin account was created" — the parent issue's original title
+    named this rule for the broader persistence technique its creation-
+    event half maps to. Filename and title corrected to match what the
+    rule actually detects (security-auditor round 1) rather than the
+    original narrower/inaccurate naming. Confirming the NEW account was
+    also granted admin rights requires correlating with a follow-on
+    4732/4728 group-membership event (see
+    auth_win_priv_group_membership_change.yml, which already covers that
+    half independently). This rule does not perform that correlation — a
+    single Sigma detection block operates on one event, not a sequence —
+    so treat "admin account created" as the combination of a hit here
+    followed by a hit on that other rule for the same TargetUserName, not
+    as something this rule alone confirms.
+references:
+    - https://attack.mitre.org/techniques/T1136/001/
+author: Suburban-SOC
+date: 2026-08-07
+tags:
+    - attack.persistence
+    - attack.t1136.001
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4720
+    condition: selection
+falsepositives:
+    - Legitimate account provisioning by IT staff or automated onboarding tooling — expect routine volume in any environment with regular staff/student turnover; correlate with change-management records or HR onboarding events before escalating.
+level: medium

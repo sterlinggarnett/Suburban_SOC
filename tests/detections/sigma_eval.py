@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 sigma_eval.py — a minimal, dependency-light Sigma detection evaluator (WS2.1).
 
 Evaluates a Sigma rule's `detection:` block against a single event (a dict of
@@ -45,6 +45,25 @@ test_sigma_detections.py, which fails if a rule introduces an unsupported featur
     value, not whole-string equality - see _TEXT_MAPPED_FIELDS' own comment
     for why this is a real backend-behavior difference (Elasticsearch
     `text` mapping vs `keyword`), not an evaluator quirk invented here.
+  * Sigma's OWN wildcard/escape syntax inside values, independent of any
+    modifier (live-ES verification session, 2026-08-08): `*` = any
+    sequence, `?` = any single char, `\*`/`\?`/`\\` = literal *, ?, \, and
+    `\` before any OTHER character passes both through literally.
+    contains/endswith/startswith/bare-equality all honor this via
+    _sigma_wildcard_to_regex() instead of plain Python string ops. This
+    was NOT modeled before this fix and could not have caught two real,
+    pre-existing rule-authoring bugs this exact gap let through silently:
+    system_win_service_installed.yml's `\??\` NT-path filters had their
+    leading backslash silently eaten by Sigma's own escape processing
+    (`\?` consumes the backslash to produce a literal `?`, not a literal
+    `\` followed by a wildcard), so those filters never matched real
+    `\??\`-prefixed paths - a false positive (over-alert), not a coverage
+    gap. proc_creation_win_psexec_client_side_launch.yml's `contains: '\\'`
+    UNC-path check collapsed to matching any single backslash instead of
+    two, making its "remote" filter an effective no-op against any local
+    file path. Both found only by running the real compiled query against
+    a real, running Elasticsearch and comparing results - not by reasoning
+    about it, and not catchable by this evaluator before this fix.
 
 All string matching is case-insensitive (Sigma's default) except `re`, which
 is case-sensitive (see above).
@@ -137,12 +156,24 @@ def _match_one(value: Optional[str], mods, target, field: str = "") -> bool:
         t = str(t)
         if not cased:
             t = t.lower()
+        # Sigma's OWN value syntax supports wildcards independent of any
+        # modifier: `*` = any sequence, `?` = any single char, `\*`/`\?`/`\\`
+        # = literal *, ?, \. A plain (unescaped) `\` before any OTHER
+        # character passes both through literally - confirmed empirically
+        # against the real pySigma/Lucene backend (live-ES verification
+        # session, 2026-08-08): `\psexec.exe` compiles to a literal
+        # `\psexec.exe`, but `\\` (one escaped pair) collapses to ONE
+        # literal backslash, not two - see module docstring for the two
+        # real rule bugs this gap let through silently. Plain Python string
+        # ops (the old `t in s` / `.endswith` / `.startswith` / `s == t`)
+        # have no awareness of this Sigma-level escaping at all.
+        pattern = _sigma_wildcard_to_regex(t)
         if "contains" in mods:
-            return t in s
+            return re.search(pattern, s) is not None
         if "endswith" in mods:
-            return s.endswith(t)
+            return re.search(pattern + "$", s) is not None
         if "startswith" in mods:
-            return s.startswith(t)
+            return re.match(pattern, s) is not None
         if not mods and field in _TEXT_MAPPED_FIELDS:
             # Word-boundary match, not whole-string equality - see
             # _TEXT_MAPPED_FIELDS' comment for why this field is different.
@@ -159,11 +190,36 @@ def _match_one(value: Optional[str], mods, target, field: str = "") -> bool:
                     f"it looks like it means - rephrase the target or add a "
                     f"cased/contains modifier instead")
             return re.search(rf"\b{re.escape(t)}\b", s) is not None
-        return s == t
+        return re.fullmatch(pattern, s) is not None
 
     if isinstance(target, list):
         return all(cmp(t) for t in target) if "all" in mods else any(cmp(t) for t in target)
     return cmp(target)
+
+
+def _sigma_wildcard_to_regex(value: str) -> str:
+    """Translate a Sigma value string's OWN wildcard/escape syntax into a
+    Python regex fragment (unanchored - callers anchor as needed for their
+    modifier). Per the Sigma spec: `*` = any sequence, `?` = any single
+    char, `\\*`/`\\?`/`\\\\` = literal *, ?, \\. A `\\` before any OTHER
+    character passes both through literally - confirmed empirically (see
+    _match_one's cmp() comment) against the real backend, not assumed."""
+    out = []
+    i, n = 0, len(value)
+    while i < n:
+        c = value[i]
+        if c == "\\" and i + 1 < n and value[i + 1] in "*?\\":
+            out.append(re.escape(value[i + 1]))
+            i += 2
+            continue
+        if c == "*":
+            out.append(".*")
+        elif c == "?":
+            out.append(".")
+        else:
+            out.append(re.escape(c))
+        i += 1
+    return "".join(out)
 
 
 def _block_match(block, event: dict) -> bool:

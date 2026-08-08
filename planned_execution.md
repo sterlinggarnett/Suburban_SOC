@@ -367,11 +367,65 @@ and #213 closed with the full arc summarised.
   (possible pre-existing logstash.conf type-comparison bug, unrelated to
   any Sigma rule's own compiled query).
 
-Next unstarted item, once #298 merges: US7 — #230 (Linux Auth Log + final
-CI verification, 5 rules via #243), then #244 (fixtures for all 70 new
-rules + regenerate ATT&CK coverage/KQL docs — needs US6 AND US7 actually
-merged first, since it operates on the complete rule set, not just PR'd
-branches).
+- [~] **M13 US7 — #230 — IN REVIEW** — Linux Auth Log Detection & Final CI
+  Verification, 5 rules (auth_linux_ssh_root_login, auth_linux_ssh_
+  authorized_keys_change, auth_linux_sudo_privilege_escalation,
+  auth_linux_invalid_user_ssh_attempt, auth_linux_su_session_opened) via
+  #243. **First Linux-telemetry batch in this whole corpus** — everything
+  before this has been Windows or Zeek.
+  [PR #300](https://github.com/voltron-1/Suburban_SOC/pull/300) — CI
+  running, **awaiting merge sign-off from the repo owner**. Branched off
+  main before US6 (#298) merged, so this PR alone shows 90 → 95 rules; the
+  eventual combined total with US6 is 105.
+  Central mechanism, novel to this corpus: `message` is the first field
+  ever selected on that's mapped `text` (analyzed) rather than `keyword` —
+  required extending sigma_eval.py (`_TEXT_MAPPED_FIELDS`) and switching
+  from `contains` (unsafe: unanalyzed Lucene wildcards against an analyzed
+  field) to bare-equality selectors split across single words (safe:
+  compiles to an analyzed, whole-token query_string term) ANDed together.
+  Independently confirmed correct by security-auditor's own analysis of
+  Lucene/ES internals, since no live Elasticsearch was available locally.
+  Review found 3 HIGH findings, two in already-shipped pipeline
+  infrastructure this batch made load-bearing for the first time:
+  `configs/endpoint/filebeat_endpoint.yml` had a `syslog: ~` parser
+  mutually exclusive with the existing sshd grok (stripped the exact
+  header the grok's pre-filter needs — removed); the sshd grok's tail
+  regex couldn't match modern OpenSSH's key-fingerprint suffix on
+  publickey lines, silently failing every publickey login including root
+  (fixed, with a regression test using a real modern OpenSSH line); and
+  both the `event.module` stamp and the sshd pre-filter only matched
+  `auth.log`, never `/var/log/secure` — all 5 new rules were silently dead
+  on RHEL/CentOS (fixed). Follow-up filed:
+  [#299](https://github.com/voltron-1/Suburban_SOC/issues/299) (rule
+  descriptions carry ES-analyzer detail into the Kibana alert flyout).
+
+- [~] **Live-ES tuning pass — no issue, session-initiated** — started a real
+  Elasticsearch (native 9.3.2, matching CI) and swept the entire rule corpus's
+  actually-compiled queries against it, rather than trusting `sigma_eval.py`'s
+  local re-implementation alone. Found 2 real, pre-existing bugs (predate this
+  session, not in US6/US7's own new rules) sharing one root cause — Sigma's
+  own `*`/`?`/`\` value-escaping being silently mishandled by rule authors,
+  never modeled by `sigma_eval.py` at all: `system_win_service_installed.yml`'s
+  `\??\` NT-path filters had their leading backslash silently eaten
+  (`\?`→literal `?`), never matching real `\??\`-prefixed paths — a false
+  positive/over-alert; `proc_creation_win_psexec_client_side_launch.yml`'s
+  `contains: '\\'` UNC-path check collapsed to matching any single backslash,
+  an effective no-op on any local file path. Also closed the structural gap:
+  `sigma_eval.py` now has `_sigma_wildcard_to_regex()` so future rules can't
+  hide the same class of bug from local fixture tests. Delivered as a minimal,
+  focused fix against `main` (not bundled into US6/US7, since these bugs
+  predate both): [PR #301](https://github.com/voltron-1/Suburban_SOC/pull/301)
+  — 26/26 pytest, ruff clean, 90/90 rules pass a full live-fire sweep against
+  real ES, **awaiting merge sign-off**. The same live-fire sweep (run against
+  a local-only merge of main+US6+US7, not pushed) also confirmed all 15 of
+  US6/US7's own rules pass live with no further findings — no separate fix
+  needed there.
+
+Next unstarted item: once #298, #300, AND #301 are all merged, #244 (fixtures
+for all 70 new rules + regenerate ATT&CK coverage/KQL docs — needs the
+complete rule set actually on `main`, not just PR'd branches, since that's
+what the issue's own acceptance criteria check: "pytest passes for all 105
+rules", "ls rules/sigma/*.yml | wc -l >= 100", no duplicate UUIDs).
 
 ---
 
@@ -891,16 +945,21 @@ are implemented in code; checked off with that one caveat noted inline.
 
 ## LAST SESSION — 2026-08-07
 
-- **M13 US6 (#229) built end-to-end this session** — plan written
-  (`plans/20260807-m13-us6-powershell-security-rules.md`), prerequisite
-  winlogbeat/pySigma fixes, 10 rules, 2 review rounds (real defects found
-  and fixed, not style nits — see NEXT UP for detail), pushed as
-  [PR #298](https://github.com/voltron-1/Suburban_SOC/pull/298). CI running
-  at session end. **Explicit instruction this session**: keep building
-  through US7 (#230) and #244 without waiting for individual merge
-  sign-off between phases, but review/merge itself is reserved for the
-  repo owner — do not merge any of these PRs automatically on green CI.
-  3 more follow-up issues filed (#295-#297).
+- **M13 US6 (#229) and US7 (#230) both built end-to-end this session**,
+  back to back per explicit instruction (keep building through #244
+  without waiting for individual merge sign-off, but review/merge itself
+  is reserved for the repo owner — do not merge any of these PRs
+  automatically on green CI). US6: plan written, prerequisite winlogbeat/
+  pySigma fixes, 10 rules, 2 review rounds, [PR #298](https://github.com/voltron-1/Suburban_SOC/pull/298).
+  US7: 5 rules, the corpus's first Linux-telemetry batch and first `text`-
+  field-based detection mechanism, 2 review rounds finding 3 HIGH issues
+  (two in already-shipped pipeline infra this batch made load-bearing),
+  [PR #300](https://github.com/voltron-1/Suburban_SOC/pull/300). Both real
+  defect-finding rounds, not style nits — see NEXT UP for detail on each.
+  4 more follow-up issues filed this session (#295-#297, #299). Both PRs
+  open, CI running, neither merged — stopping here since #244 (the next
+  item) needs both actually merged into `main` first, a hard dependency
+  (it operates on the complete rule set).
 
 ## LAST SESSION — 2026-08-06
 

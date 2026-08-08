@@ -399,7 +399,29 @@ and #213 closed with the full arc summarised.
   [#299](https://github.com/voltron-1/Suburban_SOC/issues/299) (rule
   descriptions carry ES-analyzer detail into the Kibana alert flyout).
 
-Next unstarted item: once #298 AND #300 are both merged, #244 (fixtures
+- [~] **Live-ES tuning pass — no issue, session-initiated** — started a real
+  Elasticsearch (native 9.3.2, matching CI) and swept the entire rule corpus's
+  actually-compiled queries against it, rather than trusting `sigma_eval.py`'s
+  local re-implementation alone. Found 2 real, pre-existing bugs (predate this
+  session, not in US6/US7's own new rules) sharing one root cause — Sigma's
+  own `*`/`?`/`\` value-escaping being silently mishandled by rule authors,
+  never modeled by `sigma_eval.py` at all: `system_win_service_installed.yml`'s
+  `\??\` NT-path filters had their leading backslash silently eaten
+  (`\?`→literal `?`), never matching real `\??\`-prefixed paths — a false
+  positive/over-alert; `proc_creation_win_psexec_client_side_launch.yml`'s
+  `contains: '\\'` UNC-path check collapsed to matching any single backslash,
+  an effective no-op on any local file path. Also closed the structural gap:
+  `sigma_eval.py` now has `_sigma_wildcard_to_regex()` so future rules can't
+  hide the same class of bug from local fixture tests. Delivered as a minimal,
+  focused fix against `main` (not bundled into US6/US7, since these bugs
+  predate both): [PR #301](https://github.com/voltron-1/Suburban_SOC/pull/301)
+  — 26/26 pytest, ruff clean, 90/90 rules pass a full live-fire sweep against
+  real ES, **awaiting merge sign-off**. The same live-fire sweep (run against
+  a local-only merge of main+US6+US7, not pushed) also confirmed all 15 of
+  US6/US7's own rules pass live with no further findings — no separate fix
+  needed there.
+
+Next unstarted item: once #298, #300, AND #301 are all merged, #244 (fixtures
 for all 70 new rules + regenerate ATT&CK coverage/KQL docs — needs the
 complete rule set actually on `main`, not just PR'd branches, since that's
 what the issue's own acceptance criteria check: "pytest passes for all 105

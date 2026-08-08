@@ -17,12 +17,12 @@ Approval-Plane") for the live status of each of its issues. Multi-phase
 execution gating applies: each issue is its own gated unit, no unattended
 multi-issue runs.
 
-- [~] **#275 (P0, bug) — IN REVIEW** — `slo_metrics_reader` never granted
-  `soc-agent-health-*`. Live-verified against a real, security-enabled,
-  native Elasticsearch (not just reading the role file) that the actual
-  failure mode is a SILENT false-healthy 0, not the loud exit-3 the issue
-  assumed. [PR #307](https://github.com/voltron-1/Suburban_SOC/pull/307) —
-  15/15 CI green, **awaiting merge sign-off**. Filed 4 follow-ups from
+- [x] **#275 (P0, bug) — COMPLETE, MERGED** — `slo_metrics_reader` never
+  granted `soc-agent-health-*`. Live-verified against a real, security-
+  enabled, native Elasticsearch (not just reading the role file) that the
+  actual failure mode is a SILENT false-healthy 0, not the loud exit-3 the
+  issue assumed. [PR #307](https://github.com/voltron-1/Suburban_SOC/pull/307)
+  merged 2026-08-08 (squash), 15/15 CI green. Filed 4 follow-ups from
   security-auditor review, out of scope for this fix: #302 (unrelated
   pre-existing test-isolation bug, found incidentally), #303 (P0 —
   docker-compose.yml's `provision` service command breaks under
@@ -33,12 +33,12 @@ multi-issue runs.
   copy has already drifted), #305 (add a live `_has_privileges` self-check),
   #306 (remaining cleartext-password lines + `logstash_writer`'s over-broad
   `manage` privilege on `soc-agent-health-*`).
-- [~] **#277 (P0, security) — IN REVIEW** — broker's `/webhook/dispatch`
-  response was completely unauthenticated; an on-path attacker could forge
-  a confirmed success (falsely closing a case) or force an unsafe retry.
-  [PR #310](https://github.com/voltron-1/Suburban_SOC/pull/310) — 15/15 CI
-  green, **awaiting merge sign-off**. 4 review rounds, 2 found real HIGH
-  gaps in earlier drafts (each empirically confirmed exploitable, then
+- [x] **#277 (P0, security) — COMPLETE, MERGED** — broker's
+  `/webhook/dispatch` response was completely unauthenticated; an on-path
+  attacker could forge a confirmed success (falsely closing a case) or
+  force an unsafe retry. [PR #310](https://github.com/voltron-1/Suburban_SOC/pull/310)
+  merged 2026-08-08 (squash), 16/16 CI green. 4 review rounds, 2 found real
+  HIGH gaps in earlier drafts (each empirically confirmed exploitable, then
   empirically confirmed closed, not just reasoned about): round 2 found no
   domain separation between request- and response-signing, so the agent's
   own signed request verified successfully if reflected back as a fake
@@ -70,8 +70,7 @@ multi-issue runs.
 - [ ] **#259 (tech-debt)** — `slo_metrics.py`'s `.env` parser breaks on
   inline comments.
 
-Next unstarted item once #275 and #277 sign-offs land: **#276/#278**
-(paired, likely one PR).
+Next unstarted item: **#276/#278** (paired, likely one PR).
 
 ---
 

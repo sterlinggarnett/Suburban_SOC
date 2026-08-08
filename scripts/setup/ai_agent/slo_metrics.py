@@ -234,6 +234,37 @@ def metric_audit_write_failures():
     Every doc in soc-agent-health-* IS a failure marker — nothing else writes
     there — so a windowed count is the metric, no extra filter beyond the
     time range.
+
+    #275: the slo_metrics_reader role never granted this pattern, live-
+    verified (native security-enabled Elasticsearch, not just reading the
+    role file) that the real failure mode is NOT the loud 403/exit-3 the
+    issue assumed: a wildcard _count (default, non-strict params) against a
+    pattern the caller has ZERO authorized indices under returns HTTP
+    200/count:0 — byte-for-byte identical to the healthy "no failures ever
+    written" response (_shards.total is 0 in both cases too, confirmed not
+    to be a usable distinguishing signal). This metric was silently
+    reporting false-healthy on every run instead of erroring.
+
+    strict=True (the "raise instead of silently returning 0" escape hatch
+    _count() already has) is deliberately NOT used here even after this
+    finding — separately live-verified (both as the restricted slo_metrics
+    user AND as a full-access superuser against a genuinely never-created
+    index) that strict=True's allow_no_indices=false/ignore_unavailable=false
+    turns BOTH the unauthorized case and the legitimately-healthy
+    "index never created, no failures yet" case into the IDENTICAL HTTP 404
+    index_not_found_exception — so switching to strict=True would not fix
+    the ambiguity, it would just convert a silent false-healthy 0 into a
+    loud, spurious MetricUnavailable/exit-3 on every fresh or genuinely-quiet
+    deployment, which is worse (permanent, unactionable alert noise on the
+    common case) than the bug this issue fixes. This function itself has no
+    way to detect a future regression of the role grant at runtime — see
+    tests/ai_agent/test_slo_metrics.py's static role-file assertion, which is
+    the actual regression guard for this specific bug today. A live self-check
+    (e.g. Elasticsearch's own POST /_security/user/_has_privileges, which can
+    distinguish "authorized, zero docs" from "not authorized" the way _count()
+    cannot) could generalize this across every pattern slo_metrics_reader
+    depends on, not just this one — untested here, filed as a follow-up
+    rather than added to this fix.
     """
     win = {"range": {"@timestamp": {"gte": WINDOW}}}
     return _count("soc-agent-health-*", win)

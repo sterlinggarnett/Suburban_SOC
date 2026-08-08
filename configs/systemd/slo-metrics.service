@@ -20,7 +20,8 @@ Type=oneshot
 # Desktop context for the CA extraction below.
 User=tjlam
 # audit #167 / NIST AC-6: slo_metrics.py needs READ on .alerts-security.alerts-*,
-# soar-actions-*, logstash-security-* plus WRITE to soc-slo-metrics — it now runs as
+# soar-actions-*, logstash-security-*, agent-checkpoints-* (#247), and
+# soc-agent-health-* (#275) plus WRITE to soc-slo-metrics — it now runs as
 # the least-privilege `slo_metrics` user (role: slo_metrics_reader), not the `elastic`
 # superuser. EnvironmentFile loads SLO_METRICS_PASSWORD from .env; ES_PASS below
 # resolves it via systemd's ${VAR} expansion (systemd >= 246).

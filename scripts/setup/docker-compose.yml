@@ -198,10 +198,26 @@ services:
           # blast radius from a compromise is approval-workflow visibility, not a
           # new capability class. Revisit with a filtered alias (defense-in-depth,
           # not a real boundary) or FLS if this stack is ever licensed Gold+.
-          # configs/elasticsearch/roles/slo_metrics_reader.json is authoritative, keep
-          # this inline copy in sync.
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/slo_metrics_reader -d "{\"indices\":[{\"names\":[\".alerts-security.alerts-*\",\"soar-actions-*\",\"logstash-security-*\"],\"privileges\":[\"read\",\"view_index_metadata\"]},{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-slo-metrics\"],\"privileges\":[\"create_index\",\"create\"]}],\"applications\":[{\"application\":\"kibana-.kibana\",\"privileges\":[\"feature_generalCases.read\"],\"resources\":[\"*\"]}]}" > /dev/null;
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/slo_metrics -d "{\"password\":\"${SLO_METRICS_PASSWORD}\",\"roles\":[\"slo_metrics_reader\"],\"full_name\":\"SLO metrics (Suburban-SOC)\"}" > /dev/null;
+          # #275: soc-agent-health-* read added for metric_audit_write_failures()
+          # (#184) — this grant was missing since #184 shipped, live-verified
+          # (native security-enabled ES, not just reading the role file) that the
+          # real production failure mode is NOT a loud 403/exit-3 as originally
+          # assumed: a wildcard pattern with zero authorized indices returns HTTP
+          # 200/count:0 (identical to the healthy "no failures yet" response),
+          # meaning this metric silently reported false-healthy on every run
+          # rather than erroring — see the metric_audit_write_failures() docstring
+          # in slo_metrics.py for the full finding. Accepted risk, same shape as
+          # the #247 grant above: read here permits a full _search of this
+          # index too, not just the _count the metric issues, which could expose
+          # write_audit() failure-marker text (may embed fragments of rejected
+          # audit records) across every tenant to a compromised slo_metrics
+          # credential. Accepted for the same reason as #247 read-only, no
+          # write/delete/gate-bypass capability gained.
+          # configs/elasticsearch/roles/slo_metrics_reader.json is authoritative
+          # (re-applied by apply_roles.sh), keep this inline bootstrap copy in
+          # sync.
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/slo_metrics_reader -d "{\"indices\":[{\"names\":[\".alerts-security.alerts-*\",\"soar-actions-*\",\"logstash-security-*\"],\"privileges\":[\"read\",\"view_index_metadata\"]},{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-agent-health-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-slo-metrics\"],\"privileges\":[\"create_index\",\"create\"]}],\"applications\":[{\"application\":\"kibana-.kibana\",\"privileges\":[\"feature_generalCases.read\"],\"resources\":[\"*\"]}]}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/slo_metrics -d "{\"password\":\"$${SLO_METRICS_PASSWORD}\",\"roles\":[\"slo_metrics_reader\"],\"full_name\":\"SLO metrics (Suburban-SOC)\"}" > /dev/null;
         fi;
         if [ x${BROKER_AUDIT_PASSWORD} != x ]; then
           echo "Provisioning hive_mind_broker user (audit #171 — persisted denial records via the existing append-only soc_audit_appender role)";

@@ -409,5 +409,50 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 2)
 
 
+class SloMetricsReaderRoleGrantTests(unittest.TestCase):
+    """#275: every index pattern a metric_*() function queries via _count()/es()
+    must have a matching read grant in the slo_metrics_reader role, in BOTH the
+    authoritative role file and docker-compose.yml's inline provisioning copy —
+    or the query silently returns a healthy-looking empty result rather than
+    erroring (see metric_audit_write_failures()'s docstring for the live-
+    verified finding this test exists to guard against). This codebase has no
+    live self-check for this today (a future one could use Elasticsearch's own
+    POST /_security/user/_has_privileges, not exercised here — untested, and
+    out of scope for this fix), so this static check is the actual regression
+    guard for the specific soc-agent-health-* bug this issue fixed, and for
+    any future metric that queries a new index pattern without also granting
+    it here."""
+
+    ROLE_PATH = slo_metrics.REPO / "configs" / "elasticsearch" / "roles" / "slo_metrics_reader.json"
+    COMPOSE_PATH = slo_metrics.REPO / "scripts" / "setup" / "docker-compose.yml"
+
+    def _granted_patterns(self) -> set:
+        role = json.loads(self.ROLE_PATH.read_text(encoding="utf-8"))
+        return {name for entry in role["indices"] for name in entry["names"]}
+
+    def test_role_file_grants_soc_agent_health(self):
+        self.assertIn("soc-agent-health-*", self._granted_patterns(),
+                       "slo_metrics_reader.json is missing the soc-agent-health-* "
+                       "read grant metric_audit_write_failures() needs (#275 "
+                       "regression: this bug produces no runtime error, only a "
+                       "silently-wrong healthy reading)")
+
+    def test_compose_inline_copy_matches_role_file(self):
+        # The compose file's inline PUT body must stay byte-for-byte in sync
+        # with the authoritative role file. The JSON file is what actually
+        # wins on a full bring-up (the `roles` service re-applies every file
+        # in configs/elasticsearch/roles/ after `provision`, and that PUT is
+        # what persists) — but the inline copy is still the one that governs
+        # the bootstrap window before `roles` runs, so drift between the two
+        # is a real, live bug, not just cosmetic duplication.
+        role_json = self.ROLE_PATH.read_text(encoding="utf-8")
+        role_compact = json.dumps(json.loads(role_json), separators=(",", ":"))
+        compose_text = self.COMPOSE_PATH.read_text(encoding="utf-8")
+        self.assertIn(role_compact.replace('"', '\\"'), compose_text,
+                       "scripts/setup/docker-compose.yml's inline slo_metrics_reader "
+                       "role PUT has drifted from configs/elasticsearch/roles/"
+                       "slo_metrics_reader.json — keep them in sync")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

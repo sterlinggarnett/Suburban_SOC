@@ -33,9 +33,32 @@ multi-issue runs.
   copy has already drifted), #305 (add a live `_has_privileges` self-check),
   #306 (remaining cleartext-password lines + `logstash_writer`'s over-broad
   `manage` privilege on `soc-agent-health-*`).
-- [ ] **#277 (P0, security)** — next up once #275 is merged. Broker's
-  `/webhook/dispatch` response is unauthenticated; an on-path attacker can
-  forge success or force a permanent stuck claim.
+- [~] **#277 (P0, security) — IN REVIEW** — broker's `/webhook/dispatch`
+  response was completely unauthenticated; an on-path attacker could forge
+  a confirmed success (falsely closing a case) or force an unsafe retry.
+  [PR #310](https://github.com/voltron-1/Suburban_SOC/pull/310) — 15/15 CI
+  green, **awaiting merge sign-off**. 4 review rounds, 2 found real HIGH
+  gaps in earlier drafts (each empirically confirmed exploitable, then
+  empirically confirmed closed, not just reasoned about): round 2 found no
+  domain separation between request- and response-signing, so the agent's
+  own signed request verified successfully if reflected back as a fake
+  response — fixed with a domain-separating byte prefix. Round 3 found the
+  signature alone didn't bind a response to the specific request that
+  produced it, so a captured genuine response could be replayed against a
+  *different* dispatch (same IP under a different tenant, or the same IP
+  redispatched later) — fixed with a per-request nonce (`request_id`,
+  signed inside the request so an attacker can't choose or rewrite it).
+  Round 4 found the fix itself had regressed the repo's own #177/AC-4
+  masking policy (raw attacker IP pushed unmasked to ntfy.sh) — fixed.
+  Every new security property mutation-tested (fails without its fix,
+  passes with it). One CodeQL false positive hit post-review (same
+  clear-text-logging-heuristic shape as #246 — a variable near something
+  named `*_secret` flagged despite holding only a label string; renamed,
+  fixed). Follow-ups filed, deliberately out of scope: #308 (P0-adjacent —
+  the broker's non-200 HTTPException error responses are still unsigned,
+  a narrower variant of the same bug class) and #309 (request_id
+  sanitization/bounding, audit-trail correlation, a detection rule for the
+  two new tamper-indicator audit actions, redirect-following hardening).
 - [ ] **#276, #278 (P1)** — no operator tool for a stuck claim; an `unknown`
   isolation outcome has no reconciliation path. Related, likely one PR.
 - [ ] **#286 (P2)** — MAC-based device quarantine is non-functional (two
@@ -47,7 +70,8 @@ multi-issue runs.
 - [ ] **#259 (tech-debt)** — `slo_metrics.py`'s `.env` parser breaks on
   inline comments.
 
-Next unstarted item once #275 merges: **#277**.
+Next unstarted item once #275 and #277 sign-offs land: **#276/#278**
+(paired, likely one PR).
 
 ---
 

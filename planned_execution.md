@@ -292,15 +292,21 @@ and #213 closed with the full arc summarised.
   pre-existing `-decode` rule too. 58 → 75 rules. Umbrella issue #227
   closed manually 2026-08-06.
 
-- [~] **M13 US5 — #228 — IN REVIEW** — Campus Network Detection via Zeek
+- [x] **M13 US5 — #228 — COMPLETE** — Campus Network Detection via Zeek
   Telemetry, 15 rules across 4 implementation issues (#237 DNS x5, #238
   SSL/TLS x2, #239 conn x4, #240 HTTP/SMTP x4). Split into two commits on
   `feat/m13-us5-zeek-network-detection`: a prerequisite-fix commit (`0c416bb`,
   Zeek/Logstash/pySigma field mapping for dns/ssl/conn/http — every prior
   M13 batch's silent-no-op check, done up front this time instead of found
   broken after) and the 15-rule commit (`11e0b9a`).
-  [PR #294](https://github.com/voltron-1/Suburban_SOC/pull/294) — CI running,
-  **awaiting merge sign-off**. 75 → 90 rules.
+  [PR #294](https://github.com/voltron-1/Suburban_SOC/pull/294) merged
+  2026-08-06 (`988eb2c`, squash), 12/12 CI green including `live-fire`
+  against a real Elasticsearch — the one thing that couldn't be confirmed
+  before merge (the `re` Sigma modifier's assumed Lucene full-match
+  semantics) is now proven, not just reasoned about. 75 → 90 rules.
+  #237-#240 and #228 itself closed manually after merge (PR body referenced
+  them narratively, not via a Closes keyword — same not-auto-closed shape
+  as #225/#226/#227/#247).
   Two review rounds on the rule diff (security-auditor + code-reviewer
   parallel, then a second, more thorough security-auditor pass) found and
   fixed real defects, not style nits: `net_zeek_ssl_self_signed_c2.yml`
@@ -328,10 +334,10 @@ and #213 closed with the full arc summarised.
   download-direction mapping), [#293](https://github.com/voltron-1/Suburban_SOC/issues/293)
   (pin the unpinned `zeek/zeek` image a rule's string match now depends on).
 
-Next unstarted item, once #294 merges: US6 — #229 (PowerShell Deep
-Inspection & Windows Event Log, 8 rules via #241/#242), then US7 — #230
-(Linux Auth Log + final CI verification, 5 rules via #243), then #244
-(fixtures for all 70 new rules + regenerate ATT&CK coverage/KQL docs,
+Next unstarted item: US6 — #229 (PowerShell Deep Inspection & Windows Event
+Log, 8 rules via #241/#242), then US7 — #230 (Linux Auth Log + final CI
+verification, 5 rules via #243), then #244 (fixtures for all 70 new rules +
+regenerate ATT&CK coverage/KQL docs,
 cross-cutting wrap-up for the whole milestone).
 
 ---
@@ -861,7 +867,9 @@ are implemented in code; checked off with that one caveat noted inline.
   string drift, a wrong sensor-placement assumption, an order-of-magnitude
   threshold error, a regex bypass, a factually-wrong design rationale — all
   fixed, not just flagged). 8 follow-up issues filed (#286-#293) for what's
-  genuinely out of scope. PR not merged — awaiting explicit sign-off.
+  genuinely out of scope. Merged 2026-08-06 on explicit go-ahead (`988eb2c`,
+  12/12 CI green including live-fire against a real cluster); #237-#240 and
+  #228 closed manually afterward (see NEXT UP).
 - **Housekeeping, start of session.** This file's NEXT UP was stale (still
   showing M13 US2/#232 as next-unstarted) despite US2 (PR #282), US3 (PR
   #284), and US4 (PR #285) all having merged since. Refreshed NEXT UP with

@@ -1,0 +1,6 @@
+{
+  "indices": [
+    {"names": ["agent-checkpoints-*"],
+     "privileges": ["read", "delete"]}
+  ]
+}

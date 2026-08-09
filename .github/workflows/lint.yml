@@ -69,3 +69,26 @@ jobs:
 
       - run: pip install --quiet yamllint
       - run: yamllint -c .yamllint configs/
+
+  compose-config:
+    name: docker compose config (interpolation/syntax)
+    # #303: yamllint/bash -n/pytest all validate DIFFERENT layers than Compose's
+    # own variable-interpolation pass, which runs on the raw YAML string before
+    # any shell-word splitting. A bare `$` (not `$$`, `${VAR}`, or `$VAR`)
+    # anywhere in a command: block — including inside a `#`-comment, since
+    # Compose has no concept of "this text is a bash comment, skip it" — fails
+    # the WHOLE file with "invalid interpolation format" and nothing else here
+    # would catch it. This is the single check that actually would have caught
+    # #303 before it reached a live `docker compose up`.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # No .env / real credentials needed — `config -q` only resolves and
+      # validates the compose file, it never starts anything. Unset vars
+      # just interpolate to blank (Compose's own warning, not a failure).
+      - name: Validate scripts/setup/docker-compose.yml
+        run: docker compose -f scripts/setup/docker-compose.yml config -q
+
+      - name: Validate scripts/setup/docker-compose.ha.yml
+        run: docker compose -f scripts/setup/docker-compose.ha.yml config -q

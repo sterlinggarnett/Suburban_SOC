@@ -418,6 +418,29 @@ class MetricFunctionTests(unittest.TestCase):
         # it can carry the same threat.technique.id tag.
         self.assertIn("-logstash-security-quarantine-*", zeek_call.args[0])
 
+    # --- #252: field truncation count -----------------------------------------
+    def test_field_truncation_count_raises_on_es_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_field_truncation_count()
+
+    def test_field_truncation_count_returns_count_on_success(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 4})):
+            self.assertEqual(slo_metrics.metric_field_truncation_count(), 4)
+
+    def test_field_truncation_count_returns_zero_when_no_truncation_seen(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 0})):
+            self.assertEqual(slo_metrics.metric_field_truncation_count(), 0)
+
+    def test_field_truncation_count_queries_pipeline_truncated_tag(self):
+        with mock.patch.object(slo_metrics, "_count", return_value=0) as mock_count:
+            slo_metrics.metric_field_truncation_count()
+        index, query = mock_count.call_args[0]
+        self.assertIn("logstash-security-*", index)
+        self.assertIn({"term": {"pipeline.truncated": "true"}}, query["bool"]["filter"])
+
 
 class EsKbWrapperTests(unittest.TestCase):
     """Cover the real es()/kb() request wrappers — every test above mocks them
@@ -484,7 +507,8 @@ class MainExitCodeTests(unittest.TestCase):
 
     def _mock_all_metrics(self, mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                            ingest_lag=10.0, parse_err=0.0, audit_write_failures=0.0,
-                           orphaned_claims=0.0, raw_alert_volume=None):
+                           orphaned_claims=0.0, raw_alert_volume=None,
+                           field_truncation_count=0):
         if raw_alert_volume is None:
             raw_alert_volume = {"zeek_notices": 0, "rule_hits": 0, "value": 0}
         return [
@@ -500,6 +524,8 @@ class MainExitCodeTests(unittest.TestCase):
                                return_value=orphaned_claims),
             mock.patch.object(slo_metrics, "metric_raw_alert_volume",
                                return_value=raw_alert_volume),
+            mock.patch.object(slo_metrics, "metric_field_truncation_count",
+                               return_value=field_truncation_count),
             mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(200, {})),
         ]
 
@@ -578,6 +604,40 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 3)
         ntfy_post.assert_called_once()
         self.assertIn("raw_alert_volume", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_field_truncation_count_never_breaches_regardless_of_value(self):
+        # #252: NO_TARGET, same as raw_alert_volume — a large count is a
+        # baseline signal for whether the 8191 ceiling needs raising, not a
+        # threshold breach. coverage is pinned to the real env's
+        # SLO_COVERAGE_MIN (105-rule corpus) rather than _mock_all_metrics'
+        # default 12.0 — that default predates the corpus growing past M12
+        # and trips an unrelated breach in this environment regardless of
+        # this test's own subject (same pre-existing gap
+        # test_raw_alert_volume_never_breaches_regardless_of_value has).
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
+            for p in self._mock_all_metrics(field_truncation_count=500, coverage=105.0):
+                stack.enter_context(p)
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 0)
+
+    def test_field_truncation_count_unmeasurable_is_never_silent(self):
+        # Regression guard: metric_field_truncation_count must actually be
+        # wired into main()'s metric_fns dict, not just defined — an
+        # unregistered metric would never surface a measurement failure,
+        # same failure shape #216 found for raw_alert_volume.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in self._mock_all_metrics():
+                stack.enter_context(p)
+            stack.enter_context(mock.patch.object(
+                slo_metrics, "metric_field_truncation_count",
+                side_effect=slo_metrics.MetricUnavailable("es down")))
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 3)
+        ntfy_post.assert_called_once()
+        self.assertIn("field_truncation_count", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_ntfy_failure_is_swallowed_not_fatal(self):
         # A downed ntfy.sh must not crash main() or change the breach exit code.

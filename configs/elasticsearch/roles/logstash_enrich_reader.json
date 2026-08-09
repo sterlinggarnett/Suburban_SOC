@@ -1,4 +1,5 @@
 {
+  "cluster": ["monitor"],
   "indices": [
     {"names": ["logstash-security-*"],
      "privileges": ["read"]}

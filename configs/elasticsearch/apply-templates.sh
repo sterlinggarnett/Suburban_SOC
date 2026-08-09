@@ -72,6 +72,30 @@ put_and_check "agent-checkpoints-template" \
   "$ES_URL/_index_template/agent-checkpoints-template" \
   "$HERE/agent-checkpoints-template.json"
 
+# #276 security-auditor MEDIUM: a template PUT only shapes indices created
+# AFTER it lands (see the file header above) — it does NOT retrofit an
+# agent-checkpoints-<tenant> index that already exists from before this
+# change. Under this template's dynamic:strict, that left
+# resolved_by/resolved_at/resolution_reason/resolution_source (added for
+# manage_stuck_claims.py's --actor/--reason attribution) unwritable on any
+# non-greenfield deployment: the operator recovery tool's one write path
+# would hard-fail with strict_dynamic_mapping_exception exactly when it's
+# needed. Adding new properties to an existing mapping is a legal in-place
+# ES operation (no reindex required) — unlike a data stream, this index
+# accepts it directly. A wildcard target with zero matching indices (a
+# genuinely fresh install) returns 404, which is expected and harmless.
+echo "==> Adding #276 claim-attribution fields to any pre-existing agent-checkpoints-* index"
+esj -o /dev/null -w '    agent-checkpoints-* -> HTTP %{http_code}\n' -X PUT \
+  "$ES_URL/agent-checkpoints-*/_mapping" -d '{
+    "properties": {
+      "resolved_by":       { "type": "keyword" },
+      "resolved_at":       { "type": "date" },
+      "resolution_reason": { "type": "keyword" },
+      "resolution_source": { "type": "keyword" },
+      "resolution_actor_claimed": { "type": "keyword" }
+    }
+  }'
+
 echo "==> Dropping replicas to 0 on existing indices (single-node -> clears yellow)"
 esj -o /dev/null -w '    logstash-security-* -> HTTP %{http_code}\n' -X PUT \
   "$ES_URL/logstash-security-*/_settings" -d '{"index":{"number_of_replicas":0}}'

@@ -15,18 +15,19 @@
 # and that's rule-specific work deferred to the phase that writes those
 # rules, not a collection gap to fix here.
 #
-# NOT fixed here, deliberately: mac-logging (orig_l2_addr/resp_l2_addr ->
-# source.mac/destination.mac) was closed as shipped in #63-72 but only ever
-# added to configs/zeek/local.zeek, which no real capture invocation loads -
-# source.mac has been silently empty in every SOAR quarantine case record
-# and Discord notification since. Loading the script alone doesn't fix that:
-# the field lands on conn.log, but the SOAR body is built from zeek.intel
-# matches (configs/logstash.conf's zeek.intel branch), and nothing joins the
-# two logs by `uid`. Shipping the @load without that join would add new
-# per-connection device-identifier (MAC) collection - personal data under
-# SOP-012 - for zero behavior change. That's a real, separate fix (uid-keyed
-# conn<->intel correlation, plus a SOP-012 data-inventory update); tracked
-# for its own issue rather than half-done here.
+# #286: mac-logging (orig_l2_addr/resp_l2_addr -> source.mac/destination.mac)
+# was closed as shipped in #63-72 but only ever added to configs/zeek/
+# local.zeek, which no real capture invocation loads - source.mac has been
+# silently empty in every SOAR quarantine case record and Discord
+# notification since. Loading it here (the real capture path) is now safe:
+# configs/logstash.conf's Category 0 branch renames orig_l2_addr/
+# resp_l2_addr onto conn.log's source.mac/destination.mac, AND its
+# zeek.intel branch now does a uid-keyed lookup against that same tenant's
+# conn.log records to get the MAC onto the record that actually triggers
+# SOAR containment (intel.log itself never carries L2 addresses). Also
+# updated: docs/SOP-012-privacy-data-handling.md's data inventory now lists
+# MAC addresses as personal data this pipeline collects.
+@load policy/protocols/conn/mac-logging
 redef Intel::read_files += { "/data/intel/intel.dat" };
 
 # Suspend packet processing until the Intel framework finishes reading the feed asynchronously

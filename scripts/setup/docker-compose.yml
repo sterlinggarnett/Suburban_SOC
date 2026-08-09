@@ -159,6 +159,7 @@ services:
       - AGENT_CHECKPOINTS_PASSWORD=${AGENT_CHECKPOINTS_PASSWORD:-}
       - AGENT_CHECKPOINTS_COMPACTOR_PASSWORD=${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD:-}
       - INTEL_WRITER_PASSWORD=${INTEL_WRITER_PASSWORD:-}
+      - LOGSTASH_ENRICH_PASSWORD=${LOGSTASH_ENRICH_PASSWORD:-}
     volumes:
       - certs:/usr/share/elasticsearch/config/certs
     working_dir: /usr/share/elasticsearch
@@ -254,6 +255,19 @@ services:
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/agent_checkpoints_compactor -d "{\"indices\":[{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\",\"delete\"]}]}" > /dev/null;
           # $$ (not $), same reasoning as AGENT_CHECKPOINTS_PASSWORD above.
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/agent_checkpoints_compactor -d "{\"password\":\"$${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD}\",\"roles\":[\"agent_checkpoints_compactor\"],\"full_name\":\"SOC agent-checkpoints TTL retention (Suburban-SOC, #256)\"}" > /dev/null;
+        fi;
+        if [ x$${LOGSTASH_ENRICH_PASSWORD} != x ]; then
+          echo "Provisioning logstash_enrich_reader role + logstash_enrich user (#286 security-auditor CRITICAL — the uid-keyed conn.log<->intel.log correlation in configs/logstash.conf needs its OWN read credential, NOT logstash_internal: that identity holds only logstash_writer (write/manage, no read at all — confirmed the correlation 403s on every event without this) and widening logstash_writer to read would hand the shared Logstash/agent credential cross-tenant read of all security telemetry, which this stack cannot scope back with field-level security on a Basic license)";
+          # Least privilege: read-only on logstash-security-* — no write, no
+          # delete, no other index. This credential can only ever look up a
+          # conn.log record by uid; it can never modify anything.
+          # configs/elasticsearch/roles/logstash_enrich_reader.json is
+          # authoritative (re-applied by apply_roles.sh) - keep this inline
+          # bootstrap copy in sync.
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/logstash_enrich_reader -d "{\"indices\":[{\"names\":[\"logstash-security-*\"],\"privileges\":[\"read\"]}]}" > /dev/null;
+          # $$ (not $), same reasoning as AGENT_CHECKPOINTS_PASSWORD above:
+          # avoids splicing the cleartext password into this container's argv.
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/logstash_enrich -d "{\"password\":\"$${LOGSTASH_ENRICH_PASSWORD}\",\"roles\":[\"logstash_enrich_reader\"],\"full_name\":\"Logstash MAC-correlation reader (Suburban-SOC, #286)\"}" > /dev/null;
         fi;
         if [ x$${INTEL_WRITER_PASSWORD} != x ]; then
           echo "Provisioning intel_writer role + user (#222 — dedicated identity, refresh_intel.sh no longer runs as the elastic superuser now that it is a persistent scheduled service, not an occasional manual run)";
@@ -489,6 +503,15 @@ services:
       # Least-privilege ES credentials consumed by configs/logstash.conf output.
       - LOGSTASH_ES_USER=logstash_internal
       - LOGSTASH_ES_PASS=${LOGSTASH_PASSWORD}
+      # #286 security-auditor CRITICAL: a SEPARATE, read-only credential for
+      # the uid-keyed conn.log<->intel.log correlation filter — logstash_internal
+      # (above) has no read privilege at all (logstash_writer is write/manage
+      # only), and must not be widened to read (see the provision service's
+      # #286 comment for why). Unset LOGSTASH_ENRICH_PASSWORD => provision
+      # skips creating this user and the filter's queries 403 — fails closed
+      # (no MAC enrichment) rather than falling back to a broader credential.
+      - LOGSTASH_ENRICH_USER=logstash_enrich
+      - LOGSTASH_ENRICH_PASS=${LOGSTASH_ENRICH_PASSWORD:-}
       - ELASTIC_HOSTS=https://elasticsearch:9200
       # Secret for signing the SOAR /alert webhook to the AI agent (WS0.2).
       - SOC_AGENT_HMAC_SECRET=${SOC_AGENT_HMAC_SECRET}

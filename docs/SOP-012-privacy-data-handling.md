@@ -5,7 +5,9 @@ This Standard Operating Procedure (SOP) defines the data-handling lifecycle for 
 SOP-012 — Privacy & Data Handling
 
 ## Problem Statement
-The SOC processes network and endpoint telemetry that may contain personal data (IPs, usernames). Over-collection or failure to delete this data on request violates privacy regulations.
+The SOC processes network and endpoint telemetry that may contain personal data (IPs, usernames, device MAC addresses). Over-collection or failure to delete this data on request violates privacy regulations.
+
+**MAC addresses (#286):** collected per-connection via Zeek's mac-logging (`configs/intel/config.zeek` — the real capture path, NOT `configs/zeek/local.zeek`, which is dead/unloaded), mapped onto conn.log's `source.mac`/`destination.mac` (`configs/logstash.conf`) to support device-level containment (a MAC survives IP rotation via DHCP, unlike IP-based blocking alone). Only `source.mac`, and only for an outbound-direction intel match (an internal device connecting to a known-bad IP), is additionally correlated onto the SOAR-triggering alert event — never `destination.mac`, and never for an inbound match, since a router/gateway's own MAC would otherwise be mistaken for an attacker's (see `configs/logstash.conf`'s `DIRECTION-AWARE` comment). Subject to the same erasure/minimization controls as IPs and usernames below — `erase_tenant.sh` purges every stream these fields live in, including the quarantine stream (`logstash-security-quarantine-<tenant>`).
 
 ## Objectives
 - Minimize data at the point of capture (metadata only, no payloads).
@@ -46,7 +48,7 @@ To process a Data Subject Access Request (DSAR) or erasure request:
 If a capture configuration accidentally collects payloads or secrets:
 - Immediately halt the capture scripts (SOP-001).
 - Use Kibana to locate and delete the accidental PII documents.
-- Update `local.zeek` or `logstash.conf` to block the leak.
+- Update `configs/intel/config.zeek` (the real capture path — NOT `configs/zeek/local.zeek`, which is dead/unloaded by any real capture invocation, #286) or `logstash.conf` to block the leak.
 
 ### Eradication & Recovery
 To execute a Right-to-Erasure request:
@@ -56,6 +58,6 @@ To execute a Right-to-Erasure request:
 4. If a strict legal deadline applies, manually delete the relevant snapshots from `suburban-soc-snapshots`.
 
 # References and Resources
-- `configs/zeek/local.zeek`
+- `configs/intel/config.zeek` (the real capture path)
 - `configs/logstash.conf`
 - `scripts/setup/erase_tenant.sh`

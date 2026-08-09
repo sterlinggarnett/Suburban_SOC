@@ -1541,6 +1541,29 @@ class Agent:
             return "NO_ACTION_PROTECTED_ASSET", str(excluded), True, ""
 
         # Autonomous
+        # #286 security-auditor HIGH: `ctx.target_mac` gates autonomous
+        # (zero-human-involvement) execution here as a deliberate,
+        # pre-existing safety requirement — device-level attribution before
+        # letting the agent act alone, not just a spoofable/DHCP-rotatable
+        # IP (_execute_isolation's own docstring: the broker only actually
+        # NEEDS a valid IP to dispatch a block; MAC is carried for the audit
+        # trail). Before #286, source.mac/target_mac was ALWAYS empty (the
+        # bug #286 fixes), so this gate was — accidentally — "never auto-
+        # execute" in practice, regardless of AUTONOMOUS_ISOLATION. #286
+        # makes target_mac populate for SOME real matches (only outbound-
+        # direction ones, and only when its own uid-keyed lookup wins a
+        # race against conn.log indexing — see configs/logstash.conf's
+        # KNOWN LIMITATION comment) — so this gate's behavior is now
+        # genuinely non-deterministic per-alert in a way it never was
+        # before, for anyone running with AUTONOMOUS_ISOLATION=true
+        # (default false). This is intentionally NOT changed here: whether
+        # the gate should stay MAC-based, move to is_valid_ip(target_ip)
+        # (weaker — IP alone is spoofable), or an explicit
+        # enrichment-complete signal is a real policy tradeoff for the
+        # security team to decide deliberately, not a plumbing fix to make
+        # silently. The "Draft" fallback below already records WHY
+        # autonomous execution did not fire (recommended_action reflects
+        # target_mac's presence) for the human reviewing it.
         if AUTONOMOUS_ISOLATION and ctx.severity == "critical" and ctx.target_mac:
             # #247: the autonomous path has no claim/retry concept to protect (it
             # dispatches at most once, inline, no separate approval step) — an

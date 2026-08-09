@@ -157,6 +157,78 @@ class ReleaseClaimTests(unittest.TestCase):
         mock_delete.assert_not_called()
         mock_put.assert_not_called()
 
+    @mock.patch("checkpoints.requests.post")
+    def test_release_claim_with_actor_and_reason_records_attribution(self, mock_post):
+        # #276 security-auditor HIGH (unattributed operator writes): the
+        # manual recovery path must record who and why, directly on the
+        # claim doc — the agent's own calls (no actor kwarg) don't.
+        mock_post.return_value = _mock_response(200)
+        checkpoints.release_claim("tenant-a", "alert-1", actor="jdoe", reason="confirmed via SSH")
+        doc = mock_post.call_args[1]["json"]["doc"]
+        # security-auditor round-2 MEDIUM: --actor is operator-typed free
+        # text — resolved_by must bind to what actually authenticated the
+        # write (the ES credential + OS user/host), not the unverifiable
+        # claimed name, same split as app.py's upstream_approver_claimed.
+        self.assertEqual(doc["resolution_actor_claimed"], "jdoe")
+        self.assertIn(checkpoints.ES_USER, doc["resolved_by"])
+        self.assertEqual(doc["resolution_reason"], "confirmed via SSH")
+        self.assertEqual(doc["resolution_source"], "manual")
+        self.assertIn("resolved_at", doc)
+
+    @mock.patch("checkpoints.requests.post")
+    def test_release_claim_without_actor_omits_attribution_fields(self, mock_post):
+        # agent.py's execute_approved() call site passes neither — must not
+        # write resolved_by/resolution_reason/resolution_source as None
+        # (dynamic:strict rejects unmapped fields, but None values for
+        # mapped-but-irrelevant fields would still be noise on every
+        # agent-driven transition).
+        mock_post.return_value = _mock_response(200)
+        checkpoints.release_claim("tenant-a", "alert-1")
+        doc = mock_post.call_args[1]["json"]["doc"]
+        self.assertEqual(doc, {"phase": "RELEASED"})
+
+    @mock.patch("checkpoints.requests.post")
+    def test_release_claim_with_seq_no_sends_conditional_update_params(self, mock_post):
+        # #276 security-auditor MEDIUM (read-then-write race): cmd_resolve
+        # passes get_claim()'s seq_no/primary_term through so a concurrent
+        # modification is detected instead of silently overwritten.
+        mock_post.return_value = _mock_response(200)
+        checkpoints.release_claim("tenant-a", "alert-1", if_seq_no=7, if_primary_term=2)
+        params = mock_post.call_args[1]["params"]
+        self.assertEqual(params["if_seq_no"], 7)
+        self.assertEqual(params["if_primary_term"], 2)
+
+    def test_release_claim_rejects_a_half_set_seq_no_pair(self):
+        # security-auditor LOW: if_seq_no/if_primary_term must be given
+        # together or not at all — a half-set pair must not silently
+        # degrade to an unconditional write, nor reach ES to fail there
+        # with a generic 400 instead of a clear local error.
+        with self.assertRaises(ValueError):
+            checkpoints.release_claim("tenant-a", "alert-1", if_seq_no=7, if_primary_term=None)
+        with self.assertRaises(ValueError):
+            checkpoints.release_claim("tenant-a", "alert-1", if_seq_no=None, if_primary_term=1)
+
+    @mock.patch("checkpoints.requests.post")
+    def test_release_claim_conditional_conflict_returns_false_not_an_exception(self, mock_post):
+        mock_post.return_value = _mock_response(409)
+        self.assertFalse(checkpoints.release_claim(
+            "tenant-a", "alert-1", if_seq_no=7, if_primary_term=2))
+
+    def test_release_claim_rejects_invalid_tenant_id(self):
+        with self.assertRaises(ValueError):
+            checkpoints.release_claim("../etc", "alert-1")
+
+    @mock.patch("checkpoints.requests.post")
+    def test_release_claim_quotes_a_path_breaking_alert_id(self, mock_post):
+        # #276 security-auditor MEDIUM (URL injection defense-in-depth):
+        # alert_id becomes a URL path segment — a literal "/" must not add
+        # an extra path segment.
+        mock_post.return_value = _mock_response(200)
+        checkpoints.release_claim("tenant-a", "weird/id")
+        url = mock_post.call_args[0][0]
+        self.assertNotIn("weird/id.claim", url)
+        self.assertIn("weird%2Fid.claim", url)
+
 
 class ResolveClaimTests(unittest.TestCase):
     """resolve_claim() — marks a claim RESOLVED after a CONFIRMED successful
@@ -185,6 +257,129 @@ class ResolveClaimTests(unittest.TestCase):
         url, kwargs = mock_post.call_args[0][0], mock_post.call_args[1]
         self.assertIn("/_update/alert-1.claim", url)
         self.assertEqual(kwargs["json"], {"doc": {"phase": "RESOLVED"}})
+
+
+class GetClaimTests(unittest.TestCase):
+    """get_claim() — read-only lookup of a claim doc for the #276 stuck-claim
+    recovery tool, distinct from read_checkpoint()'s paired phase doc."""
+
+    @mock.patch("checkpoints.requests.get")
+    def test_get_claim_returns_source_on_200(self, mock_get):
+        mock_get.return_value = _mock_response(200, {"_source": {"phase": "CLAIMED", "alert_id": "alert-1"}})
+        result = checkpoints.get_claim("tenant-a", "alert-1")
+        self.assertEqual(result["phase"], "CLAIMED")
+        self.assertEqual(result["alert_id"], "alert-1")
+
+    @mock.patch("checkpoints.requests.get")
+    def test_get_claim_carries_seq_no_and_primary_term_for_optimistic_concurrency(self, mock_get):
+        # #276 security-auditor MEDIUM (read-then-write race): cmd_resolve
+        # needs these to make its transition conditional.
+        mock_get.return_value = _mock_response(
+            200, {"_source": {"phase": "CLAIMED"}}, seq_no=7, primary_term=2)
+        result = checkpoints.get_claim("tenant-a", "alert-1")
+        self.assertEqual(result["_seq_no"], 7)
+        self.assertEqual(result["_primary_term"], 2)
+
+    def test_get_claim_rejects_invalid_tenant_id(self):
+        with self.assertRaises(ValueError):
+            checkpoints.get_claim("Not Valid!", "alert-1")
+
+    @mock.patch("checkpoints.requests.get")
+    def test_get_claim_returns_none_on_404(self, mock_get):
+        mock_get.return_value = _mock_response(404)
+        self.assertIsNone(checkpoints.get_claim("tenant-a", "alert-1"))
+
+    @mock.patch("checkpoints.requests.get")
+    def test_get_claim_raises_on_es_server_error(self, mock_get):
+        mock_get.return_value = _mock_response(500)
+        with self.assertRaises(requests.HTTPError):
+            checkpoints.get_claim("tenant-a", "alert-1")
+
+    @mock.patch("checkpoints.requests.get")
+    def test_get_claim_targets_the_claim_document_not_the_checkpoint(self, mock_get):
+        mock_get.return_value = _mock_response(200, {"_source": {}})
+        checkpoints.get_claim("tenant-a", "alert-1")
+        url = mock_get.call_args[0][0]
+        self.assertTrue(url.endswith("/alert-1.claim"))
+
+
+class SearchStuckClaimsTests(unittest.TestCase):
+    """search_stuck_claims() — the #276 tool's list view, same population
+    slo_metrics.metric_stuck_approval_claims() counts, surfaced with detail."""
+
+    @mock.patch("checkpoints.requests.post")
+    def test_search_stuck_claims_returns_sources_from_hits(self, mock_post):
+        mock_post.return_value = _mock_response(200, {"hits": {
+            "total": {"value": 2},
+            "hits": [
+                {"_source": {"alert_id": "a1", "phase": "CLAIMED"}},
+                {"_source": {"alert_id": "a2", "phase": "CLAIMED"}},
+            ]}})
+        claims, total = checkpoints.search_stuck_claims()
+        self.assertEqual([r["alert_id"] for r in claims], ["a1", "a2"])
+        self.assertEqual(total, 2)
+
+    @mock.patch("checkpoints.requests.post")
+    def test_search_stuck_claims_surfaces_a_total_larger_than_the_page(self, mock_post):
+        # #276 code-reviewer review: results are capped at size=200 — an
+        # operator must be able to tell a partial list from a complete one.
+        mock_post.return_value = _mock_response(200, {"hits": {
+            "total": {"value": 250},
+            "hits": [{"_source": {"alert_id": f"a{i}"}} for i in range(200)]}})
+        claims, total = checkpoints.search_stuck_claims()
+        self.assertEqual(len(claims), 200)
+        self.assertEqual(total, 250)
+
+    @mock.patch("checkpoints.requests.post")
+    def test_search_stuck_claims_requests_accurate_total_hits_tracking(self, mock_post):
+        mock_post.return_value = _mock_response(200, {"hits": {"hits": []}})
+        checkpoints.search_stuck_claims()
+        self.assertTrue(mock_post.call_args[1]["json"]["track_total_hits"])
+
+    @mock.patch("checkpoints.requests.post")
+    def test_search_stuck_claims_filters_on_claimed_phase_and_age(self, mock_post):
+        mock_post.return_value = _mock_response(200, {"hits": {"hits": []}})
+        checkpoints.search_stuck_claims(max_age_minutes=45)
+        query = mock_post.call_args[1]["json"]["query"]
+        filters = query["bool"]["filter"]
+        self.assertIn({"term": {"phase": "CLAIMED"}}, filters)
+        self.assertIn({"range": {"@timestamp": {"lte": "now-45m"}}}, filters)
+
+    @mock.patch("checkpoints.requests.post")
+    def test_search_stuck_claims_defaults_to_wildcard_tenant_index(self, mock_post):
+        mock_post.return_value = _mock_response(200, {"hits": {"hits": []}})
+        checkpoints.search_stuck_claims()
+        url = mock_post.call_args[0][0]
+        self.assertIn("agent-checkpoints-*/_search", url)
+
+    @mock.patch("checkpoints.requests.post")
+    def test_search_stuck_claims_scopes_to_one_tenant_when_given(self, mock_post):
+        mock_post.return_value = _mock_response(200, {"hits": {"hits": []}})
+        checkpoints.search_stuck_claims(tenant_id="home-smith")
+        url = mock_post.call_args[0][0]
+        self.assertIn("agent-checkpoints-home-smith/_search", url)
+
+    @mock.patch("checkpoints.requests.post")
+    def test_search_stuck_claims_raises_on_es_server_error(self, mock_post):
+        mock_post.return_value = _mock_response(500)
+        with self.assertRaises(requests.HTTPError):
+            checkpoints.search_stuck_claims()
+
+    def test_search_stuck_claims_rejects_invalid_tenant_id_that_is_not_the_wildcard(self):
+        with self.assertRaises(ValueError):
+            checkpoints.search_stuck_claims(tenant_id="tenant-a,other-index")
+
+    def test_search_stuck_claims_rejects_non_positive_max_age_minutes(self):
+        # code-reviewer Should-Fix: manage_stuck_claims.py's _positive_float
+        # argparse type is an upstream gate, not a property of this
+        # function itself — a future non-CLI caller passing -5/nan/inf
+        # must not reach a malformed ES date-math expression.
+        with self.assertRaises(ValueError):
+            checkpoints.search_stuck_claims(max_age_minutes=-5)
+        with self.assertRaises(ValueError):
+            checkpoints.search_stuck_claims(max_age_minutes=float("nan"))
+        with self.assertRaises(ValueError):
+            checkpoints.search_stuck_claims(max_age_minutes=float("inf"))
 
 
 if __name__ == "__main__":

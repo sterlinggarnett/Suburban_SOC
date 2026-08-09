@@ -38,10 +38,21 @@ jobs:
           pip install --quiet -r scripts/setup/ai_agent/requirements.txt
           pip install --quiet pyyaml pytest pytest-cov
 
+      # #259: tests/setup/ (env_loader.py, es_client.py — shared lib both
+      # slo_metrics.py and run_hunts.py depend on) had NO CI coverage before
+      # this fix, despite the exact class of bug #259 fixed (a hand-rolled
+      # parser that only breaks on real-world .env content) being precisely
+      # the kind of gap that stays invisible without a test actually run
+      # somewhere. Added to --cov= too (code-reviewer catch), not just the
+      # pytest file list — otherwise these two modules run under the gate's
+      # tests without actually being held to its 70% threshold.
       - name: Coverage gate (fails under 70% line coverage)
         run: |
           pytest tests/ai_agent/test_slo_metrics.py \
                  tests/ai_agent/test_weekly_ciso_report.py \
                  tests/hunts/test_run_hunts.py \
+                 tests/setup/test_env_loader.py \
+                 tests/setup/test_es_client.py \
                  --cov=slo_metrics --cov=run_hunts --cov=weekly_ciso_report \
+                 --cov=env_loader --cov=es_client \
                  --cov-report=term-missing --cov-fail-under=70

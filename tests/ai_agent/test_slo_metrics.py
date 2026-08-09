@@ -20,6 +20,7 @@ from unittest import mock
 # ES_PASS is read at import time; must be truthy or main() exits(1) immediately.
 os.environ["ES_PASS"] = "unit_test_pass"
 
+import env_loader
 import slo_metrics
 
 
@@ -633,6 +634,34 @@ class SloMetricsReaderRoleGrantTests(unittest.TestCase):
                        "scripts/setup/docker-compose.yml's inline slo_metrics_reader "
                        "role PUT has drifted from configs/elasticsearch/roles/"
                        "slo_metrics_reader.json — keep them in sync")
+
+
+class EnvLineParsingTests(unittest.TestCase):
+    """#259: slo_metrics.py's hand-rolled .env loader (unlike every other
+    script in this repo, which bash-sources .env and gets comment-stripping
+    for free) used to take the whole line remainder as the value, breaking
+    float()/int() conversion on a real "KEY=10   # comment" style .env
+    line — reproduced live against this environment's local .env. The
+    parsing logic itself now lives in the shared env_loader module (full
+    edge-case coverage in tests/setup/test_env_loader.py, alongside
+    run_hunts.py's identical dependency on it) — these two tests exist here
+    specifically to prove slo_metrics.py is actually WIRED to it (not a
+    reverted-to-private-copy regression) and to lock in the exact scenario
+    this issue's evidence section reproduced."""
+
+    def test_slo_metrics_is_wired_to_the_shared_env_loader(self):
+        # security-auditor review: the actual production call path is
+        # load_env_file(), not parse_env_line() directly — a regression
+        # that re-inlined the loading loop while still importing
+        # parse_env_line would pass a parse_env_line-only wiring check.
+        self.assertIs(slo_metrics.env_loader.parse_env_line, env_loader.parse_env_line)
+        self.assertIs(slo_metrics.env_loader.load_env_file, env_loader.load_env_file)
+
+    def test_inline_comment_value_is_actually_usable_as_a_float(self):
+        # The regression this issue exists to prevent: this must not raise.
+        _, v = slo_metrics.env_loader.parse_env_line(
+            "SLO_MTTD_MAX_MIN=10         # Max Mean Time to Detect (in minutes)")
+        self.assertEqual(float(v), 10.0)
 
 
 class LogstashWriterRoleDriftTests(unittest.TestCase):

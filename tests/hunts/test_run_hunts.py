@@ -19,6 +19,7 @@ from unittest import mock
 # ES_PASS is read at import time; must be truthy or main() exits(1) immediately.
 os.environ["ES_PASS"] = "unit_test_pass"
 
+import env_loader
 import run_hunts
 
 
@@ -188,6 +189,21 @@ class MainNoHuntsAndMissingCredsTests(unittest.TestCase):
             else:
                 code = None
         self.assertEqual(code, 1)
+
+
+class EnvLineParsingTests(unittest.TestCase):
+    """#259: run_hunts.py had this repo's other hand-rolled .env-comment bug
+    (byte-for-byte identical loader to slo_metrics.py's, before both were
+    fixed to share env_loader.parse_env_line — full edge-case coverage in
+    tests/setup/test_env_loader.py). This test exists specifically to prove
+    run_hunts.py is actually WIRED to the shared parser, not a reverted-to-
+    private-copy regression."""
+
+    def test_run_hunts_is_wired_to_the_shared_env_loader(self):
+        # security-auditor review: the actual production call path is
+        # load_env_file(), not parse_env_line() directly.
+        self.assertIs(run_hunts.env_loader.parse_env_line, env_loader.parse_env_line)
+        self.assertIs(run_hunts.env_loader.load_env_file, env_loader.load_env_file)
 
 
 if __name__ == "__main__":

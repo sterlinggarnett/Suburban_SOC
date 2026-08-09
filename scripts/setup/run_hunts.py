@@ -23,18 +23,18 @@ import yaml
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 HUNTS_DIR = REPO / "hunts"
-ENV = REPO / "scripts" / "setup" / ".env"
-if ENV.exists():
-    for line in ENV.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k, v)
 
-# Shared connection-pooled, retrying Session (issue #170) — sibling module, no
-# installable package here yet (tracked separately), so sys.path like the tests do.
+# Shared connection-pooled, retrying Session (issue #170) + .env line parser
+# (#259) — sibling module, no installable package here yet (tracked
+# separately), so sys.path like the tests do. Moved before the .env-loading
+# block below (rather than staying next to es_client's own use further down)
+# specifically so env_loader is importable there.
 sys.path.insert(0, str(HERE / "lib"))
+import env_loader  # noqa: E402
 import es_client  # noqa: E402
+
+ENV = REPO / "scripts" / "setup" / ".env"
+env_loader.load_env_file(ENV)
 
 ES_URL = os.environ.get("ES_URL", "https://localhost:9200")
 ES_USER = os.environ.get("ES_USER", "elastic")

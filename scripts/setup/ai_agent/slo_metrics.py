@@ -18,6 +18,9 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
                                                   for detection tuning, not a target
   Stuck approval claims            == 0        — /approve claims older than 30 min
                                                   with no EXECUTED resolution (#247)
+  Orphaned claims                  == 0        — CLAIMED claims older than 10 min
+                                                  with no paired phase checkpoint,
+                                                  the claim-squatting signature (#257)
 
 Pure stdlib (requests). Env (auto-loaded from scripts/setup/.env):
   ES_URL, ES_USER, ES_PASS/ELASTIC_PASSWORD, KIBANA_URL, NTFY_TOPIC.
@@ -33,18 +36,18 @@ import requests
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
-ENV = REPO / "scripts" / "setup" / ".env"
-if ENV.exists():
-    for line in ENV.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k, v)
 
-# Shared connection-pooled, retrying Session (issue #170) — sibling module, no
-# installable package here yet (tracked separately), so sys.path like the tests do.
+# Shared connection-pooled, retrying Session (issue #170) + .env line parser
+# (#259) — sibling module, no installable package here yet (tracked
+# separately), so sys.path like the tests do. Moved before the .env-loading
+# block below (rather than staying next to es_client's own use further down)
+# specifically so env_loader is importable there.
 sys.path.insert(0, str(HERE.parent / "lib"))
+import env_loader  # noqa: E402
 import es_client  # noqa: E402
+
+ENV = REPO / "scripts" / "setup" / ".env"
+env_loader.load_env_file(ENV)
 
 ES_URL = os.environ.get("ES_URL", "https://localhost:9200")
 ES_USER = os.environ.get("ES_USER", "elastic")
@@ -66,12 +69,20 @@ TARGETS = {
     # the COUNT threshold) is a stranded alert, not a routine condition —
     # target is 0.
     "stuck_approval_claims": float(os.environ.get("SLO_STUCK_CLAIM_MAX", "0")),
+    # #257: any CLAIMED .claim doc with no corresponding phase checkpoint,
+    # past SLO_ORPHANED_CLAIM_MAX_MIN (the AGE window, read inside
+    # metric_orphaned_claims() below), is the cheap detectable signature of
+    # claim-squatting (pre-creating a .claim doc for a predictable alert_id
+    # before the real alert intake ever runs, so a legitimate /approve 409s
+    # "already claimed" and containment silently never happens) — target 0.
+    "orphaned_claims": float(os.environ.get("SLO_ORPHANED_CLAIM_MAX", "0")),
 }
 # Comparator per metric: True = lower is better (value <= target).
 LOWER_BETTER = {
     "mttd_minutes": True, "mttr_minutes": True, "coverage_techniques": False,
     "false_positive_pct": True, "ingest_lag_seconds": True, "parse_error_pct": True,
     "audit_write_failures": True, "stuck_approval_claims": True,
+    "orphaned_claims": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
 # not a benign "n/a". A dead/unreachable pipeline produces no fresh docs, so
@@ -302,6 +313,114 @@ def metric_stuck_approval_claims():
     return _count("agent-checkpoints-*", query)
 
 
+def metric_orphaned_claims():
+    """Count of CLAIMED .claim documents with no corresponding phase
+    checkpoint document (#257, follow-up from #245's security review).
+
+    checkpoints.claim_approval() wins a `{alert_id}.claim` doc via ES
+    op_type=create — atomic against a CONCURRENT claim, but not against one
+    PRE-CREATED before the real alert ever arrives. alert_id is a
+    deterministic sha256(tenant|ip|mac|severity|5m_bucket)
+    (generate_dedup_key), so an attacker who can predict an imminent
+    alert's inputs can precompute its alert_id and race to claim it first —
+    "claim squatting". A legitimate analyst's later /approve then 409s
+    "already claimed" against checkpoints.py's own at-most-once gate, and
+    isolation silently never happens, with no error anywhere an operator
+    would normally look.
+
+    Every LEGITIMATE claim is created by execute_approved() only after the
+    real alert's own phase checkpoint (bare `{alert_id}` doc, written during
+    intake — see agent.py's run()) already exists — so a claim doc with NO
+    paired phase doc, past a short grace window (to tolerate ordinary write
+    ordering/propagation, not a real detection gap), is exactly the
+    squatting signature: nothing else in this pipeline produces that shape.
+
+    ES has no native cross-document join, so this is a two-step check:
+    fetch the (typically small — genuinely open claims are rare) set of
+    CLAIMED docs past the grace window, then batch-check each one's paired
+    phase doc via a single _mget call rather than one round-trip per claim.
+
+    security-auditor review: the join key MUST come from the search hit's
+    own `_id`/`_index` metadata, never from `_source`. checkpoints.py writes
+    both the claim doc (`_index=agent-checkpoints-{tenant}`,
+    `_id={alert_id}.claim` — see claim_approval()) and its paired phase doc
+    (`_index=agent-checkpoints-{tenant}`, `_id={alert_id}` — see
+    write_checkpoint()) into the SAME index, so stripping the literal
+    ".claim" suffix off a claim hit's own `_id` and looking that up in that
+    SAME `_index` reconstructs the pairing with zero trust in document
+    content. `_source` is exactly the field an attacker holding (or having
+    compromised) the agent_checkpoints credential controls outright — an
+    earlier version of this function read `alert_id`/`tenant` from
+    `_source`, which both (a) let a crafted CLAIMED doc claim to pair with
+    an unrelated/self-referential target and evade detection entirely, and
+    (b) could crash the whole metrics run on a malformed shape (e.g.
+    `tenant: null`) — `dynamic: "strict"` accepts either without complaint,
+    and main()'s per-metric loop only catches MetricUnavailable, not
+    AttributeError.
+    """
+    try:
+        cutoff_min = float(os.environ.get("SLO_ORPHANED_CLAIM_MAX_MIN", "10"))
+    except ValueError as e:
+        raise MetricUnavailable(f"invalid SLO_ORPHANED_CLAIM_MAX_MIN: {e}") from e
+
+    query = {"bool": {"filter": [
+        {"term": {"phase": "CLAIMED"}},
+        {"range": {"@timestamp": {"lte": f"now-{cutoff_min:g}m"}}},
+    ]}}
+    try:
+        # No _source needed — only hit metadata (_id/_index) is trusted (see
+        # docstring). sort=@timestamp asc so a 200-cap truncation (below)
+        # drops the newest, least-suspicious claims first, not arbitrarily.
+        r = es("POST", "/agent-checkpoints-*/_search",
+               {"query": query, "size": 200, "_source": False,
+                # unmapped_type: an agent-checkpoints-* index missing the
+                # @timestamp mapping (should never happen once the template
+                # applies, but sort — unlike a query filter — has no
+                # tolerant default) would otherwise 400 the WHOLE search
+                # rather than just skip that index (security-auditor catch).
+                "sort": [{"@timestamp": {"order": "asc", "unmapped_type": "date"}}]})
+        if r.status_code != 200:
+            raise MetricUnavailable(f"orphaned-claims search returned HTTP {r.status_code}")
+        hits = r.json().get("hits", {}).get("hits", [])
+    except MetricUnavailable:
+        raise
+    except Exception as e:
+        raise MetricUnavailable(f"orphaned-claims search failed: {e}") from e
+
+    # size=200-capped, same reasoning/precedent as checkpoints.py's
+    # search_stuck_claims() (#276) — genuinely open claims should be rare
+    # under normal operation, so this is a soft cap, not a silent-truncation
+    # risk in practice; a deployment hitting it has a bigger problem than
+    # this metric alone can surface.
+    docs_to_check = []
+    for h in hits:
+        doc_id, index = h.get("_id", ""), h.get("_index", "")
+        # Every legitimate CLAIMED doc is a ".claim" doc (see docstring) —
+        # anything else in this shape is itself anomalous, not something to
+        # silently fold into the pairing check. base_id also excludes the
+        # degenerate _id==".claim" itself (security-auditor catch: an empty
+        # base id would build an _mget target of _id="", which can 400 the
+        # whole batch on some ES versions and turn "one crafted doc" into
+        # "the entire orphaned-claims metric goes dark").
+        base_id = doc_id[: -len(".claim")] if doc_id.endswith(".claim") else ""
+        if index and base_id:
+            docs_to_check.append({"_index": index, "_id": base_id})
+    if not docs_to_check:
+        return 0
+
+    try:
+        r = es("POST", "/_mget", {"docs": docs_to_check})
+        if r.status_code != 200:
+            raise MetricUnavailable(f"orphaned-claims mget returned HTTP {r.status_code}")
+        results = r.json().get("docs", [])
+    except MetricUnavailable:
+        raise
+    except Exception as e:
+        raise MetricUnavailable(f"orphaned-claims mget failed: {e}") from e
+
+    return sum(1 for d in results if not d.get("found"))
+
+
 def metric_raw_alert_volume():
     """Raw detection signal volume in the window, independent of whether a case
     was ever opened (#216) — metric_false_positive_pct() only sees analyst-
@@ -354,6 +473,7 @@ def main():
         "parse_error_pct": metric_parse_error_pct,
         "audit_write_failures": metric_audit_write_failures,
         "stuck_approval_claims": metric_stuck_approval_claims,
+        "orphaned_claims": metric_orphaned_claims,
         "raw_alert_volume": metric_raw_alert_volume,
     }
     values, errors = {}, {}

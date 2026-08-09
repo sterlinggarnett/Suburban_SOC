@@ -23,15 +23,78 @@ User=tjlam
 # soar-actions-*, logstash-security-*, agent-checkpoints-* (#247), and
 # soc-agent-health-* (#275) plus WRITE to soc-slo-metrics — it now runs as
 # the least-privilege `slo_metrics` user (role: slo_metrics_reader), not the `elastic`
-# superuser. EnvironmentFile loads SLO_METRICS_PASSWORD from .env; ES_PASS below
-# resolves it via systemd's ${VAR} expansion (systemd >= 246).
-EnvironmentFile=/home/tjlam/projects/Suburban-SOC/scripts/setup/.env
+# superuser.
+# #259 (security-auditor review): this used to EnvironmentFile= the WHOLE
+# raw scripts/setup/.env. That directive only strips WHOLE-line comments
+# (lines starting with # or ;) — unlike bash's `set -a; . .env` and
+# slo_metrics.py's own scripts/setup/lib/env_loader.py, it does NOT strip a
+# trailing " # comment" from a value. Loading the entire file this way
+# injected EVERY var in .env — including any SLO_*_MAX_MIN/PCT override,
+# exactly the comment-suffixed style #259 fixed — into THIS unit's process
+# environment before slo_metrics.py ever ran. Since os.environ.setdefault()
+# only fills a key that isn't already set, the Python-level fix could never
+# even run for a var systemd had already (mis)populated: #259 stayed broken
+# on this exact production path despite being "fixed" in the script. Fix:
+# extract ONLY the one secret this unit actually needs (SLO_METRICS_PASSWORD,
+# renamed to ES_PASS as it's extracted — see the security-auditor's round-3
+# catch below for why), comment-stripped the same way, into a scratch file
+# under RuntimeDirectory=. Nothing else from .env reaches the SYSTEMD-managed
+# environment (or either ExecStartPre child) any more — but slo_metrics.py's
+# own env_loader.load_env_file() call still loads the WHOLE .env into ITS
+# process (same as a manual `python3 slo_metrics.py` run), by design, so
+# every SLO_* override still works; this fix narrows systemd's OWN exposure,
+# not the Python process's.
+# [ \t] (not [[:space:]], which is locale-dependent) to match env_loader.py's
+# own deliberately ASCII-only inline-comment regex exactly. `grep | sed >
+# file` on its own would mask grep's exit status — sh -c reports the LAST
+# command's status, and sed "succeeds" (exit 0) even on zero input lines —
+# so a typo'd/rotated-away SLO_METRICS_PASSWORD key would otherwise write a
+# silently EMPTY scratch file instead of failing this step loudly. The final
+# `grep -Eq "^ES_PASS=.{8,}"` (not `test -s`, security-auditor round-3 catch:
+# `test -s` only rejects a fully EMPTY file — "SLO_METRICS_PASSWORD=" with a
+# blank value still produces a non-empty "ES_PASS=\n" line and would slip
+# through) requires an actual value of some minimum length, not just a
+# non-empty file.
+ExecStartPre=/bin/sh -c 'grep "^SLO_METRICS_PASSWORD=" /home/tjlam/projects/Suburban-SOC/scripts/setup/.env | sed -E "s/^SLO_METRICS_PASSWORD=/ES_PASS=/; s/[ \t]+#.*//" > /run/suburban-soc-slo/slo_metrics_password.env; grep -Eq "^ES_PASS=.{8,}" /run/suburban-soc-slo/slo_metrics_password.env'
+# security-auditor catch (round 2, HIGH): the "-" prefix is REQUIRED, not
+# optional polish. Every Exec* command in this unit — including the
+# ExecStartPre directly above, the one that CREATES this file — has
+# EnvironmentFile= applied to it before it execs. Without "-", systemd
+# requires the file to already exist even for that very first command,
+# which is a chicken-and-egg deadlock: the unit could never start at all,
+# on every single run (RuntimeDirectory= is torn down between runs since
+# this is Type=oneshot, so it's never a one-time bootstrap problem that
+# clears itself — it fails identically every time). "-" makes a missing
+# file a silent no-op for EnvironmentFile= parsing specifically; the
+# separate `grep -Eq` check above is what still makes a genuinely missing/
+# empty credential fail the unit loudly, so this does not reopen that gap.
+EnvironmentFile=-/run/suburban-soc-slo/slo_metrics_password.env
 Environment=ES_URL=https://localhost:9200
 Environment=ES_USER=slo_metrics
-Environment=ES_PASS=${SLO_METRICS_PASSWORD}
+# security-auditor catch (round 3, MEDIUM — verified empirically via
+# `systemctl --user show <unit> -p Environment` against a throwaway test
+# unit on this exact host): systemd's Environment= directive does NOT
+# perform ${VAR} expansion — per systemd.exec(5), "$" has no special
+# meaning there (only %-specifier expansion is). `Environment=ES_PASS=
+# ${SLO_METRICS_PASSWORD}` used to resolve to the LITERAL 23-character
+# string "${SLO_METRICS_PASSWORD}", not the password — meaning this unit
+# never actually authenticated correctly on this line, before OR after the
+# rest of #259's fix (every ES call 401s -> MetricUnavailable -> exit 3,
+# outside SuccessExitStatus, so the unit fails loudly, just for a reason
+# nothing here previously explained). Fixed at the source instead: the
+# ExecStartPre above now renames the key to ES_PASS as it extracts it, so
+# EnvironmentFile=- above supplies ES_PASS directly — no expansion needed.
 Environment=ES_CA=/run/suburban-soc-slo/ca.crt
 # /run/suburban-soc-slo, owned by the service user; auto-removed when the unit stops.
+# Mode 0700 (default would be 0755): the extracted SLO_METRICS_PASSWORD
+# scratch file's 0600 permissions otherwise rest entirely on UMask=0077
+# below applying to whatever ExecStartPre writes it — any future change to
+# that command (a differently-permissioned `install`/`tee`, a changed
+# umask) would silently drop that protection with nothing to catch it
+# (security-auditor review). A non-traversable directory makes the
+# guarantee structural instead of incidental.
 RuntimeDirectory=suburban-soc-slo
+RuntimeDirectoryMode=0700
 # The stack CA lives only in a docker volume (no stable host path under Docker Desktop/WSL),
 # so pull it from the ES container each run. Idempotent.
 ExecStartPre=/usr/bin/docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt /run/suburban-soc-slo/ca.crt

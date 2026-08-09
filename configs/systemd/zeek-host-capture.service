@@ -31,26 +31,62 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+# CAP_CHOWN: the ExecStartPre steps below (chgrp .../intel to tjlam, and
+# chown .../intel.dat to tjlam) need it — this unit runs as root but
+# CapabilityBoundingSet= still gates what root itself can do, so a bare
+# UID 0 is not enough. Missing here since #209 added this line before #222
+# later added a chown step on top of it: reproduced live on this exact host
+# (systemctl status showed that step failing "Operation not permitted", not
+# a filesystem/ownership issue — the classic EPERM signature of a missing
+# capability, not EACCES). No setfacl/getfacl available on this host —
+# otherwise an ACL grant (adds tjlam access without transferring root's own)
+# would have avoided needing this capability entirely (security-auditor
+# review).
+# CAP_SETUID/CAP_SETGID: found live on this exact host AFTER the CAP_CHOWN
+# fix above was already deployed and working (two clean restarts) — a THIRD
+# restart crash-looped with "tcpdump: Couldn't change to 'tcpdump'
+# uid=105 gid=110: Operation not permitted". Per `man tcpdump`: "If run as
+# root ... tcpdump will try to change the tcpdump process's ... user ID to
+# that of ... tcpdump ... This behavior is enabled by DEFAULT (-Z tcpdump)."
+# I.e. tcpdump has always tried this on this host (the dedicated `tcpdump`
+# system user already existed) — the EPERM is deterministic given the
+# bounding set, not host-state flakiness (security-auditor emergency
+# review): the two restarts that didn't hit it either ran against a stale
+# /etc/systemd/system/ copy that predated this bounding set entirely, or
+# their "success" was only ever conn.log traffic from a DIFFERENT capture
+# path (scripts/setup/stream_capture.sh, an unrestricted-sudo session that
+# does not need these capabilities) — at the time, ExecStart below had no
+# `pipefail`, so a dead tcpdump leg would not have failed the unit as long
+# as the docker leg was still up. Fixed by adding `set -o pipefail` below
+# so this class of masked failure surfaces going forward (it no longer
+# applies to the ExecStart as it stands now). This is the CORRECT fix, not a workaround:
+# tcpdump shedding root for an unprivileged, purpose-built system user after
+# opening the raw socket is exactly the kind of privilege minimization this
+# whole capability-narrowing effort (#182/#209) is for — the alternative
+# (`-Z root` on the ExecStart line, disabling the drop) would leave tcpdump
+# running as root for its entire lifetime instead.
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID
 # Default interface; override via /etc/default/zeek-host-capture (optional).
 Environment=CAPTURE_IFACE=eth0
 EnvironmentFile=-/etc/default/zeek-host-capture
+# CWE-59 (security-auditor emergency review, HIGH, pre-existing): /storage/PCAP
+# is tjlam-owned, so a tjlam-level actor can replace /storage/PCAP/intel (or
+# zeek_logs) with a symlink (e.g. to /etc/sudoers.d) before a restart. mkdir -p
+# and cp -r both follow symlinks silently, so root's own cp below would then
+# write every file under configs/intel/* into the symlink target as
+# root:root — full tjlam->root escalation, and neither the chown/chmod -h
+# guards below cover it since those run after mkdir/cp already succeeded.
+# security-auditor re-review: checking the directory itself is NOT enough —
+# intel.dat is deliberately tjlam-OWNED (see the chown below), and the sticky
+# bit permits an owner to unlink/replace its own file, so tjlam can swap
+# intel.dat itself for a symlink without touching the directory at all. Sweep
+# for symlinks one level down too, not just the directory entries themselves.
+# Fail closed instead of following any of it.
+ExecStartPre=/bin/bash -c '[ ! -L /storage/PCAP/intel ] && [ ! -L /storage/PCAP/zeek_logs ] || { echo "FATAL: /storage/PCAP/intel or zeek_logs is a symlink, refusing to follow it" >&2; exit 1; }; [ -z "$(find /storage/PCAP/intel -maxdepth 1 -type l -print -quit 2>/dev/null)" ] || { echo "FATAL: symlink found inside /storage/PCAP/intel, refusing to follow it" >&2; exit 1; }'
 # Refresh threat-intel configs into the host volume Zeek reads (mirrors the scripts).
 ExecStartPre=/bin/mkdir -p /storage/PCAP/zeek_logs /storage/PCAP/intel
-# This unit runs as root, so a directory `mkdir -p` creates here is root:root
-# — but intel-refresh.service (configs/systemd/intel-refresh.service) runs as
-# the unprivileged repo-owner user and needs to WRITE intel.dat into this
-# same directory on every scheduled refresh, not just at Zeek's own startup.
-# Found live on this exact host while building #222: /storage/PCAP/intel was
-# already root:root 755 (this line's own doing on an earlier start) while its
-# parent /storage/PCAP is tjlam:tjlam - refresh_intel.sh's live-sync `cp`
-# was silently failing every run ("NOTE: could not write ... (permissions?)"
-# in its own log) and the running Zeek capture was never actually getting
-# the refreshed feed between restarts. chown here so every start of this
-# unit self-heals the permission regardless of how the directory got created.
-ExecStartPre=/bin/chown tjlam:tjlam /storage/PCAP/intel
 # #222: config.zeek's zeek_init() calls suspend_processing() and only resumes
-# on Input::end_of_data for /data/intel/intel.dat (config.zeek:7-14) - if that
+# on Input::end_of_data for /data/intel/intel.dat (config.zeek:33-41) - if that
 # file does not exist AT ALL when Zeek starts, that event never fires and
 # packet processing hangs forever (reproduced directly: `zeek -r - config.zeek`
 # with no intel.dat present logs "processing suspended" / a read error and
@@ -64,12 +100,99 @@ ExecStartPre=/bin/chown tjlam:tjlam /storage/PCAP/intel
 # produced a live-merged one yet. The timer's first run (5 min after boot,
 # see intel-refresh.timer) overwrites this with the real merged feed shortly
 # after, via refresh_intel.sh's own LIVE_DIR sync step.
-ExecStartPre=/bin/bash -c 'cp -r /home/tjlam/projects/Suburban-SOC/configs/intel/* /storage/PCAP/intel/ 2>/dev/null || true; [ -f /storage/PCAP/intel/intel.dat ] || cp /home/tjlam/projects/Suburban-SOC/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat'
+# security-auditor review (2nd pass): an earlier draft of this fix instead
+# did `chown tjlam:tjlam` (transferring ownership away from root) and moved
+# it to run AFTER this cp step specifically so root could still write here
+# on THIS run — but that only holds for the very first start ever. Once the
+# directory is tjlam-owned, EVERY later restart hits this cp BEFORE any
+# chown step runs again, and root has already permanently lost write access
+# from the previous start — turning the repo->sensor policy sync into a
+# silent, permanent no-op from the second restart onward, invisible because
+# of the `2>/dev/null || true` below. The chgrp+sticky-bit design below
+# fixes this at the root (root never stops owning the directory), so this
+# cp keeps working on every single restart, not just the first.
+# security-auditor review (3rd pass): "-s" (non-empty), not "-f" (merely
+# exists) — a zero-byte/truncated intel.dat would otherwise pass this check
+# and skip the seed fallback, and per config.zeek:33-41 an intel.dat that
+# never reaches Input::end_of_data leaves packet processing permanently
+# suspended while systemd still reports the unit "active (running)".
+# "--remove-destination": defense-in-depth for the TOCTOU window between the
+# symlink sweep above (a separate ExecStartPre process) and this cp — GNU cp
+# without it opens an *existing* destination symlink's target for writing
+# (follows it) rather than replacing the link; --remove-destination unlinks
+# the destination path first so a symlink planted in that window is deleted,
+# not written through, and root owns this directory so the unlink succeeds
+# regardless of who owns the (removed) symlink (security-auditor re-review).
+ExecStartPre=/bin/bash -c 'cp -r --remove-destination /home/tjlam/projects/Suburban-SOC/configs/intel/* /storage/PCAP/intel/ 2>/dev/null || true; [ -s /storage/PCAP/intel/intel.dat ] || cp /home/tjlam/projects/Suburban-SOC/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat'
+# intel-refresh.service (configs/systemd/intel-refresh.service) runs as the
+# unprivileged repo-owner user and needs to WRITE intel.dat into this same
+# directory on every scheduled refresh, not just at Zeek's own startup — but
+# the mkdir above leaves it root:root. Found live on this exact host while
+# building #222: /storage/PCAP/intel was already root:root 755 (an earlier
+# start's own doing) while its parent /storage/PCAP is tjlam:tjlam -
+# refresh_intel.sh's live-sync `cp` was silently failing every run ("NOTE:
+# could not write ... (permissions?)" in its own log) and the running Zeek
+# capture was never actually getting the refreshed feed between restarts.
+# security-auditor review (2nd pass): ADD tjlam access via group ownership +
+# sticky bit rather than TRANSFER ownership via a plain chown (the #222
+# original, and this fix's own first draft) — root stays the directory
+# OWNER permanently, so it never loses its own write access on any later
+# restart (closing the cp-becomes-a-no-op gap above), and the sticky bit
+# (mode 1775) means tjlam can create/modify files here (the group-write bit)
+# but can only DELETE/rename files it itself owns. This raises the bar for
+# tampering with config.zeek in place (stays root-owned) but is NOT a full
+# guarantee (security-auditor review, 3rd pass): /storage/PCAP itself is
+# tjlam-owned (see the earlier comment above), so a sufficiently motivated
+# tjlam-level actor could still rename this whole directory aside and
+# substitute one of its own before a restart — sticky-bit protection inside
+# a directory does not extend to protecting the directory's own identity.
+# security-auditor review (emergency pass): the sticky bit is ALSO not the
+# actual barrier to tampering with config.zeek's *content* day-to-day — the
+# cp -r above re-installs configs/intel/config.zeek from the tjlam-writable
+# repo checkout on every single restart, so anyone who can edit that repo
+# file gets it loaded into the root-owned directory (and executed by Zeek
+# as the capture container's policy) on the next restart with no sticky-bit
+# interaction at all. Closing that (and the directory-rename gap above)
+# needs config.zeek served from a root-owned path outside this tree
+# entirely; tracked as a follow-up (see #270), not fixed here.
+# "-h" on both chown lines: GNU chown dereferences a symlink argument by
+# default, so a chown (unlike this chgrp-via-chown, and the intel.dat one
+# below) run against a symlinked path would retarget whatever the symlink
+# points at instead — "-h" operates on the link itself, a no-op on a real
+# directory/file but a real guard if /storage/PCAP/intel or intel.dat were
+# ever replaced by a symlink (accidentally or otherwise) before this runs.
+# chmod has no "-h"/no-dereference equivalent on Linux (symlinks carry no
+# permission bits of their own to change) — a symlinked /storage/PCAP/intel
+# would apply this chmod to whatever the link points at instead. Chained
+# with the chown via && (not two separate "-"-prefixed lines) so a failed
+# chown can't leave a root:root directory silently chmod'd to 1775 by the
+# next line running anyway — either both apply, or the whole chain no-ops
+# and is retried next restart (security-auditor review, 3rd pass).
+# "-"-prefixed: capture availability outranks intel freshness — a failure
+# in this self-heal chain must not crash-loop the SOC's only network
+# sensor. A failure here degrades to refresh_intel.sh's own tagged "stale"
+# status (visible via the intel_feed_stale watcher), not a capture outage.
+ExecStartPre=-/bin/bash -c 'chown -h root:tjlam /storage/PCAP/intel && chmod 1775 /storage/PCAP/intel'
+# intel.dat itself (not just the directory) needs to be tjlam-OWNED, not
+# merely group-writable: refresh_intel.sh's live sync writes a temp file
+# then renames it over intel.dat (configs/intel/refresh_intel.sh) — and the
+# sticky bit above only permits a rename-over (an implicit unlink of the
+# replaced file) by that file's OWNER or the directory's owner. tjlam is
+# neither by default (root owns both), so without this line the sticky bit
+# that protects config.zeek would ALSO block the one write intel-refresh
+# actually needs to make. config.zeek itself is deliberately left off this
+# line — it stays root:root, protected by the sticky bit above.
+ExecStartPre=-/bin/chown -h tjlam:tjlam /storage/PCAP/intel/intel.dat
 # Clear any stale container left by a hard kill (the run uses --rm for clean exit).
 ExecStartPre=-/usr/bin/docker rm -f zeek-host-capture
 # tcpdump captures in the host (WSL) net namespace; Zeek parses the live pcap from stdin.
 # Runs as root under systemd, so tcpdump needs no separate sudo.
-ExecStart=/bin/bash -c '/usr/bin/tcpdump -i ${CAPTURE_IFACE} -s 0 -U -w - | /usr/bin/docker run -i --rm --name zeek-host-capture -v /storage/PCAP/zeek_logs:/data/zeek_logs -v /storage/PCAP/intel:/data/intel -v /home/tjlam/projects/Suburban-SOC/scripts/setup/configs/zeek:/data/policy:ro -w /data/zeek_logs zeek/zeek zeek -C -r - LogAscii::use_json=T /data/intel/config.zeek /data/policy/scan-detection.zeek'
+# "set -o pipefail": without it, bash's exit status is docker run's alone -
+# a dead/EPERM'd tcpdump leg (e.g. the CAP_SETUID/CAP_SETGID crash above)
+# leaves systemd reporting this unit healthy while no packets are actually
+# being captured (security-auditor emergency review - this is the likely
+# reason the first two restarts read as "clean" before the third crash-looped).
+ExecStart=/bin/bash -c 'set -o pipefail; /usr/bin/tcpdump -i ${CAPTURE_IFACE} -s 0 -U -w - | /usr/bin/docker run -i --rm --name zeek-host-capture -v /storage/PCAP/zeek_logs:/data/zeek_logs -v /storage/PCAP/intel:/data/intel -v /home/tjlam/projects/Suburban-SOC/scripts/setup/configs/zeek:/data/policy:ro -w /data/zeek_logs zeek/zeek zeek -C -r - LogAscii::use_json=T /data/intel/config.zeek /data/policy/scan-detection.zeek'
 ExecStop=-/usr/bin/docker stop -t 10 zeek-host-capture
 Restart=always
 RestartSec=5

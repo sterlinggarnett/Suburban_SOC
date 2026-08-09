@@ -33,11 +33,15 @@ multi-issue runs.
   copy has already drifted), #305 (add a live `_has_privileges` self-check),
   #306 (remaining cleartext-password lines + `logstash_writer`'s over-broad
   `manage` privilege on `soc-agent-health-*`).
-  - [~] **#303 — PR OPEN, NOT MERGED**, fixed 2026-08-09: root cause was
+  - [x] **#303 — COMPLETE, MERGED**, fixed 2026-08-09: root cause was
     actually TWO bugs, not just apostrophes — Compose's variable-
     interpolation pass (runs before shell-word-splitting, no concept of "this
     is a comment") also choked on a bare `$` in explanatory comment text.
-    [PR #317](https://github.com/voltron-1/Suburban_SOC/pull/317).
+    [PR #317](https://github.com/voltron-1/Suburban_SOC/pull/317) merged
+    2026-08-09 (squash), 13/13 CI green including the new `docker compose
+    config (interpolation/syntax)` job this PR itself introduced — the first
+    real run of that check against the fully-combined M14 batch content,
+    since every other M14 PR branched before it existed on `main`.
     Live-verified: `docker compose up -d` now runs clean end-to-end on a real
     host (every one-shot provisioning container exits 0, every long-running
     service comes up healthy) — this was blocking `docker compose up`
@@ -72,30 +76,60 @@ multi-issue runs.
   a narrower variant of the same bug class) and #309 (request_id
   sanitization/bounding, audit-trail correlation, a detection rule for the
   two new tamper-indicator audit actions, redirect-following hardening).
-- [~] **#276, #278 (P1) — PR OPEN, NOT MERGED** — no operator tool for a
+- [x] **#276, #278 (P1) — COMPLETE, MERGED** — no operator tool for a
   stuck claim; an `unknown` isolation outcome has no reconciliation path.
-  [PR #311](https://github.com/voltron-1/Suburban_SOC/pull/311).
-- [~] **#286 (P2) — PR OPEN, NOT MERGED** — MAC-based device quarantine is
+  [PR #311](https://github.com/voltron-1/Suburban_SOC/pull/311) merged
+  2026-08-09 (squash) — added `manage_stuck_claims.py`, a CLI to inspect/
+  release/resolve a stuck claim, with optimistic-concurrency (if_seq_no/
+  if_primary_term) protection and idempotent blocking so a retried
+  reconciliation can't double-execute. #276/#278's SOP-005 OpenWrt UCI
+  `config include` syntax check remains genuinely untestable in this
+  environment (no real OpenWrt/fw4 hardware) — reconfirmed, not newly
+  unblocked. A genuine pre-existing mypy bug (`_transition_claim()`'s
+  `doc`/`params` dict typing — mypy couldn't narrow `if_primary_term`
+  through the function's own XOR guard) was found and fixed during the
+  merge-to-main pass, unrelated to the feature logic; 88/88
+  claim-transition tests pass unchanged.
+- [x] **#286 (P2) — COMPLETE, MERGED** — MAC-based device quarantine is
   non-functional (two stacked pipeline breaks: no `orig_l2_addr`→
   `source.mac` rename in the reachable Logstash branch, and no
   conn.log↔intel.log join even after that).
-  [PR #313](https://github.com/voltron-1/Suburban_SOC/pull/313). Filed
-  [#312](https://github.com/voltron-1/Suburban_SOC/issues/312) as a
-  deferred policy decision (AUTONOMOUS_ISOLATION gate), deliberately out
-  of scope for this fix.
-- [~] **#256 (P2) — PR OPEN, NOT MERGED** — agent-checkpoints TTL
-  retention. [PR #314](https://github.com/voltron-1/Suburban_SOC/pull/314).
-- [~] **#257 (P2) — PR OPEN, NOT MERGED** — hardening follow-ups from
-  #245's review (placeholder-secret rejection, `logstash_writer` cluster-
+  [PR #313](https://github.com/voltron-1/Suburban_SOC/pull/313) merged
+  2026-08-09 (squash) — added the rename plus a uid-keyed correlation via
+  a new dedicated `logstash_enrich_reader` read-only identity (least
+  privilege, separate from `logstash_writer`, which holds no read at
+  all). Filed [#312](https://github.com/voltron-1/Suburban_SOC/issues/312)
+  as a deferred policy decision (AUTONOMOUS_ISOLATION gate), deliberately
+  out of scope. The PR's own `Conn::IN_RESP` live-runtime test-plan item
+  was resolved by the repo owner choosing to accept the existing
+  static-analysis verification (direct Zeek source-code tracing) rather
+  than restart the just-stabilized zeek-host-capture sensor again.
+- [x] **#256 (P2) — COMPLETE, MERGED** — agent-checkpoints TTL retention.
+  [PR #314](https://github.com/voltron-1/Suburban_SOC/pull/314) merged
+  2026-08-09 (squash) — a new `agent_checkpoints_compactor` least-privilege
+  identity (read+delete only, deliberately separate from the live agent's
+  own no-delete credential) plus a scheduled systemd timer, matching the
+  `slo-metrics` pattern. Hit a real merge conflict against `main` (both
+  this and #313 added independent env-var/role-provisioning blocks to
+  `docker-compose.yml`/`.env.example` at the same insertion point) —
+  resolved by keeping both blocks intact, each with its own `if`/`fi`;
+  mypy clean, 43 source files.
+- [x] **#257 (P2) — COMPLETE, MERGED** — hardening follow-ups from #245's
+  review (placeholder-secret rejection, `logstash_writer` cluster-
   privilege reduction, claim-squatting detection).
-  [PR #315](https://github.com/voltron-1/Suburban_SOC/pull/315).
-- [~] **#259 (tech-debt) — PR OPEN, NOT MERGED** — `slo_metrics.py`'s
-  `.env` parser breaks on inline comments; also fixed `run_hunts.py`'s
-  identical bug, and a more severe issue this one's fix exposed —
+  [PR #315](https://github.com/voltron-1/Suburban_SOC/pull/315) merged
+  2026-08-09 (squash).
+- [x] **#259 (tech-debt) — COMPLETE, MERGED** — `slo_metrics.py`'s `.env`
+  parser breaks on inline comments; also fixed `run_hunts.py`'s identical
+  bug, and a more severe issue this one's fix exposed —
   `slo-metrics.service`'s systemd `EnvironmentFile=` stayed broken
   regardless of the Python-level fix, and separately `ES_PASS` was never
   actually being set at all (`Environment=` doesn't expand `${VAR}`,
-  verified empirically). [PR #316](https://github.com/voltron-1/Suburban_SOC/pull/316).
+  verified empirically). [PR #316](https://github.com/voltron-1/Suburban_SOC/pull/316)
+  merged 2026-08-09 (squash) — another real merge conflict (#315 and #316
+  independently added test classes to the same insertion point in
+  `test_slo_metrics.py`), resolved by keeping both classes; 4/4 of the
+  directly-affected tests pass post-resolution.
 
 - [x] **Session-initiated, no issue — `zeek-host-capture.service`
   crash-loop — COMPLETE, MERGED** — the SOC's only network sensor had
@@ -121,16 +155,17 @@ multi-issue runs.
   separately: [#270](https://github.com/voltron-1/Suburban_SOC/issues/270)
   (config.zeek's own co-location in a tjlam-writable tree) not closed by
   this fix.
-- [~] **`scripts/setup/install_intel_refresh_timer.sh` — off-by-one repo
-  path — PR OPEN, NOT MERGED** — `REPO="$(cd "$HERE/.." && pwd)"`
-  resolved to `scripts/`, not the repo root (should be `$HERE/../..`,
-  matching the sibling `redeploy_systemd_units.sh`), breaking a fresh
-  install (`cannot stat 'configs/systemd/intel-refresh.service'`).
-  [PR #323](https://github.com/voltron-1/Suburban_SOC/pull/323).
-  Live-verified once fixed: fetched 5 Feodo Tracker + 555 Emerging
-  Threats indicators, wrote `intel.dat` into the capture directory —
-  also incidentally proving the zeek-capture ownership fix chain above
-  works end-to-end.
+- [x] **Session-initiated, no issue —
+  `scripts/setup/install_intel_refresh_timer.sh` off-by-one repo path —
+  COMPLETE, MERGED** — `REPO="$(cd "$HERE/.." && pwd)"` resolved to
+  `scripts/`, not the repo root (should be `$HERE/../..`, matching the
+  sibling `redeploy_systemd_units.sh`), breaking a fresh install
+  (`cannot stat 'configs/systemd/intel-refresh.service'`).
+  [PR #323](https://github.com/voltron-1/Suburban_SOC/pull/323) merged
+  2026-08-09 (squash). Live-verified once fixed: fetched 5 Feodo Tracker
+  + 555 Emerging Threats indicators, wrote `intel.dat` into the capture
+  directory — also incidentally proving the zeek-capture ownership fix
+  chain above works end-to-end.
 - [x] **Session-initiated, no issue — version `CLAUDE.md` + custom
   agent/slash-command definitions — COMPLETE, MERGED** — `CLAUDE.md`
   (blue-team analysis conventions) and
@@ -138,23 +173,27 @@ multi-issue runs.
   `.claude/commands/{sigma-validate,sigma-rule,triage}.md` existed only
   locally, uncommitted. [PR #325](https://github.com/voltron-1/Suburban_SOC/pull/325)
   merged 2026-08-09 (squash), same review-bypass basis as PR #324.
-- [x] **#286 test plan — `Conn::IN_RESP` live-runtime verification —
-  RESOLVED without a live test** — the repo owner chose to accept the
-  existing static-analysis verification (direct Zeek source-code tracing
-  of `policy/frameworks/intel/seen/conn-established.zeek`, done during
-  #286's original development) rather than restart the just-stabilized
-  production sensor again for a live-runtime confirmation. PR #313
-  itself is unchanged, still open, not merged.
-- **#276/#278's SOP-005 OpenWrt UCI `config include` syntax check remains
-  genuinely untestable in this environment** — no real OpenWrt/fw4
-  hardware, and nothing this session unlocked a way to test it. PR #311
-  unchanged, still open, not merged.
 
-All 6 issues from this batch now have open PRs; none merged yet — each
-requires separate explicit merge confirmation. Next unstarted item: none
-— next step is reviewing and merging the 5 open PRs (#311, #313, #314,
-#315, #316). #323 (install_intel_refresh_timer.sh fix, unrelated to the
-M14 batch) is also open and awaiting review/merge.
+**M14 is COMPLETE** — all 8 milestone issues closed 2026-08-09 (#276,
+#278, #286, #256 merged via squash without an auto-close keyword —
+`Part of #XXX` phrasing, same recurring shape as M12/M13's PRs — closed
+manually with the merging PR cited as evidence; #275/#277/#257/#259
+auto-closed). All 7 PRs from this session (#311, #313, #314, #315, #316,
+#317, #323) merged squash, no GitHub-side human review — explicit
+review-bypass confirmed by the repo owner as one batch covering all 7,
+each branch updated to `main` and green on all required CI immediately
+before its own merge. Three PRs
+(#314, #316, and the zeek-capture branch earlier) hit real merge
+conflicts as `main` advanced between merges — all textually-additive
+(independent blocks/test classes landing at the same insertion point,
+no semantic overlap), resolved by keeping both sides' content intact and
+re-verifying mypy/tests after each resolution, not just re-running
+`systemd-analyze verify`-style syntax checks. `main` post-merge: mypy
+clean across 45 source files, 434/437 tests pass (the 3 failures are
+pre-existing and unrelated — a mocked `coverage_techniques` value
+tripping an unrelated SLO threshold, confirmed via `git stash` comparison
+against unmodified `HEAD`). Next unstarted item: none — M14's own scope
+is done; see MILESTONE BACKLOG below for M15/M16.
 
 ---
 
@@ -1122,7 +1161,8 @@ are implemented in code; checked off with that one caveat noted inline.
   merged (squash), explicit review-bypass confirmed by the repo owner.
   Along the way, also found and fixed an unrelated off-by-one repo-path
   bug in `scripts/setup/install_intel_refresh_timer.sh` — [PR
-  #323](https://github.com/voltron-1/Suburban_SOC/pull/323), still open.
+  #323](https://github.com/voltron-1/Suburban_SOC/pull/323), merged
+  later this same session (see below).
   `CLAUDE.md` and 4 custom `.claude/` agent/slash-command definitions
   that existed only locally were versioned — [PR
   #325](https://github.com/voltron-1/Suburban_SOC/pull/325), merged
@@ -1131,7 +1171,33 @@ are implemented in code; checked off with that one caveat noted inline.
   owner choosing to accept the existing static-analysis verification
   rather than restart the just-stabilized sensor again; #276/#278's
   SOP-005 OpenWrt UCI item was reconfirmed still untestable in this
-  environment. See NEXT UP above for full detail.
+  environment.
+
+- **All remaining M14 PRs (#311, #313, #314, #315, #316, #317) plus #323
+  updated to `main` and merged this same session**, closing out M14
+  entirely: each branch was individually re-merged with `main` (not just
+  GitHub's "Update branch"), verified green on every required CI check,
+  then squash-merged one at a time — never batched into a single
+  unattended pass. Two real merge conflicts surfaced as `main` advanced
+  between merges (#314 against `.env.example`/`docker-compose.yml`,
+  #316 against `test_slo_metrics.py`), both purely additive (independent
+  blocks/test classes from different PRs landing at the same insertion
+  point) and resolved by keeping both sides' content, re-verifying mypy
+  and the directly-affected tests after each. Caught and fixed a genuine
+  pre-existing mypy bug in `checkpoints.py`'s `_transition_claim()`
+  surfaced only once CI's mypy check ran against the real combined
+  content (dict-typing inference couldn't see through the function's own
+  XOR guard) — fixed with explicit type annotations + a documenting
+  `assert`, verified via `tester-debugger` against the full test suite
+  (88/88 claim-transition tests unchanged) before pushing. Chased a
+  false-positive local `docker compose config` failure that reproduced
+  even on weeks-old, unrelated `main` history — confirmed via GitHub's
+  own CI (which passed the equivalent real check on #317) that this was
+  a local docker-compose-version artifact, not a defect. #276, #278,
+  #286, #256 required manual issue-closing (squash merge, PR body used
+  "Part of #XXX" not "Closes", same recurring gap as M12/M13's PRs).
+  **M14 is now COMPLETE** — 8/8 milestone issues closed. See NEXT UP
+  above for full per-PR detail.
 
 ## LAST SESSION — 2026-08-08
 

@@ -493,11 +493,18 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
                      HMAC_HEADER: sig, HMAC_TS_HEADER: ts},
             # #247 security-auditor review (round 3): 20s, not 15s — the
             # broker's own SSH connect+command budget is 5s+5s=10s worst case
-            # per router (dispatcher.py's SSH_CONNECT_TIMEOUT/SSH_COMMAND_TIMEOUT),
-            # and this must stay comfortably above that or a merely-slow (not
-            # ambiguous) router would make the AGENT time out first, raising
-            # IsolationOutcomeUnknown for what would have been a clean answer.
-            timeout=20,
+            # per router (dispatcher.py's SSH_CONNECT_TIMEOUT/SSH_COMMAND_TIMEOUT).
+            # #278 added a bounded read-only follow-up on an ambiguous outcome
+            # (SSH_VERIFY_CONNECT_TIMEOUT/SSH_VERIFY_COMMAND_TIMEOUT, 3s+3s),
+            # raising the real per-router worst case to 16s — routers dispatch
+            # concurrently (dispatcher.py's asyncio.gather), so this is the
+            # bound for the whole call, not per-router summed. Raised to 25s
+            # (security-auditor round-2 LOW: 20s left only ~4s of slack over
+            # #278's 16s, and if the AGENT times out first it discards
+            # whatever reconciliation result the broker just computed and
+            # manufactures exactly the stuck claim #278 exists to avoid) so a
+            # completed reconciliation is never thrown away by the client.
+            timeout=25,
         )
     except Exception as exc:  # noqa: BLE001 - never let response handling crash
         logger.error("broker dispatch outcome UNKNOWN (request failed after send): %s", exc)

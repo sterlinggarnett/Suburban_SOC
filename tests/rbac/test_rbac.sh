@@ -29,6 +29,7 @@ admin -o /dev/null -X PUT "$ES_URL/agent-checkpoints-rbactest/_doc/rbactest1?ref
 mkuser t_analyst soc_analyst
 mkuser t_logstash logstash_writer
 mkuser t_agent_checkpoints agent_checkpoints
+mkuser t_logstash_enrich logstash_enrich_reader
 
 echo "== soc_analyst: read-only on SOC data, no admin =="
 expect "analyst reads logstash-*"           "$(as t_analyst "$ES_URL/logstash-security-*/_search?size=0")" 200
@@ -59,7 +60,14 @@ expect "agent_checkpoints CANNOT delete a checkpoint doc"   "$(as t_agent_checkp
 # does 403, to actually test the boundary.
 expect "agent_checkpoints CANNOT read logstash-security-*"  "$(as t_agent_checkpoints "$ES_URL/logstash-security-default/_search?size=0")" 403
 
-rmuser t_analyst; rmuser t_logstash; rmuser t_agent_checkpoints
+echo "== logstash_enrich_reader: #286 MAC-correlation lookup, read-only on logstash-security-*, nothing else =="
+expect "logstash_enrich_reader reads logstash-security-*"        "$(as t_logstash_enrich "$ES_URL/logstash-security-rbactest/_search?size=0")" 200
+# The whole point of #286's CRITICAL fix: this credential must NEVER be able
+# to write — a compromised correlation lookup must not become a write primitive.
+expect "logstash_enrich_reader CANNOT write logstash-security-*" "$(as t_logstash_enrich -X POST "$ES_URL/logstash-security-rbactest/_doc" -H 'Content-Type: application/json' -d '{"x":1}')" 403
+expect "logstash_enrich_reader CANNOT read agent-checkpoints-*"  "$(as t_logstash_enrich "$ES_URL/agent-checkpoints-rbactest/_search?size=0")" 403
+
+rmuser t_analyst; rmuser t_logstash; rmuser t_agent_checkpoints; rmuser t_logstash_enrich
 admin -o /dev/null -X DELETE "$ES_URL/logstash-security-rbactest"
 admin -o /dev/null -X DELETE "$ES_URL/asset-inventory-rbactest"
 admin -o /dev/null -X DELETE "$ES_URL/agent-checkpoints-rbactest"

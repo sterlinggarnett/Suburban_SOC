@@ -49,10 +49,10 @@ ROUTER = {"id": "test-router", "tenant": "home-smith", "ip_address": "192.168.1.
 _SIGKILL = ("SIGKILL", False, "Killed", "en-US")
 
 
-def _process_error(exit_signal=None):
+def _process_error(exit_signal=None, exit_status=1):
     return asyncssh.ProcessError(
         env=None, command="nft add rule ...", subsystem=None,
-        exit_status=None if exit_signal else 1, exit_signal=exit_signal, returncode=1,
+        exit_status=None if exit_signal else exit_status, exit_signal=exit_signal, returncode=1,
         stdout="", stderr="nft: rule rejected", reason="Command failed")
 
 
@@ -130,6 +130,163 @@ class BlockIpOnRouterTests(unittest.TestCase):
         # login_timeout bounds auth/KEX too, not just the TCP handshake —
         # connect_timeout alone may not cover a stalled authentication phase.
         self.assertEqual(kwargs["login_timeout"], dispatcher.SSH_CONNECT_TIMEOUT)
+
+
+# --- #278: bounded follow-up reconciliation of an "unknown" outcome --------
+class ReconciliationTests(unittest.TestCase):
+    def test_stays_unknown_when_followup_confirms_present_membership_is_not_containment_proof(self):
+        # security-auditor HIGH finding: `nft get element` proves SET
+        # MEMBERSHIP, not that the referencing drop rule still exists in a
+        # reachable chain. A false "success" here would flow into
+        # agent.py's close_case(..., "true_positive_contained") with no
+        # possibility of retry, so reconciliation must NEVER promote to
+        # success — even when the follow-up gets a clean determinate
+        # "present" answer, this must stay "unknown" for a human to decide.
+        original_conn = _mock_conn(run_side_effect=ConnectionResetError("connection lost"))
+        followup_conn = _mock_conn()  # run() succeeds by default
+        with mock.patch.object(dispatcher.asyncssh, "connect",
+                               new=mock.AsyncMock(side_effect=[original_conn, followup_conn])):
+            result = asyncio.run(dispatcher.block_ip_on_router(ROUTER, "1.2.3.4"))
+        self.assertEqual(result, "unknown")
+
+    def test_unknown_is_reconciled_to_failed_when_followup_confirms_absent(self):
+        # Same ambiguous original attempt, but the follow-up's `nft get
+        # element` cleanly reports the element is NOT present (non-zero
+        # exit, no signal) -> promoted to a confirmed failure, safe to
+        # release the approval claim and retry.
+        original_conn = _mock_conn(run_side_effect=ConnectionResetError("connection lost"))
+        followup_conn = _mock_conn(run_side_effect=_process_error())
+        with mock.patch.object(dispatcher.asyncssh, "connect",
+                               new=mock.AsyncMock(side_effect=[original_conn, followup_conn])):
+            result = asyncio.run(dispatcher.block_ip_on_router(ROUTER, "1.2.3.4"))
+        self.assertEqual(result, "failed")
+
+    def test_stays_unknown_when_followup_also_cannot_connect(self):
+        # The common case (router recovers) didn't apply this time — the
+        # follow-up itself couldn't reach the router either. Must NOT guess.
+        original_conn = _mock_conn(run_side_effect=ConnectionResetError("connection lost"))
+        with mock.patch.object(dispatcher.asyncssh, "connect",
+                               new=mock.AsyncMock(
+                                   side_effect=[original_conn, ConnectionRefusedError("still down")])):
+            result = asyncio.run(dispatcher.block_ip_on_router(ROUTER, "1.2.3.4"))
+        self.assertEqual(result, "unknown")
+
+    def test_stays_unknown_when_followup_exits_with_an_unrecognized_non_zero_status(self):
+        # security-auditor MEDIUM finding: `nft get element` can exit
+        # non-zero for reasons OTHER than "element absent" — missing
+        # set/table, unsupported flag combo, nft not on PATH (127), etc.
+        # Only exit 1 (nft's generic EXIT_FAILURE, not a code specific to
+        # "element absent" — see dispatcher.py's comment) may resolve to
+        # "failed"; anything else must stay unknown rather than misreport a
+        # genuinely-applied block as confirmed-failed.
+        original_conn = _mock_conn(run_side_effect=ConnectionResetError("connection lost"))
+        followup_conn = _mock_conn(run_side_effect=_process_error(exit_status=127))
+        with mock.patch.object(dispatcher.asyncssh, "connect",
+                               new=mock.AsyncMock(side_effect=[original_conn, followup_conn])):
+            result = asyncio.run(dispatcher.block_ip_on_router(ROUTER, "1.2.3.4"))
+        self.assertEqual(result, "unknown")
+
+    def test_stays_unknown_when_followup_itself_is_signaled(self):
+        # A signal-killed VERIFICATION command says nothing about whether
+        # the element is present — it's a different ambiguity, not a clean
+        # "absent" answer. Must not be treated as determinate.
+        original_conn = _mock_conn(run_side_effect=_process_error(exit_signal=_SIGKILL))
+        followup_conn = _mock_conn(run_side_effect=_process_error(exit_signal=_SIGKILL))
+        with mock.patch.object(dispatcher.asyncssh, "connect",
+                               new=mock.AsyncMock(side_effect=[original_conn, followup_conn])):
+            result = asyncio.run(dispatcher.block_ip_on_router(ROUTER, "1.2.3.4"))
+        self.assertEqual(result, "unknown")
+
+    def test_followup_uses_shorter_dedicated_timeouts(self):
+        # Must NOT reuse SSH_CONNECT_TIMEOUT/SSH_COMMAND_TIMEOUT — the
+        # combined worst case (original + follow-up) has to stay under the
+        # agent's 20s HTTP timeout (see dispatcher.py's own comment on this).
+        original_conn = _mock_conn(run_side_effect=ConnectionResetError("connection lost"))
+        followup_conn = _mock_conn()
+        mock_connect = mock.AsyncMock(side_effect=[original_conn, followup_conn])
+        with mock.patch.object(dispatcher.asyncssh, "connect", new=mock_connect):
+            asyncio.run(dispatcher.block_ip_on_router(ROUTER, "1.2.3.4"))
+        followup_kwargs = mock_connect.call_args_list[1].kwargs
+        self.assertEqual(followup_kwargs["connect_timeout"], dispatcher.SSH_VERIFY_CONNECT_TIMEOUT)
+        self.assertEqual(followup_kwargs["login_timeout"], dispatcher.SSH_VERIFY_CONNECT_TIMEOUT)
+        self.assertNotEqual(dispatcher.SSH_VERIFY_CONNECT_TIMEOUT, dispatcher.SSH_CONNECT_TIMEOUT)
+
+    def test_success_path_never_triggers_a_followup_connection(self):
+        # The reconciliation follow-up must only fire on a genuine "unknown"
+        # — a clean success shouldn't cost a second SSH round trip.
+        mock_connect = mock.AsyncMock(return_value=_mock_conn())
+        with mock.patch.object(dispatcher.asyncssh, "connect", new=mock_connect):
+            asyncio.run(dispatcher.block_ip_on_router(ROUTER, "1.2.3.4"))
+        self.assertEqual(mock_connect.await_count, 1)
+
+    def test_confirmed_failed_path_never_triggers_a_followup_connection(self):
+        conn = _mock_conn(run_side_effect=_process_error())  # clean non-zero exit
+        mock_connect = mock.AsyncMock(return_value=conn)
+        with mock.patch.object(dispatcher.asyncssh, "connect", new=mock_connect):
+            asyncio.run(dispatcher.block_ip_on_router(ROUTER, "1.2.3.4"))
+        self.assertEqual(mock_connect.await_count, 1)
+
+
+class NftCommandTests(unittest.TestCase):
+    def test_build_nft_command_is_idempotent_set_element_add(self):
+        # #278: `add element` on an already-present element is a no-op,
+        # unlike the old bare `add rule ... drop` (running it twice created
+        # two identical drop rules) — a genuine double-dispatch is now
+        # harmless instead of leaving duplicate rules on the router.
+        cmd = dispatcher.build_nft_command("1.2.3.4")
+        self.assertIn("add element", cmd)
+        self.assertIn(dispatcher.NFT_BLOCKLIST_SET, cmd)
+        self.assertIn("1.2.3.4", cmd)
+        self.assertNotIn("add rule", cmd)
+
+    def test_build_nft_command_rejects_malformed_ip(self):
+        with self.assertRaises(ValueError):
+            dispatcher.build_nft_command("1.1.1.1 drop; reboot #")
+
+    def test_build_nft_verify_command_is_read_only_get(self):
+        cmd = dispatcher.build_nft_verify_command("1.2.3.4")
+        self.assertIn("get element", cmd)
+        self.assertIn(dispatcher.NFT_BLOCKLIST_SET, cmd)
+        self.assertIn("1.2.3.4", cmd)
+        self.assertNotIn("add", cmd)
+
+    def test_module_refuses_to_import_with_a_malformed_blocklist_set_name(self):
+        # security-auditor MEDIUM finding (RCE amplifier): NFT_BLOCKLIST_SET
+        # is interpolated into a command run by the router's root shell over
+        # SSH — an attacker-influenced env var with shell metacharacters
+        # must be rejected at import time, not silently executed remotely.
+        import importlib
+
+        def _restore():
+            # security-auditor round-2 INFO: run via addCleanup (executes
+            # even if the test body errors, unlike a plain trailing
+            # statement) and pin a KNOWN-good value rather than trusting
+            # ambient os.environ — otherwise a bad NFT_BLOCKLIST_SET already
+            # present in the CI environment could make this restore itself
+            # fail, leaving every later test in the process importing a
+            # module that never finished reloading.
+            with mock.patch.dict("os.environ", {"NFT_BLOCKLIST_SET": "hivemind_blocklist"}):
+                importlib.reload(dispatcher)
+        self.addCleanup(_restore)
+
+        with mock.patch.dict("os.environ", {"NFT_BLOCKLIST_SET": "x; wget evil #"}):
+            with self.assertRaises(RuntimeError):
+                importlib.reload(dispatcher)
+
+    def test_module_refuses_a_digit_first_blocklist_set_name(self):
+        # code-reviewer nitpick: nftables identifiers are alphanumeric/
+        # underscore but NOT digit-first — a laxer check would only fail
+        # at runtime on the router as a generic nft syntax error.
+        import importlib
+
+        def _restore():
+            with mock.patch.dict("os.environ", {"NFT_BLOCKLIST_SET": "hivemind_blocklist"}):
+                importlib.reload(dispatcher)
+        self.addCleanup(_restore)
+
+        with mock.patch.dict("os.environ", {"NFT_BLOCKLIST_SET": "123set"}):
+            with self.assertRaises(RuntimeError):
+                importlib.reload(dispatcher)
 
 
 class DispatchBlockToAllTests(unittest.TestCase):

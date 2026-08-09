@@ -97,10 +97,64 @@ multi-issue runs.
   actually being set at all (`Environment=` doesn't expand `${VAR}`,
   verified empirically). [PR #316](https://github.com/voltron-1/Suburban_SOC/pull/316).
 
+- [x] **Session-initiated, no issue — `zeek-host-capture.service`
+  crash-loop — COMPLETE, MERGED** — the SOC's only network sensor had
+  been crash-looping in production since #222 (a `chown` `ExecStartPre`
+  added without the matching `CAP_CHOWN` in #209's
+  `CapabilityBoundingSet=`). Found and fixed live across 4 rounds:
+  restored `CAP_CHOWN`; redesigned root/tjlam directory sharing as
+  chgrp+sticky-bit (a one-time `chown` silently became a permanent no-op
+  after the first restart); added `CAP_SETUID`/`CAP_SETGID` for
+  tcpdump's own default privilege-drop to its unprivileged system user,
+  found live only after the first fix was already confirmed working;
+  closed a CWE-59 symlink-follow gap (HIGH, from an emergency
+  security-auditor review) with a fail-closed guard + `cp
+  --remove-destination`, and added `set -o pipefail` so a dead tcpdump
+  leg can't hide behind docker's exit status. Live-verified at every
+  stage on the production sensor, not just `systemd-analyze verify` —
+  real traffic into `conn.log`, `ps` confirming tcpdump drops to its
+  unprivileged user, directory ownership matching the design exactly.
+  [PR #324](https://github.com/voltron-1/Suburban_SOC/pull/324) merged
+  2026-08-09 (squash) — no GitHub-side human review, explicit
+  review-bypass confirmed by the repo owner (green CI, sub-agent review
+  only, same basis as M13's #298/#300/#301). Residual, tracked
+  separately: [#270](https://github.com/voltron-1/Suburban_SOC/issues/270)
+  (config.zeek's own co-location in a tjlam-writable tree) not closed by
+  this fix.
+- [~] **`scripts/setup/install_intel_refresh_timer.sh` — off-by-one repo
+  path — PR OPEN, NOT MERGED** — `REPO="$(cd "$HERE/.." && pwd)"`
+  resolved to `scripts/`, not the repo root (should be `$HERE/../..`,
+  matching the sibling `redeploy_systemd_units.sh`), breaking a fresh
+  install (`cannot stat 'configs/systemd/intel-refresh.service'`).
+  [PR #323](https://github.com/voltron-1/Suburban_SOC/pull/323).
+  Live-verified once fixed: fetched 5 Feodo Tracker + 555 Emerging
+  Threats indicators, wrote `intel.dat` into the capture directory —
+  also incidentally proving the zeek-capture ownership fix chain above
+  works end-to-end.
+- [x] **Session-initiated, no issue — version `CLAUDE.md` + custom
+  agent/slash-command definitions — COMPLETE, MERGED** — `CLAUDE.md`
+  (blue-team analysis conventions) and
+  `.claude/agents/ir-report-reviewer.md` +
+  `.claude/commands/{sigma-validate,sigma-rule,triage}.md` existed only
+  locally, uncommitted. [PR #325](https://github.com/voltron-1/Suburban_SOC/pull/325)
+  merged 2026-08-09 (squash), same review-bypass basis as PR #324.
+- [x] **#286 test plan — `Conn::IN_RESP` live-runtime verification —
+  RESOLVED without a live test** — the repo owner chose to accept the
+  existing static-analysis verification (direct Zeek source-code tracing
+  of `policy/frameworks/intel/seen/conn-established.zeek`, done during
+  #286's original development) rather than restart the just-stabilized
+  production sensor again for a live-runtime confirmation. PR #313
+  itself is unchanged, still open, not merged.
+- **#276/#278's SOP-005 OpenWrt UCI `config include` syntax check remains
+  genuinely untestable in this environment** — no real OpenWrt/fw4
+  hardware, and nothing this session unlocked a way to test it. PR #311
+  unchanged, still open, not merged.
+
 All 6 issues from this batch now have open PRs; none merged yet — each
 requires separate explicit merge confirmation. Next unstarted item: none
 — next step is reviewing and merging the 5 open PRs (#311, #313, #314,
-#315, #316).
+#315, #316). #323 (install_intel_refresh_timer.sh fix, unrelated to the
+M14 batch) is also open and awaiting review/merge.
 
 ---
 
@@ -1052,6 +1106,32 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-09
+
+- **`zeek-host-capture.service` crash-loop found and fixed live**, no
+  issue filed (discovered while answering a capture-pipeline question,
+  not part of any planned batch): the SOC's only network sensor had been
+  down since #222 merged, missing `CAP_CHOWN` in #209's
+  `CapabilityBoundingSet=`. Fixed across 4 review rounds (restore
+  `CAP_CHOWN`; chgrp+sticky-bit ownership redesign; `CAP_SETUID`/
+  `CAP_SETGID` for tcpdump's privilege drop, a second crash-loop found
+  live only after the first fix was confirmed working; a CWE-59
+  symlink-follow fail-closed guard from an emergency security-auditor
+  review). [PR #324](https://github.com/voltron-1/Suburban_SOC/pull/324)
+  merged (squash), explicit review-bypass confirmed by the repo owner.
+  Along the way, also found and fixed an unrelated off-by-one repo-path
+  bug in `scripts/setup/install_intel_refresh_timer.sh` — [PR
+  #323](https://github.com/voltron-1/Suburban_SOC/pull/323), still open.
+  `CLAUDE.md` and 4 custom `.claude/` agent/slash-command definitions
+  that existed only locally were versioned — [PR
+  #325](https://github.com/voltron-1/Suburban_SOC/pull/325), merged
+  (squash), same review-bypass basis. #286's remaining PR #313 test-plan
+  item (`Conn::IN_RESP` live serialization) was resolved by the repo
+  owner choosing to accept the existing static-analysis verification
+  rather than restart the just-stabilized sensor again; #276/#278's
+  SOP-005 OpenWrt UCI item was reconfirmed still untestable in this
+  environment. See NEXT UP above for full detail.
 
 ## LAST SESSION — 2026-08-08
 

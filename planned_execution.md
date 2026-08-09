@@ -33,6 +33,19 @@ multi-issue runs.
   copy has already drifted), #305 (add a live `_has_privileges` self-check),
   #306 (remaining cleartext-password lines + `logstash_writer`'s over-broad
   `manage` privilege on `soc-agent-health-*`).
+  - [~] **#303 — PR OPEN, NOT MERGED**, fixed 2026-08-09: root cause was
+    actually TWO bugs, not just apostrophes — Compose's variable-
+    interpolation pass (runs before shell-word-splitting, no concept of "this
+    is a comment") also choked on a bare `$` in explanatory comment text.
+    [PR #317](https://github.com/voltron-1/Suburban_SOC/pull/317).
+    Live-verified: `docker compose up -d` now runs clean end-to-end on a real
+    host (every one-shot provisioning container exits 0, every long-running
+    service comes up healthy) — this was blocking `docker compose up`
+    entirely before the fix. Filed
+    [#318](https://github.com/voltron-1/Suburban_SOC/issues/318) for 3
+    further follow-ups from that review (cleartext argv exposure for most
+    `provision` passwords, no error handling on provisioning failures,
+    fragile YAML folded-scalar indentation), deliberately deferred.
 - [x] **#277 (P0, security) — COMPLETE, MERGED** — broker's
   `/webhook/dispatch` response was completely unauthenticated; an on-path
   attacker could forge a confirmed success (falsely closing a case) or

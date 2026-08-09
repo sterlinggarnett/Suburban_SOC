@@ -44,11 +44,103 @@ services:
     user: "0"
     networks:
       - soc-mesh-net
+    # code-reviewer + security-auditor catch (#257): the vars below are ONLY
+    # ever referenced in the placeholder checks just below — nothing else in
+    # THIS service touches them. ELASTIC_PASSWORD/KIBANA_PASSWORD/
+    # LOGSTASH_PASSWORD stay Compose-time ($, not $$) here too — NOT because
+    # this service splices them elsewhere (it doesn't; everything past the
+    # gates below is cert generation only, see the "Setup complete (certs
+    # only)" line near the end of this command), but because the
+    # `provision` service below Compose-splices those same three ~10 more
+    # times, so fixing only their two `setup`-side gates wouldn't reduce
+    # real exposure — that's follow-up-issue scope, not this one (also
+    # applies to SOC_AGENT_KIBANA_PASSWORD/BROKER_AUDIT_PASSWORD, which
+    # `provision` still Compose-splices too; those two just happen to be
+    # gated here in `setup` first). Giving the vars below their own
+    # environment: entries lets the checks read them via runtime-shell
+    # $$-substitution instead — same pattern `provision` already uses for
+    # AGENT_CHECKPOINTS_PASSWORD/SLO_METRICS_PASSWORD/INTEL_WRITER_PASSWORD,
+    # for the same reason: a single-$ Compose substitution splices the
+    # cleartext value into this container's argv (readable via `docker
+    # inspect`/`ps --no-trunc` for as long as the exited one-shot container
+    # exists) — and also re-exposes it to bash command-substitution on
+    # whatever ends up in .env (a password containing "$(...)" would
+    # execute as root in this container).
+    # security-auditor review: SOC_AGENT_HMAC_SECRET/SOC_APPROVER_HMAC_SECRET/
+    # HIVE_MIND_SECRET/KIBANA_ENCRYPTION_KEY ship the same class of
+    # changeme_* placeholder as the passwords above, but gate the /alert,
+    # /approve, and broker-dispatch webhooks directly — a live default there
+    # is a direct authentication bypass for the containment path, not just
+    # an ES credential. They join this same check/environment mechanism.
+    # SOC_AGENT_HMAC_SECRET/SOC_APPROVER_HMAC_SECRET/HIVE_MIND_SECRET already
+    # fail closed on BLANK at the application layer (agent.py's HMAC_SECRET/
+    # _resolve_approver_secret, and the broker's own "fails closed 503 if
+    # unset") — that existing blank-tolerant behavior is intentionally left
+    # alone for those three; only the live placeholder is newly rejected,
+    # matching the optional-password class below rather than the blank-
+    # rejecting ELASTIC/KIBANA/LOGSTASH class above. KIBANA_ENCRYPTION_KEY is
+    # different — Kibana itself has no such fail-closed handling for it (a
+    # blank value is a config-validation/data-continuity problem, not an
+    # auth gate) — so it gets BOTH a blank check and a placeholder check,
+    # same tier as ELASTIC/KIBANA/LOGSTASH, just via $$ since it lives in
+    # the environment block below rather than being Compose-time-spliced
+    # elsewhere in this service.
+    environment:
+      - AGENT_CHECKPOINTS_PASSWORD=${AGENT_CHECKPOINTS_PASSWORD:-}
+      - BROKER_AUDIT_PASSWORD=${BROKER_AUDIT_PASSWORD:-}
+      - INTEL_WRITER_PASSWORD=${INTEL_WRITER_PASSWORD:-}
+      - SLO_METRICS_PASSWORD=${SLO_METRICS_PASSWORD:-}
+      - SOC_AGENT_KIBANA_PASSWORD=${SOC_AGENT_KIBANA_PASSWORD:-}
+      - SOC_AGENT_HMAC_SECRET=${SOC_AGENT_HMAC_SECRET:-}
+      - SOC_APPROVER_HMAC_SECRET=${SOC_APPROVER_HMAC_SECRET:-}
+      - HIVE_MIND_SECRET=${HIVE_MIND_SECRET:-}
+      - KIBANA_ENCRYPTION_KEY=${KIBANA_ENCRYPTION_KEY:-}
     command: >
       bash -c '
+        # security-auditor review: case is glob-matched case-SENSITIVELY by
+        # default, so an operator who "personalizes" a placeholder to e.g.
+        # Changeme_elastic would sail through every check below while
+        # remaining trivially guessable. nocasematch only affects [[ ]]/case
+        # pattern matching (not [ ] test, used everywhere else in this
+        # script), and this script has no other case/[[ block for it to
+        # disturb.
+        shopt -s nocasematch;
         if [ x${ELASTIC_PASSWORD} == x ]; then echo "ERROR: set ELASTIC_PASSWORD in .env"; exit 1; fi;
         if [ x${KIBANA_PASSWORD} == x ]; then echo "ERROR: set KIBANA_PASSWORD in .env"; exit 1; fi;
         if [ x${LOGSTASH_PASSWORD} == x ]; then echo "ERROR: set LOGSTASH_PASSWORD in .env"; exit 1; fi;
+        # code-reviewer catch (#257 round 2): .env.example lists this under
+        # the same "REQUIRED — refuses to start if blank" tier as the three
+        # above (the kibana service itself passes it with no :- fallback,
+        # unlike every genuinely-optional var here) — the placeholder check
+        # below existed already, but nothing ever checked for BLANK. Without
+        # this, a blank key sails past setup entirely and only surfaces
+        # later as a much less clear Kibana startup failure. $$ (not $)
+        # since this var lives in the environment block above, not
+        # Compose-time-spliced like the three above it.
+        if [ x$${KIBANA_ENCRYPTION_KEY} == x ]; then echo "ERROR: set KIBANA_ENCRYPTION_KEY in .env (>= 32 chars)"; exit 1; fi;
+        # #257 (security-auditor review of #245): the three checks above only
+        # ever rejected a BLANK value — an operator who copies .env.example
+        # and fills in just these three "REQUIRED" vars gets every OTHER
+        # service account (agent_checkpoints, slo_metrics, intel_writer,
+        # broker audit, ...) live with the literal changeme_* password this
+        # repo ships and anyone can read. Reject that placeholder wherever it
+        # would otherwise go live. ELASTIC_PASSWORD/KIBANA_PASSWORD/
+        # LOGSTASH_PASSWORD stay Compose-time ($, not $$) to match every
+        # OTHER use of those three vars already throughout this service
+        # script below. Every other var below uses $$ (runtime-shell,
+        # reading the environment block above) instead — see that comment.
+        case "${ELASTIC_PASSWORD}" in changeme*) echo "ERROR: ELASTIC_PASSWORD is still the placeholder value from .env.example — set a real password."; exit 1;; esac;
+        case "${KIBANA_PASSWORD}" in changeme*) echo "ERROR: KIBANA_PASSWORD is still the placeholder value from .env.example — set a real password."; exit 1;; esac;
+        case "${LOGSTASH_PASSWORD}" in changeme*) echo "ERROR: LOGSTASH_PASSWORD is still the placeholder value from .env.example — set a real password."; exit 1;; esac;
+        case "$${AGENT_CHECKPOINTS_PASSWORD}" in changeme*) echo "ERROR: AGENT_CHECKPOINTS_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
+        case "$${BROKER_AUDIT_PASSWORD}" in changeme*) echo "ERROR: BROKER_AUDIT_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
+        case "$${INTEL_WRITER_PASSWORD}" in changeme*) echo "ERROR: INTEL_WRITER_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
+        case "$${SLO_METRICS_PASSWORD}" in changeme*) echo "ERROR: SLO_METRICS_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
+        case "$${SOC_AGENT_KIBANA_PASSWORD}" in changeme*) echo "ERROR: SOC_AGENT_KIBANA_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
+        case "$${SOC_AGENT_HMAC_SECRET}" in changeme*) echo "ERROR: SOC_AGENT_HMAC_SECRET is still the placeholder value from .env.example — anyone who has read the public repo can forge /alert. Set a real secret (openssl rand -hex 32), or leave it fully blank to fail closed instead."; exit 1;; esac;
+        case "$${SOC_APPROVER_HMAC_SECRET}" in changeme*) echo "ERROR: SOC_APPROVER_HMAC_SECRET is still the placeholder value from .env.example — anyone who has read the public repo can forge /approve and trigger real isolation. Set a real secret (openssl rand -hex 32), or leave it fully blank to fail closed instead."; exit 1;; esac;
+        case "$${HIVE_MIND_SECRET}" in changeme*) echo "ERROR: HIVE_MIND_SECRET is still the placeholder value from .env.example — anyone who has read the public repo can forge broker dispatch/approval. Set a real secret (openssl rand -hex 32), or leave it fully blank to fail closed instead."; exit 1;; esac;
+        case "$${KIBANA_ENCRYPTION_KEY}" in changeme*) echo "ERROR: KIBANA_ENCRYPTION_KEY is still the placeholder value from .env.example — set a real key, at least 32 characters (openssl rand -hex 32)."; exit 1;; esac;
         if [ ! -f config/certs/ca.zip ]; then
           echo "Creating CA";
           bin/elasticsearch-certutil ca --silent --pem -out config/certs/ca.zip;
@@ -172,7 +264,25 @@ services:
         echo "Setting kibana_system password";
         until curl -s -X POST --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/kibana_system/_password -d "{\"password\":\"${KIBANA_PASSWORD}\"}" | grep -q "^{}"; do sleep 5; done;
         echo "Provisioning least-privilege logstash_writer role";
-        curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/logstash_writer -d "{\"cluster\":[\"monitor\",\"manage_index_templates\",\"manage_ilm\"],\"indices\":[{\"names\":[\"logstash-*\",\"soar-actions-*\"],\"privileges\":[\"create_index\",\"create\",\"write\",\"manage\"]}]}" > /dev/null;
+        # #257 (security-auditor review of #245): manage_index_templates/
+        # manage_ilm dropped from cluster privileges — the real Logstash
+        # pipeline never needs to PUT/DELETE index templates or ILM policies
+        # itself (apply-templates.sh/apply-lifecycle.sh do that out-of-band,
+        # authenticated as elastic); holding them gave logstash_internal a
+        # control-plane path to DELETE agent-checkpoints-template or PUT a
+        # competing one that re-adds data_stream/a write block — a
+        # containment denial-of-service reachable from a credential #245
+        # specifically kept away from checkpoint *data* access, but which
+        # still had *control-plane* reach over it. configs/logstash.conf's
+        # elasticsearch outputs set manage_template=>false/ilm_enabled=>false
+        # to match (the plugin must not try to auto-manage what it no longer
+        # has permission to touch).
+        # configs/elasticsearch/roles/logstash_writer.json is authoritative
+        # (re-applied by apply_roles.sh) - keep this inline copy in sync
+        # (security-auditor review: these two had already drifted — the
+        # index list here was missing asset-inventory-*/soc-agent-health-*
+        # and auto_configure; brought back in sync here).
+        curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/logstash_writer -d "{\"cluster\":[\"monitor\"],\"indices\":[{\"names\":[\"logstash-*\",\"soar-actions-*\",\"asset-inventory-*\",\"soc-agent-health-*\"],\"privileges\":[\"create_index\",\"create\",\"write\",\"manage\",\"auto_configure\"]}]}" > /dev/null;
         echo "Provisioning append-only soc_audit_appender role (WS3.3 tamper-evident audit)";
         curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/soc_audit_appender -d "{\"indices\":[{\"names\":[\"soc-audit-*\"],\"privileges\":[\"create_index\",\"create\"]}]}" > /dev/null;
         echo "Provisioning logstash_internal user (logstash_writer + append-only audit)";

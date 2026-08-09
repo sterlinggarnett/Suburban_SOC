@@ -59,18 +59,35 @@ multi-issue runs.
   a narrower variant of the same bug class) and #309 (request_id
   sanitization/bounding, audit-trail correlation, a detection rule for the
   two new tamper-indicator audit actions, redirect-following hardening).
-- [ ] **#276, #278 (P1)** — no operator tool for a stuck claim; an `unknown`
-  isolation outcome has no reconciliation path. Related, likely one PR.
-- [ ] **#286 (P2)** — MAC-based device quarantine is non-functional (two
-  stacked pipeline breaks: no `orig_l2_addr`→`source.mac` rename in the
-  reachable Logstash branch, and no conn.log↔intel.log join even after
-  that).
-- [ ] **#256, #257 (P2)** — checkpoint TTL retention; hardening follow-ups
-  from #245's review.
-- [ ] **#259 (tech-debt)** — `slo_metrics.py`'s `.env` parser breaks on
-  inline comments.
+- [~] **#276, #278 (P1) — PR OPEN, NOT MERGED** — no operator tool for a
+  stuck claim; an `unknown` isolation outcome has no reconciliation path.
+  [PR #311](https://github.com/voltron-1/Suburban_SOC/pull/311).
+- [~] **#286 (P2) — PR OPEN, NOT MERGED** — MAC-based device quarantine is
+  non-functional (two stacked pipeline breaks: no `orig_l2_addr`→
+  `source.mac` rename in the reachable Logstash branch, and no
+  conn.log↔intel.log join even after that).
+  [PR #313](https://github.com/voltron-1/Suburban_SOC/pull/313). Filed
+  [#312](https://github.com/voltron-1/Suburban_SOC/issues/312) as a
+  deferred policy decision (AUTONOMOUS_ISOLATION gate), deliberately out
+  of scope for this fix.
+- [~] **#256 (P2) — PR OPEN, NOT MERGED** — agent-checkpoints TTL
+  retention. [PR #314](https://github.com/voltron-1/Suburban_SOC/pull/314).
+- [~] **#257 (P2) — PR OPEN, NOT MERGED** — hardening follow-ups from
+  #245's review (placeholder-secret rejection, `logstash_writer` cluster-
+  privilege reduction, claim-squatting detection).
+  [PR #315](https://github.com/voltron-1/Suburban_SOC/pull/315).
+- [~] **#259 (tech-debt) — PR OPEN, NOT MERGED** — `slo_metrics.py`'s
+  `.env` parser breaks on inline comments; also fixed `run_hunts.py`'s
+  identical bug, and a more severe issue this one's fix exposed —
+  `slo-metrics.service`'s systemd `EnvironmentFile=` stayed broken
+  regardless of the Python-level fix, and separately `ES_PASS` was never
+  actually being set at all (`Environment=` doesn't expand `${VAR}`,
+  verified empirically). [PR #316](https://github.com/voltron-1/Suburban_SOC/pull/316).
 
-Next unstarted item: **#276/#278** (paired, likely one PR).
+All 6 issues from this batch now have open PRs; none merged yet — each
+requires separate explicit merge confirmation. Next unstarted item: none
+— next step is reviewing and merging the 5 open PRs (#311, #313, #314,
+#315, #316).
 
 ---
 
@@ -1022,6 +1039,33 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-08
+
+- **All 6 remaining M14 issues built end-to-end this session**, back to
+  back per explicit instruction — each got its own branch off `main` and
+  its own PR; merging remains reserved for the repo owner, requiring
+  separate explicit confirmation per PR. #276/#278 (paired):
+  [PR #311](https://github.com/voltron-1/Suburban_SOC/pull/311). #286:
+  [PR #313](https://github.com/voltron-1/Suburban_SOC/pull/313), filed
+  [#312](https://github.com/voltron-1/Suburban_SOC/issues/312) as a
+  deferred policy decision. #256:
+  [PR #314](https://github.com/voltron-1/Suburban_SOC/pull/314). #257:
+  [PR #315](https://github.com/voltron-1/Suburban_SOC/pull/315). #259:
+  [PR #316](https://github.com/voltron-1/Suburban_SOC/pull/316) — started
+  as a narrow `.env`-inline-comment parser fix, but tracing the actual
+  systemd production path (`slo-metrics.service`) surfaced two further,
+  more severe bugs in the same credential-loading area: the unit's own
+  `EnvironmentFile=` loaded the whole raw `.env` and stayed broken
+  regardless of the Python-level fix, and separately `ES_PASS` was never
+  actually being set at all (`Environment=` doesn't expand `${VAR}` —
+  confirmed empirically via a throwaway systemd unit on this host, before
+  and after the fix). Every PR went through 2-3 rounds of parallel
+  `security-auditor`/`code-reviewer` review; #257 and #259 each had a
+  genuine HIGH finding in an early draft (a claim-squat evasion via
+  trusted `_source` fields, and a unit-breaking chicken-and-egg
+  `EnvironmentFile=` deadlock respectively), both confirmed fixed via
+  mutation testing before landing.
 
 ## LAST SESSION — 2026-08-07
 

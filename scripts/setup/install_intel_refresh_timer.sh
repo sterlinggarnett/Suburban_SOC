@@ -18,8 +18,12 @@
 # =============================================================================
 set -euo pipefail
 
+# $HERE is scripts/setup — two levels under the repo root, not one (matches
+# redeploy_systemd_units.sh's own $HERE/../.. in this same directory; this
+# line originally had only one ".." and resolved REPO to scripts/, not the
+# repo root, so every path below it 404'd).
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd "$HERE/.." && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
 cd "$REPO"
 
 echo "==> Installing intel-refresh unit files"

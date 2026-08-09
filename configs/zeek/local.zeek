@@ -1,12 +1,16 @@
 # Zeek local.zeek configuration
-# Suburban-SOC — Phase A: MAC Address Enrichment (SOAR Integration)
 #
-# Load MAC address logging so that orig_l2_addr and resp_l2_addr
-# are appended to zeek.conn logs, enabling device-level quarantine
-# by MAC address rather than IP (which can be spoofed or rotated via DHCP).
+# #286: this file is NOT loaded by any real capture invocation (every
+# script under scripts/setup/ and configs/systemd/zeek-host-capture.service
+# passes /data/intel/config.zeek instead) — confirmed by grepping every
+# capture entry point in the repo. The mac-logging @load that used to sit
+# here (closed as shipped in #63-72) never actually ran; source.mac was
+# silently empty in every real SOAR quarantine case since. The real fix now
+# lives in configs/intel/config.zeek, the file every capture invocation
+# actually loads. Left here as dead config rather than deleted — this file
+# still has other content below unrelated to #286, out of that issue's scope.
 
 @load base/protocols/conn
-@load policy/protocols/conn/mac-logging
 
 # Suburban-SOC — Network Dashboard (Component 2): TLS/SSL telemetry
 #
@@ -20,9 +24,11 @@
 
 # Suburban-SOC — WS1.4: passive asset inventory (NIST Identify)
 #
-# The asset inventory is derived from conn.log (source.ip + source.mac, already
-# ECS-mapped + MAC-enriched above) on the Asset Inventory dashboard — see
-# configs/server/asset_inventory.ndjson. We deliberately do NOT enable
+# The asset inventory is derived from conn.log (source.ip + source.mac) on the
+# Asset Inventory dashboard — see configs/server/asset_inventory.ndjson. MAC
+# enrichment happens in configs/intel/config.zeek (#286), the file the real
+# capture path actually loads, NOT in this dead file — see this file's own
+# header. We deliberately do NOT enable
 # known-hosts/known-services: Zeek's `host` field (the asset IP) collides with the
 # ECS/Filebeat `host` object and is clobbered before it reaches Logstash, so it
 # can't reliably populate asset.ip. Revisit once Filebeat preserves Zeek's `host`

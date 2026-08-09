@@ -40,6 +40,16 @@ jobs:
       - name: SLO metrics — measurement-error visibility (audit #165 / NIST SI-11)
         run: python -m pytest tests/ai_agent/test_slo_metrics.py -q
 
+      # #256 security-auditor round 1 HIGH: this was the ONLY gate on
+      # the CLAIMED-never-deletable invariant (compact_agent_checkpoints.py's
+      # import-time assert + InvariantTests) and it ran in no workflow at
+      # all — a future edit that "completed" TERMINAL_CLAIM_PHASES by adding
+      # CLAIMED back in would have merged green. This credential holds
+      # delete privilege on the same approval-gate state §12.3 depends on,
+      # so it belongs in this same security-critical gate.
+      - name: agent-checkpoints TTL retention — CLAIMED-never-deletable invariant (#256)
+        run: python -m pytest tests/ai_agent/test_compact_agent_checkpoints.py tests/ai_agent/test_checkpoints_claim.py -q
+
       # audit #174: pyproject.toml's pytest pythonpath makes app.py/dispatcher.py/
       # inventory.py importable without cd-ing here — but this cd stays anyway:
       # app.py's Inventory("inventory.yaml") default resolves relative to the

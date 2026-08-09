@@ -1,5 +1,5 @@
 {
-  "cluster": ["monitor","manage_index_templates","manage_ilm"],
+  "cluster": ["monitor"],
   "indices": [
     {"names": ["logstash-*","soar-actions-*","asset-inventory-*","soc-agent-health-*"],
      "privileges": ["create_index","create","write","manage","auto_configure"]}

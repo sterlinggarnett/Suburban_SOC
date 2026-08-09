@@ -27,8 +27,15 @@ jobs:
       - name: Install the Sigma toolchain
         run: pip install --quiet sigma-cli pysigma-backend-elasticsearch pytest
 
-      - name: Framework-enrichment consistency tests
-        run: python tests/pipeline/test_framework_enrichment.py
+      - name: Pipeline consistency tests
+        # #286 security-auditor MEDIUM: this used to invoke
+        # test_framework_enrichment.py by exact filename, so
+        # test_grok_parse_failures.py and the new test_mac_correlation.py
+        # never ran in CI at all — the file-scoped invocation meant every
+        # new tests/pipeline/*.py needed its own workflow edit to be gated
+        # by default. Directory glob so future additions are covered
+        # automatically.
+        run: python -m pytest tests/pipeline -q
 
       - name: Detection fixture tests (WS2.1 — TP fires, TN regression, promotion gate)
         run: python -m pytest tests/detections/test_sigma_detections.py -q

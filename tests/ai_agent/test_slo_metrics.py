@@ -219,6 +219,170 @@ class MetricFunctionTests(unittest.TestCase):
             with self.assertRaises(slo_metrics.MetricUnavailable):
                 slo_metrics.metric_stuck_approval_claims()
 
+    # --- #257: orphaned (claim-squatted) claims -------------------------------
+    # A CLAIMED claim doc with no paired phase checkpoint, past the grace
+    # window, is the claim-squatting signature (see metric_orphaned_claims()'s
+    # docstring) — a two-step check (search, then a batched _mget), unlike
+    # stuck_approval_claims' plain count. The join key comes from search-hit
+    # metadata (_id/_index — ES-assigned, not attacker-writable), NEVER from
+    # _source — see the HIGH-2/HIGH-3 security-auditor findings below.
+    def test_orphaned_claims_raises_on_search_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_orphaned_claims()
+
+    def test_orphaned_claims_raises_on_search_non_200(self):
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(503)):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_orphaned_claims()
+
+    def test_orphaned_claims_returns_zero_when_no_claims_open(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})):
+            self.assertEqual(slo_metrics.metric_orphaned_claims(), 0)
+
+    def test_orphaned_claims_returns_zero_when_every_claim_is_paired(self):
+        search_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_index": "agent-checkpoints-home-smith", "_id": "abc123.claim"},
+        ]}})
+        mget_resp = _FakeResponse(200, {"docs": [{"found": True}]})
+        with mock.patch.object(slo_metrics, "es", side_effect=[search_resp, mget_resp]):
+            self.assertEqual(slo_metrics.metric_orphaned_claims(), 0)
+
+    def test_orphaned_claims_counts_unpaired_claims_as_orphaned(self):
+        search_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_index": "agent-checkpoints-home-smith", "_id": "abc123.claim"},
+            {"_index": "agent-checkpoints-home-smith", "_id": "def456.claim"},
+        ]}})
+        mget_resp = _FakeResponse(200, {"docs": [{"found": False}, {"found": True}]})
+        with mock.patch.object(slo_metrics, "es", side_effect=[search_resp, mget_resp]):
+            self.assertEqual(slo_metrics.metric_orphaned_claims(), 1)
+
+    def test_orphaned_claims_skips_hits_whose_id_is_not_a_claim_doc(self):
+        # Anything at phase:CLAIMED whose _id doesn't end ".claim" is itself
+        # an anomalous shape (nothing in checkpoints.py produces it) — must
+        # not crash or get silently paired against the wrong doc.
+        search_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_index": "agent-checkpoints-home-smith", "_id": "abc123"},  # no .claim suffix
+        ]}})
+        with mock.patch.object(slo_metrics, "es", return_value=search_resp) as mock_es:
+            self.assertEqual(slo_metrics.metric_orphaned_claims(), 0)
+        # No docs_to_check means no mget round-trip at all.
+        self.assertEqual(mock_es.call_count, 1)
+
+    def test_orphaned_claims_skips_degenerate_claim_only_id(self):
+        # security-auditor catch: an _id of exactly ".claim" strips to an
+        # empty base id — building an _mget target of _id="" could 400 the
+        # whole batch on some ES versions, blinding the metric entirely off
+        # one crafted doc. Must be excluded, same as a non-.claim _id.
+        search_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_index": "agent-checkpoints-home-smith", "_id": ".claim"},
+        ]}})
+        with mock.patch.object(slo_metrics, "es", return_value=search_resp) as mock_es:
+            self.assertEqual(slo_metrics.metric_orphaned_claims(), 0)
+        self.assertEqual(mock_es.call_count, 1)
+
+    def test_orphaned_claims_ignores_source_entirely_no_crash_on_malformed_shape(self):
+        # security-auditor HIGH-2: an earlier version derived the join key
+        # from _source (tenant.id/alert_id), which crashed with an
+        # AttributeError — uncaught by main()'s MetricUnavailable-only
+        # catch — on a malformed shape like tenant:null. The fixed version
+        # never reads _source at all (the query even sets _source:False),
+        # so a malformed/missing _source must have zero effect.
+        search_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_index": "agent-checkpoints-home-smith", "_id": "abc123.claim",
+             "_source": {"tenant": None, "alert_id": ["not", "a", "string"]}},
+        ]}})
+        mget_resp = _FakeResponse(200, {"docs": [{"found": False}]})
+        with mock.patch.object(slo_metrics, "es", side_effect=[search_resp, mget_resp]):
+            self.assertEqual(slo_metrics.metric_orphaned_claims(), 1)
+
+    def test_orphaned_claims_ignores_forged_source_self_reference_evasion(self):
+        # security-auditor HIGH-3: an earlier version trusted _source.
+        # alert_id/tenant as the mget target — a squatter controlling the
+        # document body could point the pairing check at their OWN claim
+        # doc (or an unrelated victim's real checkpoint) and evade detection
+        # (found: true, count 0) even though no real paired phase doc
+        # exists. The fixed version derives the target purely from this
+        # hit's own _id/_index, so a forged _source claiming to be paired
+        # with itself must NOT suppress the orphaned count.
+        search_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_index": "agent-checkpoints-home-smith", "_id": "abc123.claim",
+             "_source": {"alert_id": "abc123.claim", "tenant": {"id": "home-smith"}}},
+        ]}})
+        with mock.patch.object(slo_metrics, "es",
+                               side_effect=[search_resp, _FakeResponse(200, {"docs": [{"found": False}]})]) \
+                as mock_es:
+            self.assertEqual(slo_metrics.metric_orphaned_claims(), 1)
+        # The real target must be the _id-derived "abc123" (stripped
+        # suffix), never the forged _source.alert_id value.
+        mget_body = mock_es.call_args_list[1][0][2]
+        self.assertEqual(mget_body["docs"],
+                          [{"_index": "agent-checkpoints-home-smith", "_id": "abc123"}])
+
+    def test_orphaned_claims_raises_on_mget_non_200(self):
+        search_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_index": "agent-checkpoints-home-smith", "_id": "abc123.claim"},
+        ]}})
+        with mock.patch.object(slo_metrics, "es", side_effect=[search_resp, _FakeResponse(500)]):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_orphaned_claims()
+
+    def test_orphaned_claims_raises_on_mget_failure(self):
+        search_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_index": "agent-checkpoints-home-smith", "_id": "abc123.claim"},
+        ]}})
+        with mock.patch.object(slo_metrics, "es",
+                               side_effect=[search_resp, ConnectionError("refused")]):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_orphaned_claims()
+
+    def test_orphaned_claims_queries_only_claimed_phase_past_the_window(self):
+        with mock.patch.object(
+                slo_metrics, "es",
+                return_value=_FakeResponse(200, {"hits": {"hits": []}})) as mock_es:
+            slo_metrics.metric_orphaned_claims()
+        body = mock_es.call_args[0][2]
+        filters = body["query"]["bool"]["filter"]
+        self.assertIn({"term": {"phase": "CLAIMED"}}, filters)
+        self.assertTrue(any("range" in f and "@timestamp" in f["range"] for f in filters))
+        index = mock_es.call_args[0][1]
+        self.assertIn("agent-checkpoints-*", index)
+        # HIGH-2/HIGH-3 fix: never request _source for this search.
+        self.assertEqual(body.get("_source"), False)
+        # LOW-4/LOW-D fix: oldest-first with unmapped_type so a 200-cap
+        # truncation drops newest first, and one unmapped index can't 400
+        # the whole multi-index search.
+        self.assertEqual(body.get("sort"),
+                          [{"@timestamp": {"order": "asc", "unmapped_type": "date"}}])
+
+    def test_orphaned_claims_window_is_configurable(self):
+        with mock.patch.object(
+                slo_metrics, "es",
+                return_value=_FakeResponse(200, {"hits": {"hits": []}})) as mock_es, \
+             mock.patch.dict(os.environ, {"SLO_ORPHANED_CLAIM_MAX_MIN": "20"}):
+            slo_metrics.metric_orphaned_claims()
+        query = mock_es.call_args[0][2]["query"]
+        filters = query["bool"]["filter"]
+        self.assertIn({"range": {"@timestamp": {"lte": "now-20m"}}}, filters)
+
+    def test_orphaned_claims_invalid_window_raises_not_crashes(self):
+        with mock.patch.dict(os.environ, {"SLO_ORPHANED_CLAIM_MAX_MIN": "not-a-number"}):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_orphaned_claims()
+
+    def test_orphaned_claims_mget_targets_same_index_with_claim_suffix_stripped(self):
+        search_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_index": "agent-checkpoints-home-smith", "_id": "abc123.claim"},
+        ]}})
+        mget_resp = _FakeResponse(200, {"docs": [{"found": True}]})
+        with mock.patch.object(slo_metrics, "es",
+                               side_effect=[search_resp, mget_resp]) as mock_es:
+            slo_metrics.metric_orphaned_claims()
+        mget_body = mock_es.call_args_list[1][0][2]
+        self.assertEqual(mget_body["docs"],
+                          [{"_index": "agent-checkpoints-home-smith", "_id": "abc123"}])
+
     def test_raw_alert_volume_raises_on_es_failure(self):
         with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
             with self.assertRaises(slo_metrics.MetricUnavailable):
@@ -320,7 +484,7 @@ class MainExitCodeTests(unittest.TestCase):
 
     def _mock_all_metrics(self, mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                            ingest_lag=10.0, parse_err=0.0, audit_write_failures=0.0,
-                           raw_alert_volume=None):
+                           orphaned_claims=0.0, raw_alert_volume=None):
         if raw_alert_volume is None:
             raw_alert_volume = {"zeek_notices": 0, "rule_hits": 0, "value": 0}
         return [
@@ -332,6 +496,8 @@ class MainExitCodeTests(unittest.TestCase):
             mock.patch.object(slo_metrics, "metric_parse_error_pct", return_value=parse_err),
             mock.patch.object(slo_metrics, "metric_audit_write_failures",
                                return_value=audit_write_failures),
+            mock.patch.object(slo_metrics, "metric_orphaned_claims",
+                               return_value=orphaned_claims),
             mock.patch.object(slo_metrics, "metric_raw_alert_volume",
                                return_value=raw_alert_volume),
             mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(200, {})),
@@ -349,6 +515,21 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("mttd_minutes", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_orphaned_claims_breach_exits_2_and_sends_ntfy(self):
+        # Regression guard for #257: metric_orphaned_claims must actually be
+        # wired into main()'s metric_fns dict, not just defined — a defined-
+        # but-unregistered metric would silently never breach regardless of
+        # its value, exactly like stuck_approval_claims before #247's fix.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in self._mock_all_metrics(orphaned_claims=1.0):
+                stack.enter_context(p)
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        ntfy_post.assert_called_once()
+        self.assertIn("orphaned_claims", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_audit_write_failures_below_threshold_does_not_breach(self):
         with contextlib.ExitStack() as stack, \
@@ -481,6 +662,40 @@ class EnvLineParsingTests(unittest.TestCase):
         _, v = slo_metrics.env_loader.parse_env_line(
             "SLO_MTTD_MAX_MIN=10         # Max Mean Time to Detect (in minutes)")
         self.assertEqual(float(v), 10.0)
+
+
+class LogstashWriterRoleDriftTests(unittest.TestCase):
+    """#257 (security-auditor review of #245): configs/elasticsearch/roles/
+    logstash_writer.json is authoritative (re-applied by apply_roles.sh), but
+    docker-compose.yml also carries an inline bootstrap PUT of the same role
+    for the window before that reconciliation runs — this pair had ALREADY
+    drifted once (the inline copy was missing asset-inventory-*/
+    soc-agent-health-*/auto_configure) before #257 fixed it. Same regression
+    shape and same fix pattern as SloMetricsReaderRoleGrantTests above,
+    generalized per the security-auditor's INFO-2 note that only
+    slo_metrics_reader had this guard."""
+
+    ROLE_PATH = slo_metrics.REPO / "configs" / "elasticsearch" / "roles" / "logstash_writer.json"
+    COMPOSE_PATH = slo_metrics.REPO / "scripts" / "setup" / "docker-compose.yml"
+
+    def test_compose_inline_copy_matches_role_file(self):
+        role_json = self.ROLE_PATH.read_text(encoding="utf-8")
+        role_compact = json.dumps(json.loads(role_json), separators=(",", ":"))
+        compose_text = self.COMPOSE_PATH.read_text(encoding="utf-8")
+        self.assertIn(role_compact.replace('"', '\\"'), compose_text,
+                       "scripts/setup/docker-compose.yml's inline logstash_writer "
+                       "role PUT has drifted from configs/elasticsearch/roles/"
+                       "logstash_writer.json — keep them in sync")
+
+    def test_role_file_does_not_grant_template_or_ilm_management(self):
+        # #257: the whole point of this issue's second acceptance criterion —
+        # logstash_internal must not be able to DELETE/overwrite
+        # agent-checkpoints-template via cluster-level template/ILM privileges
+        # it never needs for its actual job (writing documents).
+        role = json.loads(self.ROLE_PATH.read_text(encoding="utf-8"))
+        cluster_privs = set(role.get("cluster", []))
+        self.assertNotIn("manage_index_templates", cluster_privs)
+        self.assertNotIn("manage_ilm", cluster_privs)
 
 
 if __name__ == "__main__":

@@ -51,7 +51,13 @@ source "$SCRIPT_DIR/lib/es_common.sh"
 ROLE="tenant_${TENANT//-/_}_viewer"
 USER="tenant_${TENANT//-/_}"
 ACTOR="${SUDO_USER:-${USER_NAME:-$(whoami 2>/dev/null || echo operator)}}"
-STREAMS=("logstash-security-${TENANT}" "soar-actions-${TENANT}")
+# #286 security-auditor MEDIUM: logstash-security-quarantine-<tenant> (the
+# _grokparsefailure/_jsonparsefailure destination, configs/logstash.conf's
+# output{} block) is a separate data stream matching the SAME
+# logstash-security-* index_patterns template — omitting it here left
+# quarantined events (which carry the full ECS payload, including MAC
+# fields since #286) surviving a completed, signed "erasure done" receipt.
+STREAMS=("logstash-security-${TENANT}" "logstash-security-quarantine-${TENANT}" "soar-actions-${TENANT}")
 AUDIT_IDX="soc-audit-${TENANT}"
 CHECKPOINTS_IDX="agent-checkpoints-${TENANT}"
 SHARED=(".alerts-security.alerts-default" "asset-inventory-*" "soar-actions-dynamic-*")

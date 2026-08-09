@@ -59,6 +59,34 @@ d=json.load(sys.stdin)
 print('yes' if d.get('index_templates',[{}])[0].get('index_template',{}).get('data_stream') is not None else 'no')" 2>/dev/null | tr -d '\r')
   [[ "$has_ds" == "yes" ]] && pass "$t has data_stream:{}" || warn "$t is NOT a data-stream template — run apply-templates.sh"
 done
+# #257 (security-auditor review of #245, acceptance criterion): the INVERSE
+# assertion for agent-checkpoints-template — it must NOT be a data stream.
+# #245 deliberately reverted this template's data_stream config: the index
+# is a single, always-growing, upsert-by-id store (checkpoints.py does
+# PUT/GET _doc/{id}), which a data stream (append-only, no GET-by-id)
+# structurally cannot serve. If a future template edit silently reintroduced
+# data_stream:{} here, every checkpoint/claim write would start failing
+# (data streams only accept op_type=create, and write_checkpoint()'s PUT is
+# a full-document upsert) — this would surface as #276's manage_stuck_claims.py
+# filling up with claims that never got a paired phase checkpoint, a
+# confusing failure mode to debug from that symptom alone.
+# code-reviewer catch: gate on HTTP status FIRST — a missing template (404,
+# e.g. apply-templates.sh never ran) has no "index_templates" key, and the
+# same jq-style fallback the loop above relies on resolves that to "no" too,
+# which is this check's PASS condition. Left ungated, a template that's
+# absent entirely — arguably the worse regression — would false-PASS as
+# "correctly has NO data_stream:{}".
+code=$(es -o /dev/null -w '%{http_code}' "$ES_URL/_index_template/agent-checkpoints-template")
+if [[ "$code" != "200" ]]; then
+  warn "agent-checkpoints-template missing (HTTP $code) — run apply-templates.sh"
+else
+  has_ds_checkpoints=$(es "$ES_URL/_index_template/agent-checkpoints-template" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print('yes' if d.get('index_templates',[{}])[0].get('index_template',{}).get('data_stream') is not None else 'no')" 2>/dev/null | tr -d '\r')
+  [[ "$has_ds_checkpoints" == "no" ]] && pass "agent-checkpoints-template correctly has NO data_stream:{} (#245)" \
+    || warn "agent-checkpoints-template unexpectedly HAS data_stream:{} — this would break checkpoints.py's upsert-by-id writes (#245 regression)"
+fi
 
 blue "==> [3/6] Snapshot repository registered + healthy"
 verify=$(es "$ES_URL/_snapshot/$REPO/_verify" -X POST)

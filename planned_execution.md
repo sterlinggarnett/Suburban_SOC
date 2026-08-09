@@ -33,6 +33,19 @@ multi-issue runs.
   copy has already drifted), #305 (add a live `_has_privileges` self-check),
   #306 (remaining cleartext-password lines + `logstash_writer`'s over-broad
   `manage` privilege on `soc-agent-health-*`).
+  - [~] **#303 — PR OPEN, NOT MERGED**, fixed 2026-08-09: root cause was
+    actually TWO bugs, not just apostrophes — Compose's variable-
+    interpolation pass (runs before shell-word-splitting, no concept of "this
+    is a comment") also choked on a bare `$` in explanatory comment text.
+    [PR #317](https://github.com/voltron-1/Suburban_SOC/pull/317).
+    Live-verified: `docker compose up -d` now runs clean end-to-end on a real
+    host (every one-shot provisioning container exits 0, every long-running
+    service comes up healthy) — this was blocking `docker compose up`
+    entirely before the fix. Filed
+    [#318](https://github.com/voltron-1/Suburban_SOC/issues/318) for 3
+    further follow-ups from that review (cleartext argv exposure for most
+    `provision` passwords, no error handling on provisioning failures,
+    fragile YAML folded-scalar indentation), deliberately deferred.
 - [x] **#277 (P0, security) — COMPLETE, MERGED** — broker's
   `/webhook/dispatch` response was completely unauthenticated; an on-path
   attacker could forge a confirmed success (falsely closing a case) or
@@ -59,18 +72,89 @@ multi-issue runs.
   a narrower variant of the same bug class) and #309 (request_id
   sanitization/bounding, audit-trail correlation, a detection rule for the
   two new tamper-indicator audit actions, redirect-following hardening).
-- [ ] **#276, #278 (P1)** — no operator tool for a stuck claim; an `unknown`
-  isolation outcome has no reconciliation path. Related, likely one PR.
-- [ ] **#286 (P2)** — MAC-based device quarantine is non-functional (two
-  stacked pipeline breaks: no `orig_l2_addr`→`source.mac` rename in the
-  reachable Logstash branch, and no conn.log↔intel.log join even after
-  that).
-- [ ] **#256, #257 (P2)** — checkpoint TTL retention; hardening follow-ups
-  from #245's review.
-- [ ] **#259 (tech-debt)** — `slo_metrics.py`'s `.env` parser breaks on
-  inline comments.
+- [~] **#276, #278 (P1) — PR OPEN, NOT MERGED** — no operator tool for a
+  stuck claim; an `unknown` isolation outcome has no reconciliation path.
+  [PR #311](https://github.com/voltron-1/Suburban_SOC/pull/311).
+- [~] **#286 (P2) — PR OPEN, NOT MERGED** — MAC-based device quarantine is
+  non-functional (two stacked pipeline breaks: no `orig_l2_addr`→
+  `source.mac` rename in the reachable Logstash branch, and no
+  conn.log↔intel.log join even after that).
+  [PR #313](https://github.com/voltron-1/Suburban_SOC/pull/313). Filed
+  [#312](https://github.com/voltron-1/Suburban_SOC/issues/312) as a
+  deferred policy decision (AUTONOMOUS_ISOLATION gate), deliberately out
+  of scope for this fix.
+- [~] **#256 (P2) — PR OPEN, NOT MERGED** — agent-checkpoints TTL
+  retention. [PR #314](https://github.com/voltron-1/Suburban_SOC/pull/314).
+- [~] **#257 (P2) — PR OPEN, NOT MERGED** — hardening follow-ups from
+  #245's review (placeholder-secret rejection, `logstash_writer` cluster-
+  privilege reduction, claim-squatting detection).
+  [PR #315](https://github.com/voltron-1/Suburban_SOC/pull/315).
+- [~] **#259 (tech-debt) — PR OPEN, NOT MERGED** — `slo_metrics.py`'s
+  `.env` parser breaks on inline comments; also fixed `run_hunts.py`'s
+  identical bug, and a more severe issue this one's fix exposed —
+  `slo-metrics.service`'s systemd `EnvironmentFile=` stayed broken
+  regardless of the Python-level fix, and separately `ES_PASS` was never
+  actually being set at all (`Environment=` doesn't expand `${VAR}`,
+  verified empirically). [PR #316](https://github.com/voltron-1/Suburban_SOC/pull/316).
 
-Next unstarted item: **#276/#278** (paired, likely one PR).
+- [x] **Session-initiated, no issue — `zeek-host-capture.service`
+  crash-loop — COMPLETE, MERGED** — the SOC's only network sensor had
+  been crash-looping in production since #222 (a `chown` `ExecStartPre`
+  added without the matching `CAP_CHOWN` in #209's
+  `CapabilityBoundingSet=`). Found and fixed live across 4 rounds:
+  restored `CAP_CHOWN`; redesigned root/tjlam directory sharing as
+  chgrp+sticky-bit (a one-time `chown` silently became a permanent no-op
+  after the first restart); added `CAP_SETUID`/`CAP_SETGID` for
+  tcpdump's own default privilege-drop to its unprivileged system user,
+  found live only after the first fix was already confirmed working;
+  closed a CWE-59 symlink-follow gap (HIGH, from an emergency
+  security-auditor review) with a fail-closed guard + `cp
+  --remove-destination`, and added `set -o pipefail` so a dead tcpdump
+  leg can't hide behind docker's exit status. Live-verified at every
+  stage on the production sensor, not just `systemd-analyze verify` —
+  real traffic into `conn.log`, `ps` confirming tcpdump drops to its
+  unprivileged user, directory ownership matching the design exactly.
+  [PR #324](https://github.com/voltron-1/Suburban_SOC/pull/324) merged
+  2026-08-09 (squash) — no GitHub-side human review, explicit
+  review-bypass confirmed by the repo owner (green CI, sub-agent review
+  only, same basis as M13's #298/#300/#301). Residual, tracked
+  separately: [#270](https://github.com/voltron-1/Suburban_SOC/issues/270)
+  (config.zeek's own co-location in a tjlam-writable tree) not closed by
+  this fix.
+- [~] **`scripts/setup/install_intel_refresh_timer.sh` — off-by-one repo
+  path — PR OPEN, NOT MERGED** — `REPO="$(cd "$HERE/.." && pwd)"`
+  resolved to `scripts/`, not the repo root (should be `$HERE/../..`,
+  matching the sibling `redeploy_systemd_units.sh`), breaking a fresh
+  install (`cannot stat 'configs/systemd/intel-refresh.service'`).
+  [PR #323](https://github.com/voltron-1/Suburban_SOC/pull/323).
+  Live-verified once fixed: fetched 5 Feodo Tracker + 555 Emerging
+  Threats indicators, wrote `intel.dat` into the capture directory —
+  also incidentally proving the zeek-capture ownership fix chain above
+  works end-to-end.
+- [x] **Session-initiated, no issue — version `CLAUDE.md` + custom
+  agent/slash-command definitions — COMPLETE, MERGED** — `CLAUDE.md`
+  (blue-team analysis conventions) and
+  `.claude/agents/ir-report-reviewer.md` +
+  `.claude/commands/{sigma-validate,sigma-rule,triage}.md` existed only
+  locally, uncommitted. [PR #325](https://github.com/voltron-1/Suburban_SOC/pull/325)
+  merged 2026-08-09 (squash), same review-bypass basis as PR #324.
+- [x] **#286 test plan — `Conn::IN_RESP` live-runtime verification —
+  RESOLVED without a live test** — the repo owner chose to accept the
+  existing static-analysis verification (direct Zeek source-code tracing
+  of `policy/frameworks/intel/seen/conn-established.zeek`, done during
+  #286's original development) rather than restart the just-stabilized
+  production sensor again for a live-runtime confirmation. PR #313
+  itself is unchanged, still open, not merged.
+- **#276/#278's SOP-005 OpenWrt UCI `config include` syntax check remains
+  genuinely untestable in this environment** — no real OpenWrt/fw4
+  hardware, and nothing this session unlocked a way to test it. PR #311
+  unchanged, still open, not merged.
+
+All 6 issues from this batch now have open PRs; none merged yet — each
+requires separate explicit merge confirmation. Next unstarted item: none
+— next step is reviewing and merging the 5 open PRs (#311, #313, #314,
+#315, #316). #323 (install_intel_refresh_timer.sh fix, unrelated to the
+M14 batch) is also open and awaiting review/merge.
 
 ---
 
@@ -1022,6 +1106,59 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-09
+
+- **`zeek-host-capture.service` crash-loop found and fixed live**, no
+  issue filed (discovered while answering a capture-pipeline question,
+  not part of any planned batch): the SOC's only network sensor had been
+  down since #222 merged, missing `CAP_CHOWN` in #209's
+  `CapabilityBoundingSet=`. Fixed across 4 review rounds (restore
+  `CAP_CHOWN`; chgrp+sticky-bit ownership redesign; `CAP_SETUID`/
+  `CAP_SETGID` for tcpdump's privilege drop, a second crash-loop found
+  live only after the first fix was confirmed working; a CWE-59
+  symlink-follow fail-closed guard from an emergency security-auditor
+  review). [PR #324](https://github.com/voltron-1/Suburban_SOC/pull/324)
+  merged (squash), explicit review-bypass confirmed by the repo owner.
+  Along the way, also found and fixed an unrelated off-by-one repo-path
+  bug in `scripts/setup/install_intel_refresh_timer.sh` — [PR
+  #323](https://github.com/voltron-1/Suburban_SOC/pull/323), still open.
+  `CLAUDE.md` and 4 custom `.claude/` agent/slash-command definitions
+  that existed only locally were versioned — [PR
+  #325](https://github.com/voltron-1/Suburban_SOC/pull/325), merged
+  (squash), same review-bypass basis. #286's remaining PR #313 test-plan
+  item (`Conn::IN_RESP` live serialization) was resolved by the repo
+  owner choosing to accept the existing static-analysis verification
+  rather than restart the just-stabilized sensor again; #276/#278's
+  SOP-005 OpenWrt UCI item was reconfirmed still untestable in this
+  environment. See NEXT UP above for full detail.
+
+## LAST SESSION — 2026-08-08
+
+- **All 6 remaining M14 issues built end-to-end this session**, back to
+  back per explicit instruction — each got its own branch off `main` and
+  its own PR; merging remains reserved for the repo owner, requiring
+  separate explicit confirmation per PR. #276/#278 (paired):
+  [PR #311](https://github.com/voltron-1/Suburban_SOC/pull/311). #286:
+  [PR #313](https://github.com/voltron-1/Suburban_SOC/pull/313), filed
+  [#312](https://github.com/voltron-1/Suburban_SOC/issues/312) as a
+  deferred policy decision. #256:
+  [PR #314](https://github.com/voltron-1/Suburban_SOC/pull/314). #257:
+  [PR #315](https://github.com/voltron-1/Suburban_SOC/pull/315). #259:
+  [PR #316](https://github.com/voltron-1/Suburban_SOC/pull/316) — started
+  as a narrow `.env`-inline-comment parser fix, but tracing the actual
+  systemd production path (`slo-metrics.service`) surfaced two further,
+  more severe bugs in the same credential-loading area: the unit's own
+  `EnvironmentFile=` loaded the whole raw `.env` and stayed broken
+  regardless of the Python-level fix, and separately `ES_PASS` was never
+  actually being set at all (`Environment=` doesn't expand `${VAR}` —
+  confirmed empirically via a throwaway systemd unit on this host, before
+  and after the fix). Every PR went through 2-3 rounds of parallel
+  `security-auditor`/`code-reviewer` review; #257 and #259 each had a
+  genuine HIGH finding in an early draft (a claim-squat evasion via
+  trusted `_source` fields, and a unit-breaking chicken-and-egg
+  `EnvironmentFile=` deadlock respectively), both confirmed fixed via
+  mutation testing before landing.
 
 ## LAST SESSION — 2026-08-07
 

@@ -313,7 +313,7 @@ def _transition_claim(tenant_id: str, alert_id: str, phase: str, *,
     _validate_tenant_id(tenant_id)
     index = f"agent-checkpoints-{tenant_id}"
     url = f"{ES_HOST}/{index}/_update/{quote(f'{alert_id}.claim', safe='')}"
-    doc = {"phase": phase}
+    doc: Dict[str, Any] = {"phase": phase}
     if actor is not None:
         doc["resolved_by"] = f"{ES_USER}:{getpass.getuser()}@{socket.gethostname()}"
         doc["resolved_at"] = datetime.now(timezone.utc).isoformat()
@@ -326,8 +326,9 @@ def _transition_claim(tenant_id: str, alert_id: str, phase: str, *,
         # exactly when a caller thought they were using it) nor reach ES to
         # fail there instead — refuse locally, at the boundary.
         raise ValueError("if_seq_no and if_primary_term must be given together or not at all")
-    params = {}
+    params: Dict[str, int] = {}
     if if_seq_no is not None:
+        assert if_primary_term is not None  # guaranteed by the XOR guard above
         params["if_seq_no"] = if_seq_no
         params["if_primary_term"] = if_primary_term
     res = requests.post(url, json={"doc": doc}, params=params or None,

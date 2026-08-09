@@ -1,0 +1,100 @@
+# Suburban-SOC — per-document TTL retention for agent-checkpoints-<tenant> (#256).
+# Triggered by checkpoints-compact.timer daily. #245 dropped this index's ILM
+# policy rather than reinstate a semantically-wrong one (a non-rolling,
+# upsert-by-id index can't use ILM's whole-index delete phase) — this closes
+# that gap with a periodic per-document _delete_by_query instead, matching
+# compact_agent_approval_queue.py's (#176) established pattern for the JSONL
+# approval queue's own unbounded-growth problem.
+#
+# Install:
+#   sudo cp configs/systemd/checkpoints-compact.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now checkpoints-compact.timer
+# Run once now / check:  sudo systemctl start checkpoints-compact.service ; journalctl -u checkpoints-compact -n 30
+[Unit]
+Description=Suburban-SOC agent-checkpoints TTL retention (#256)
+Documentation=https://github.com/voltron-1/Suburban_SOC
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as the repo owner so it can read scripts/setup/.env and use the
+# user's Docker context for the CA extraction below — same posture as
+# slo-metrics.service and intel-refresh.service.
+User=tjlam
+# #256 (security-auditor review pattern from #245/#276/#278): a SEPARATE
+# delete-capable identity, NOT agent_checkpoints — that role's entire
+# purpose is holding no delete privilege, so a compromised live agent/CLI
+# credential can never erase a claim doc and reopen the at-most-once
+# execution gate (#214/#247). agent_checkpoints_compactor holds read+delete
+# on agent-checkpoints-* ONLY, used by nothing else. "-" prefix: do not
+# fail the unit if .env is missing — a blank AGENT_CHECKPOINTS_COMPACTOR_PASSWORD
+# just makes the script 401 and delete nothing (fails closed into "keeps
+# growing", never into an unintended delete).
+EnvironmentFile=-/home/tjlam/projects/Suburban-SOC/scripts/setup/.env
+Environment=ES_HOST=https://localhost:9200
+Environment=AGENT_CHECKPOINTS_COMPACTOR_ES_USER=agent_checkpoints_compactor
+Environment=AGENT_CHECKPOINTS_COMPACTOR_ES_PASS=${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD}
+Environment=ES_CA=/run/suburban-soc-checkpoints-compact/ca.crt
+# /run/suburban-soc-checkpoints-compact, owned by the service user; auto-removed
+# when the unit stops. The stack CA lives only in a docker volume (no stable
+# host path under Docker Desktop/WSL), so pull it from the ES container each
+# run, matching slo-metrics.service/intel-refresh.service's own approach.
+RuntimeDirectory=suburban-soc-checkpoints-compact
+ExecStartPre=-/usr/bin/docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt /run/suburban-soc-checkpoints-compact/ca.crt
+ExecStart=/usr/bin/python3 /home/tjlam/projects/Suburban-SOC/scripts/setup/ai_agent/compact_agent_checkpoints.py
+TimeoutStartSec=120
+
+# --- Sandboxing (audit #167 / NIST CM-7) ---------------------------------------
+# This unit only makes outbound HTTPS calls to Elasticsearch (requests) and
+# reads the repo/.env — no external feeds, no local file writes beyond the
+# CA cert under RuntimeDirectory above, so no special Linux capabilities,
+# kernel access, or namespace privileges are needed. Mirrors slo-metrics.service,
+# the closest existing analog (same shape: Python + ES-only + .env, no
+# external HTTP fetch, no persistent local writes).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+# security-auditor round 1 LOW: deliberately NOT RemoveIPC=true, same
+# reasoning intel-refresh.service's own comment already documents for this
+# exact directive — it removes ALL System V/POSIX IPC objects owned by the
+# unit's UID when the unit stops. User=tjlam is the interactive login
+# account, and Type=oneshot means this unit stops after every single run —
+# daily (plus on every boot) it would be eligible to tear down IPC objects
+# belonging to other tjlam-owned processes (desktop session, Docker
+# Desktop helpers) that have nothing to do with this service. This script
+# uses no IPC of any kind, so the directive would protect nothing here
+# either.
+UMask=0077
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+# security-auditor round 1 LOW: this unit holds delete privilege on the
+# approval gate's state — it should be at least as hardened as
+# intel-refresh.service, which added these after slo-metrics.service (the
+# template this file otherwise mirrors) was written.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# AF_NETLINK is required, not optional: glibc's getaddrinfo() (used to
+# resolve the ES hostname) enumerates local addresses over netlink -
+# omitting it breaks DNS resolution outright (verified against this exact
+# directive set working for slo-metrics.service/intel-refresh.service in
+# production).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+PrivateDevices=true
+ProtectProc=invisible
+ProcSubset=pid
+
+[Install]
+WantedBy=multi-user.target

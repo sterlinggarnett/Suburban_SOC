@@ -192,8 +192,49 @@ re-verifying mypy/tests after each resolution, not just re-running
 clean across 45 source files, 434/437 tests pass (the 3 failures are
 pre-existing and unrelated — a mocked `coverage_techniques` value
 tripping an unrelated SLO threshold, confirmed via `git stash` comparison
-against unmodified `HEAD`). Next unstarted item: none — M14's own scope
-is done; see MILESTONE BACKLOG below for M15/M16.
+against unmodified `HEAD`).
+
+- [x] **#252 (P2, bug) — COMPLETE, MERGED** — `ScriptBlockText`'s
+  `ignore_above:8191` (#249/#250) may still be below real PowerShell 4104
+  chunk sizes, silently dropping obfuscated payloads from the index while
+  they stay visible in `_source` — exactly what
+  `posh_ps_obfuscated_scriptblock.yml` exists to catch. Scoped to making
+  this measurable (not guessing a bigger ceiling with no data):
+  `configs/logstash.conf` tags `pipeline.truncated` (+ which field) when
+  `process.args`/`process.parent.args`/`ScriptBlockText` exceed the
+  ceiling; `metric_field_truncation_count()` in `slo_metrics.py` is the
+  new `NO_TARGET` SLO baseline. [PR #327](https://github.com/voltron-1/Suburban_SOC/pull/327)
+  merged 2026-08-09 (squash), 17/17 CI green including `live-fire`,
+  auto-closed #252. Live-verified, not just reasoned about: the exact
+  production ruby filter run on the real JRuby engine correctly tagged an
+  over-ceiling synthetic event and correctly left an exactly-at-boundary
+  (8191 chars) event untagged; separately, a synthetic 8516-char
+  `ScriptBlockText` containing a real obfuscation indicator
+  (`FromBase64String`) was confirmed unqueryable via the exact wildcard
+  pattern the Sigma rule selects on, while remaining intact in `_source`,
+  against a scratch index carrying the real production template. Live
+  verification required restarting `logstash` for the first time since
+  #286 merged, which surfaced two unrelated pre-existing outages that
+  crash-looped the whole pipeline — both fixed in the same PR since they
+  blocked verification entirely: `LOGSTASH_ENRICH_PASSWORD` was never in
+  `scripts/setup/.env` (`logstash_enrich` had never actually been
+  provisioned), and a stray apostrophe in a `docker-compose.yml` comment
+  (introduced by #257/PR #315 earlier this same session) silently
+  truncated the `provision` service's entire bootstrap script after its
+  third command — the same interpolation-fragility class #303 fixed on
+  Compose's variable-interpolation pass, but on the runtime shell-parsing
+  side, which #303's own `compose-config` CI check does not cover
+  (confirmed: that check still passes on the buggy version).
+  `logstash_enrich_reader`'s role also lacked `cluster:[monitor]`, needed
+  by the `elasticsearch` filter plugin's own startup connectivity check —
+  ES's own 403 error named the exact fix. Follow-up filed, deliberately
+  out of scope: [#326](https://github.com/voltron-1/Suburban_SOC/issues/326)
+  (#252's original suggested `wildcard`-typed unbounded multi-field for
+  `ScriptBlockText`, gated on real data from the new metric — 0 real
+  `ScriptBlockText` docs exist in this environment today).
+
+Next unstarted item: none — M14 and #252 are both done; see MILESTONE
+BACKLOG below for M15/M16.
 
 ---
 
@@ -639,10 +680,10 @@ re-run clean. Fixtures for each story's own rules were already added
 incrementally per-PR (per the `sigma-rule` skill), so #244's remaining scope
 was purely this final verification pass.
 
-**M13 milestone note:** [#252](https://github.com/voltron-1/Suburban_SOC/issues/252)
-stays open, tagged to this milestone but deliberately deferred since US1
-(2026-08-02) — `ScriptBlockText`'s `ignore_above: 8191` may still be below
-real PowerShell 4104 chunk sizes; separate scope from M13's rule-count goal.
+**M13 milestone note:** [#252](https://github.com/voltron-1/Suburban_SOC/issues/252),
+deferred since US1 (2026-08-02) as separate scope from M13's rule-count
+goal, is now **COMPLETE, CLOSED** — see NEXT UP at the top of this file
+for full detail ([PR #327](https://github.com/voltron-1/Suburban_SOC/pull/327)).
 
 M14 started 2026-08-08 — see NEXT UP at the top of this file for its live
 status.
@@ -1145,6 +1186,28 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-09 (later)
+
+- **#252 fixed, plus two unrelated production outages found live-verifying
+  it.** #252 (`ScriptBlockText`'s `ignore_above:8191` may still be below
+  real PowerShell 4104 chunk sizes) was scoped to making truncation
+  measurable rather than guessing a bigger ceiling — new
+  `pipeline.truncated` tag + `metric_field_truncation_count()` SLO metric.
+  [PR #327](https://github.com/voltron-1/Suburban_SOC/pull/327) merged
+  (squash), 17/17 CI green, explicit review-bypass confirmed by the repo
+  owner after their own review. Live-verifying it required the first
+  `logstash` restart since #286 merged, which surfaced (and this PR also
+  fixed, since they blocked verification entirely): `LOGSTASH_ENRICH_PASSWORD`
+  missing from `.env` (`logstash_enrich` never actually provisioned), a
+  stray apostrophe in `docker-compose.yml` (from #257/PR #315 earlier
+  this same session) silently truncating the `provision` service's whole
+  bootstrap script past its third command, and a missing `cluster:[monitor]`
+  on `logstash_enrich_reader`'s role. `logstash` confirmed stable
+  post-fix (`RestartCount: 0`, held 5+ minutes). Follow-up filed:
+  [#326](https://github.com/voltron-1/Suburban_SOC/issues/326) (the
+  wildcard-multi-field question #252's own suggested fix deferred to real
+  data). See NEXT UP above for full detail.
 
 ## LAST SESSION — 2026-08-09
 

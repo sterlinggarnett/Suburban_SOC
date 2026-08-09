@@ -295,17 +295,18 @@ services:
         if [ x${SLO_METRICS_PASSWORD} != x ]; then
           echo "Provisioning slo_metrics_reader role + slo_metrics user (audit #167 — replaces elastic superuser)";
           # #247: agent-checkpoints-* read added for metric_stuck_approval_claims().
-          # No field_security here — live-verified against this stack's Basic
-          # license: field/document-level security is a Gold+ feature and the PUT
-          # 403s outright under Basic (security-auditor's suggested FLS grant would
-          # have silently failed to apply — this compose block discards curl's
-          # output, so nothing would have surfaced the failure). Accepted residual
-          # risk (security-auditor review): the GRANT is plain read (indices:data/
-          # read/*), so a compromised slo_metrics credential could run a full
-          # _search here, not just the _count metric_stuck_approval_claims() itself
-          # issues — that would return full checkpoint docs (raw alert payloads,
-          # approver identities, live approval-gate state) across every tenant.
-          # Accepted because it's read-only (no write/delete, no gate bypass) and
+          # No field_security here — live-verified against this stack, under its
+          # Basic license: field/document-level security is a Gold+ feature and
+          # the PUT 403s outright under Basic (a security-auditor-suggested FLS
+          # grant would have silently failed to apply — this compose block
+          # discards curl output, so nothing would have surfaced the failure).
+          # Accepted residual risk (security-auditor review): the GRANT is plain
+          # read (indices:data/read/*), so a compromised slo_metrics credential
+          # could run a full _search here, not just the _count
+          # metric_stuck_approval_claims() itself issues — that would return
+          # full checkpoint docs (raw alert payloads, approver identities, live
+          # approval-gate state) across every tenant.
+          # Accepted because this grant is read-only (no write/delete, no gate bypass) and
           # this identity already reads logstash-security-* — the incremental
           # blast radius from a compromise is approval-workflow visibility, not a
           # new capability class. Revisit with a filtered alias (defense-in-depth,
@@ -344,12 +345,14 @@ services:
           # configs/elasticsearch/roles/agent_checkpoints.json is authoritative
           # (re-applied by apply_roles.sh) - keep this inline copy in sync.
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/agent_checkpoints -d "{\"indices\":[{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"auto_configure\",\"create_index\",\"index\",\"read\"]}]}" > /dev/null;
-          # $$ (not $) on the password: Compose interpolates ${VAR} at parse
-          # time, which would splice the cleartext password into this
-          # containers argv (readable via docker inspect/ps --no-trunc for
-          # as long as the exited one-shot container exists). $$ emits a
-          # literal ${...} for bash to expand from AGENT_CHECKPOINTS_PASSWORD
-          # in this services own environment block instead, never touching argv.
+          # Escaped as $${AGENT_CHECKPOINTS_PASSWORD} (double-dollar, not a
+          # lone Compose-time reference): an unescaped reference would splice
+          # the cleartext password into the argv of this container (readable
+          # via docker inspect/ps --no-trunc for as long as the exited
+          # one-shot container exists) at parse time. The escaped form
+          # instead emits a literal $${...} for bash itself to expand from
+          # AGENT_CHECKPOINTS_PASSWORD, set in the environment block of this
+          # service, never touching argv.
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/agent_checkpoints -d "{\"password\":\"$${AGENT_CHECKPOINTS_PASSWORD}\",\"roles\":[\"agent_checkpoints\"],\"full_name\":\"SOC AI agent checkpoints (Suburban-SOC)\"}" > /dev/null;
         fi;
         if [ x$${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD} != x ]; then
@@ -388,8 +391,9 @@ services:
           # configs/elasticsearch/roles/intel_writer.json is authoritative
           # (re-applied by apply_roles.sh) - keep this inline copy in sync.
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/intel_writer -d "{\"indices\":[{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"auto_configure\",\"create_index\",\"index\"]}]}" > /dev/null;
-          # $$ (not $), same reasoning as AGENT_CHECKPOINTS_PASSWORD above:
-          # avoids splicing the cleartext password into this container's argv.
+          # Escaped as $${INTEL_WRITER_PASSWORD} (same reasoning as
+          # AGENT_CHECKPOINTS_PASSWORD above): avoids splicing the
+          # cleartext password into the argv of this container.
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/intel_writer -d "{\"password\":\"$${INTEL_WRITER_PASSWORD}\",\"roles\":[\"intel_writer\"],\"full_name\":\"Threat-intel feed refresh (Suburban-SOC)\"}" > /dev/null;
         fi;
         echo "Provisioning complete.";

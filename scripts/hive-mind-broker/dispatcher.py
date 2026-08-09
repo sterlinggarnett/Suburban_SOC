@@ -12,6 +12,7 @@ import asyncssh
 import ipaddress
 import logging
 import os
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -126,9 +127,53 @@ def is_excluded_ip(attacker_ip: str) -> bool:
 # Formulate the nftables drop command (Task 2.2.1)
 # Drops traffic from the specified IP on the OpenWrt input chain.
 # Note: For OpenWrt 22.03+, we assume 'inet fw4 input' is the default target chain.
+#
+# #278: `nft add element` to a named set (not a bare `nft add rule ... drop`)
+# — element addition is idempotent (adding an already-present element is a
+# no-op), unlike rule addition (running the old command twice created TWO
+# identical drop rules). This matters because #278's own reconciliation
+# below can leave a genuine double-dispatch on the table if a retry ever
+# races an already-applied block; with a named set, that race is now
+# harmless instead of leaving duplicate rules to clean up.
+#
+# Assumes NFT_BLOCKLIST_SET already exists in table `inet fw4` with a
+# referencing rule (e.g. `ip saddr @hivemind_blocklist drop`) configured as
+# part of the router's own base firewall config — this command only ever
+# manages SET MEMBERSHIP, it does not create the set or the rule that
+# references it. That's a one-time router-provisioning step, out of scope
+# for a per-dispatch command (see docs/SOP-* for the provisioning note).
+#
+# security-auditor review (#278, Finding: RCE amplifier): this value is
+# interpolated into a command string executed by the ROUTER'S ROOT SHELL over
+# SSH (build_nft_command/build_nft_verify_command below). attacker_ip is
+# validated by validate_ip(), but until now NFT_BLOCKLIST_SET was not —
+# anyone who can influence the broker's environment (a compose override, the
+# .env file, a CI variable) could turn "can edit broker config" into root RCE
+# on every router in the inventory. nftables identifiers are
+# alphanumeric/underscore, not digit-first (code-reviewer: a digit-first
+# name would pass a laxer check only to fail at runtime on the router as a
+# generic nft syntax error instead of being caught here), so this rejects
+# nothing legitimate.
+NFT_BLOCKLIST_SET = os.environ.get("NFT_BLOCKLIST_SET", "hivemind_blocklist")
+if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,31}", NFT_BLOCKLIST_SET):
+    raise RuntimeError(
+        f"NFT_BLOCKLIST_SET={NFT_BLOCKLIST_SET!r} is not a valid nftables set "
+        f"identifier — refusing to start rather than interpolate it unvalidated "
+        f"into a command executed by the router's root shell.")
+
+
 def build_nft_command(attacker_ip: str) -> str:
     validate_ip(attacker_ip)  # raises ValueError for malformed input (audit #164 / NIST SI-10)
-    return f"nft add rule inet fw4 input ip saddr {attacker_ip} drop"
+    return f"nft add element inet fw4 {NFT_BLOCKLIST_SET} {{ {attacker_ip} }}"
+
+
+def build_nft_verify_command(attacker_ip: str) -> str:
+    """#278: read-only membership check for the reconciliation follow-up
+    below — `nft get element` exits 0 iff the element IS present in the
+    set, non-zero otherwise. A clean binary signal via exit code, no text
+    parsing of `nft list chain`/`nft list ruleset` output needed."""
+    validate_ip(attacker_ip)
+    return f"nft get element inet fw4 {NFT_BLOCKLIST_SET} {{ {attacker_ip} }}"
 
 # #247 security-auditor review (round 3): the ORIGINAL 10s/10s defaults gave a
 # 20s worst case per router (connect + command), exceeding the agent's own 15s
@@ -141,6 +186,156 @@ def build_nft_command(attacker_ip: str) -> str:
 SSH_CONNECT_TIMEOUT = float(os.environ.get("SSH_CONNECT_TIMEOUT", "5"))  # seconds
 SSH_COMMAND_TIMEOUT = float(os.environ.get("SSH_COMMAND_TIMEOUT", "5"))  # seconds
 
+# #278: the bounded follow-up verification below (_verify_block_applied)
+# uses its OWN, SHORTER timeouts — not SSH_CONNECT/COMMAND_TIMEOUT — so the
+# combined worst case (original attempt + this follow-up) stays safely
+# under the agent's 20s HTTP timeout to /webhook/dispatch.
+#
+# security-auditor review flagged connect_timeout and login_timeout as
+# ADDITIVE sequential phase budgets (worst case 5+5+5=15s original,
+# 3+3+3=9s follow-up, 24s total — over budget). Empirically verified
+# otherwise: asyncssh.connect(connect_timeout=N, login_timeout=N) against a
+# target that never completes the TCP handshake, AND separately against one
+# that completes TCP but stalls the SSH banner/auth, both aborted at ~N
+# seconds, not ~2N — connect_timeout is the single outer bound
+# (asyncio.wait_for) wrapping TCP-connect-through-auth as one operation;
+# login_timeout does not add on top of it. So each connect() call costs at
+# most SSH_*_CONNECT_TIMEOUT once, not twice: 10s (original, 5s connect +
+# 5s command) + 6s (this, 3s connect + 3s command) = 16s, leaving ~4s of
+# slack. A follow-up that itself needed the full 5s/5s budget would risk
+# the AGENT timing out and raising IsolationOutcomeUnknown before the
+# broker's own reconciliation attempt even finishes — defeating the point
+# of adding it (same class of mistake #247 round-3's SSH_CONNECT/
+# COMMAND_TIMEOUT reduction was fixing).
+SSH_VERIFY_CONNECT_TIMEOUT = float(os.environ.get("SSH_VERIFY_CONNECT_TIMEOUT", "3"))  # seconds
+SSH_VERIFY_COMMAND_TIMEOUT = float(os.environ.get("SSH_VERIFY_COMMAND_TIMEOUT", "3"))  # seconds
+
+
+async def _verify_block_applied(router: dict, attacker_ip: str) -> bool | None:
+    """#278: ONE bounded, read-only follow-up connection after an ambiguous
+    ("unknown") outcome, to reconcile it to a confirmed answer for the
+    common case — a transient SSH blip, with the router reachable again a
+    moment later. Returns True/False when the follow-up itself got a clean
+    determinate answer, or None if it couldn't (still genuinely unknown —
+    this never guesses; a failed/timed-out follow-up is not evidence of
+    anything and must not be treated as though it were).
+
+    Always opens a FRESH connection rather than trying to reuse whatever
+    connection object the original attempt had (which may itself be in an
+    unknown state, e.g. mid-teardown) — simpler to reason about than
+    conditionally reusing one, at the cost of a little latency in the rare
+    signal-killed-but-connection-still-alive case.
+    """
+    try:
+        ip = router.get("ip_address")
+        username = router.get("username", "root")
+        key_path = os.path.expanduser(router.get("ssh_key_path", "~/.ssh/id_ed25519_hivemind"))
+        command = build_nft_verify_command(attacker_ip)
+    except Exception as exc:
+        logger.error("Cannot verify block on malformed router entry %r: %s", router, exc)
+        return None
+
+    try:
+        conn = await asyncssh.connect(
+            host=ip,
+            username=username,
+            client_keys=[key_path],
+            known_hosts=_resolve_known_hosts(),
+            connect_timeout=SSH_VERIFY_CONNECT_TIMEOUT,
+            login_timeout=SSH_VERIFY_CONNECT_TIMEOUT,
+        )
+    except Exception as exc:
+        # Still unreachable — the common case this exists for didn't apply
+        # this time. Stay "unknown", exactly as before this fix existed.
+        logger.warning("Verification follow-up could not reach %s: %s", ip, exc)
+        return None
+
+    try:
+        async with conn:
+            await asyncio.wait_for(conn.run(command, check=True), timeout=SSH_VERIFY_COMMAND_TIMEOUT)
+        logger.info("Verification follow-up confirms %s IS blocked on %s.", attacker_ip, ip)
+        return True
+    except asyncssh.ProcessError as exc:
+        if exc.exit_signal is not None:
+            # The VERIFICATION command itself was signal-killed — this says
+            # nothing about whether the element is present, only that this
+            # read-only check didn't get to finish. Same "not confirmed"
+            # reasoning as block_ip_on_router's own signal-kill branch —
+            # do not treat an interrupted check as a determinate "absent".
+            logger.warning("Verification follow-up on %s was itself signaled: %s", ip, exc)
+            return None
+        if exc.exit_status == 1:
+            # security-auditor round-2 MEDIUM: nft(8) documents no per-error
+            # EXIT STATUS taxonomy — 1 (EXIT_FAILURE) is nft's generic
+            # command-failure code, not a code specific to "element not in
+            # set". This narrows round-1's "any non-zero -> absent" (which
+            # misread 1 as element-specific) to "the common, but NOT
+            # exclusively element-specific, code" — still an improvement
+            # (a shell-level 127/126 or a signal no longer reads as
+            # "absent"), but NOT the precise disambiguation this needs.
+            # Confirming nft's real behavior (does a missing set/table also
+            # exit 1 here, or something else?) needs the actual deployed nft
+            # version — same as the "flags interval" idempotency question
+            # above (SOP-005) — tracked as a tester-debugger follow-up, not
+            # blind-fixed here. Until then this stays on the safe side of
+            # the HIGH-1 asymmetry: a false "absent" only costs one harmless
+            # idempotent retry, never a false "success".
+            logger.info("Verification follow-up confirms %s is NOT blocked on %s.", attacker_ip, ip)
+            return False
+        # Any exit status OTHER than 1 (missing set/table producing a
+        # different code on this nft version, unsupported flag combo, nft
+        # not on PATH, permission error, ...) is NOT evidence the element is
+        # absent — stay unknown rather than guess.
+        logger.warning("Verification follow-up on %s exited %s (stderr=%r) — treating as "
+                       "inconclusive, not confirmed-absent: %s",
+                       ip, exc.exit_status, (exc.stderr or "")[:300], exc)
+        return None
+    except Exception as exc:
+        # Connection lost / command timed out mid-verification — the
+        # follow-up itself is now ambiguous too. Do not guess.
+        logger.warning("Verification follow-up on %s was itself inconclusive: %s", ip, exc)
+        return None
+
+
+async def _reconcile_unknown(router: dict, attacker_ip: str, ip, reason: str) -> str:
+    """#278: before block_ip_on_router() gives up as "unknown", make ONE
+    bounded read-only follow-up attempt to actually check whether the block
+    landed — closes the common case (the router recovers from a transient
+    blip a moment later) without a human needing to intervene.
+
+    Top-level, explicit-parameter function (not a closure over
+    block_ip_on_router's locals) so it matches _verify_block_applied's own
+    style and stays independently testable/reorderable — `ip` is passed
+    through rather than re-derived from `router` purely for the log
+    messages below (code-reviewer round-1: a closure capturing it silently
+    depended on definition order relative to where `ip` gets assigned).
+
+    security-auditor review (#278, HIGH): may promote to "failed" but MUST
+    NEVER promote to "success". `nft get element` only proves SET
+    MEMBERSHIP, not that the referencing drop rule
+    (`ip saddr @hivemind_blocklist drop`) still exists in a reachable
+    chain — the set could survive a partial fw4 rebuild while the rule
+    doesn't. The two directions are not symmetric: a false "failed" costs
+    one harmless idempotent retry, while a false "success" flows into
+    agent.py's close_case(..., "true_positive_contained") and permanently
+    forecloses any retry on a host that was never actually contained. So
+    a determinate-present follow-up still leaves the outcome "unknown" —
+    for a human to resolve via manage_stuck_claims.py, exactly as before
+    #278 existed — while a determinate-absent one safely resolves to
+    "failed"."""
+    verified = await _verify_block_applied(router, attacker_ip)
+    if verified is False:
+        logger.info("Reconciled %s on %s to CONFIRMED failure (%s, "
+                    "but follow-up verification found it NOT applied).", attacker_ip, ip, reason)
+        return "failed"
+    if verified is True:
+        logger.warning("Verification follow-up found %s present in the blocklist SET on %s "
+                       "(%s) — but set membership alone does not confirm the referencing "
+                       "drop rule is still in place, so this is NOT auto-promoted to "
+                       "success. Leaving unknown for manual review (manage_stuck_claims.py "
+                       "show).", attacker_ip, ip, reason)
+    return "unknown"
+
 
 async def block_ip_on_router(router: dict, attacker_ip: str) -> str:
     """
@@ -151,10 +346,12 @@ async def block_ip_on_router(router: dict, attacker_ip: str) -> str:
     was malformed, or the remote command ran and reported a non-zero exit with
     no signal involved), or "unknown" (the SSH session was lost, or the command
     timed out, AFTER the command was sent but before its exit status could be
-    confirmed — nft may already have run on the router). #247 security-auditor
-    review: the agent-side caller MUST NEVER treat "unknown" the same as
-    "failed" — releasing an approval claim on an unconfirmed outcome risks
-    dispatching the same block twice on retry.
+    confirmed — nft may already have run on the router, AND the #278 bounded
+    follow-up verification below also couldn't determine it — see
+    _verify_block_applied()). #247 security-auditor review: the agent-side
+    caller MUST NEVER treat "unknown" the same as "failed" — releasing an
+    approval claim on an unconfirmed outcome risks dispatching the same
+    block twice on retry.
     """
     try:
         ip = router.get("ip_address")
@@ -195,7 +392,7 @@ async def block_ip_on_router(router: dict, attacker_ip: str) -> str:
             # its netlink call before being signaled. Not confirmed.
             logger.error("Outcome UNKNOWN on %s (command was signaled, not a "
                          "clean exit): %s", ip, exc)
-            return "unknown"
+            return await _reconcile_unknown(router, attacker_ip, ip, "command was signaled")
         # A clean non-zero exit — the command ran ON THE ROUTER and nft itself
         # reported failure. Confirmed NOT applied.
         logger.error("Block command failed on %s: %s", ip, exc)
@@ -206,7 +403,7 @@ async def block_ip_on_router(router: dict, attacker_ip: str) -> str:
         # run before we lost the ability to confirm it. Not confirmed either way.
         logger.error("Outcome UNKNOWN executing on %s (connection lost/timed out "
                      "mid-command): %s", ip, exc)
-        return "unknown"
+        return await _reconcile_unknown(router, attacker_ip, ip, "connection lost/timed out mid-command")
 
 
 async def dispatch_block_to_all(routers: list, attacker_ip: str):

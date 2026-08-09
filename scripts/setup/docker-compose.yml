@@ -273,8 +273,8 @@ services:
         # competing one that re-adds data_stream/a write block — a
         # containment denial-of-service reachable from a credential #245
         # specifically kept away from checkpoint *data* access, but which
-        # still had *control-plane* reach over it. configs/logstash.conf's
-        # elasticsearch outputs set manage_template=>false/ilm_enabled=>false
+        # still had *control-plane* reach over it. The elasticsearch outputs
+        # in configs/logstash.conf set manage_template=>false/ilm_enabled=>false
         # to match (the plugin must not try to auto-manage what it no longer
         # has permission to touch).
         # configs/elasticsearch/roles/logstash_writer.json is authoritative
@@ -356,9 +356,9 @@ services:
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/agent_checkpoints -d "{\"password\":\"$${AGENT_CHECKPOINTS_PASSWORD}\",\"roles\":[\"agent_checkpoints\"],\"full_name\":\"SOC AI agent checkpoints (Suburban-SOC)\"}" > /dev/null;
         fi;
         if [ x$${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD} != x ]; then
-          echo "Provisioning agent_checkpoints_compactor role + user (#256 — a SEPARATE delete-capable identity for the scheduled TTL-retention script, deliberately never merged into agent_checkpoints above: that role's whole point (#245) is holding NO delete privilege, so a compromised live agent/CLI credential can't erase a claim doc and re-open the at-most-once execution gate)";
+          echo "Provisioning agent_checkpoints_compactor role + user (#256 — a SEPARATE delete-capable identity for the scheduled TTL-retention script, deliberately never merged into agent_checkpoints above: the whole point of that role (#245) is holding NO delete privilege, so a compromised live agent/CLI credential cannot erase a claim doc and re-open the at-most-once execution gate)";
           # read+delete, same index pattern as agent_checkpoints — nothing
-          # else. compact_agent_checkpoints.py's own TERMINAL_CLAIM_PHASES
+          # else. The TERMINAL_CLAIM_PHASES of compact_agent_checkpoints.py
           # never includes CLAIMED (asserted in the script itself), so even
           # with delete granted here, a live/unresolved claim is never a
           # candidate this credential could act on.
@@ -374,12 +374,20 @@ services:
           # Least privilege: read-only on logstash-security-* — no write, no
           # delete, no other index. This credential can only ever look up a
           # conn.log record by uid; it can never modify anything.
+          # cluster:[monitor] added #252 live verification: the
+          # logstash-filter-elasticsearch plugin runs a product-check ping
+          # against cluster:monitor/main during register(), before this
+          # filter ever issues its own indices:read query - without it,
+          # authentication succeeds but that startup ping 403s and the
+          # ENTIRE pipeline (not just this filter) fails to start. Never
+          # exercised live before #252, since logstash had not been
+          # restarted since #286 merged.
           # configs/elasticsearch/roles/logstash_enrich_reader.json is
           # authoritative (re-applied by apply_roles.sh) - keep this inline
           # bootstrap copy in sync.
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/logstash_enrich_reader -d "{\"indices\":[{\"names\":[\"logstash-security-*\"],\"privileges\":[\"read\"]}]}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/logstash_enrich_reader -d "{\"cluster\":[\"monitor\"],\"indices\":[{\"names\":[\"logstash-security-*\"],\"privileges\":[\"read\"]}]}" > /dev/null;
           # $$ (not $), same reasoning as AGENT_CHECKPOINTS_PASSWORD above:
-          # avoids splicing the cleartext password into this container's argv.
+          # avoids splicing the cleartext password into this container argv.
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/logstash_enrich -d "{\"password\":\"$${LOGSTASH_ENRICH_PASSWORD}\",\"roles\":[\"logstash_enrich_reader\"],\"full_name\":\"Logstash MAC-correlation reader (Suburban-SOC, #286)\"}" > /dev/null;
         fi;
         if [ x$${INTEL_WRITER_PASSWORD} != x ]; then

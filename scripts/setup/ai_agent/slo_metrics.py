@@ -21,6 +21,10 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
   Orphaned claims                  == 0        — CLAIMED claims older than 10 min
                                                   with no paired phase checkpoint,
                                                   the claim-squatting signature (#257)
+  Field truncation count           measured    — pipeline.truncated over the window
+                                                  (#252), no target — baseline for
+                                                  whether ScriptBlockText's 8191
+                                                  ignore_above ceiling is ever hit
 
 Pure stdlib (requests). Env (auto-loaded from scripts/setup/.env):
   ES_URL, ES_USER, ES_PASS/ELASTIC_PASSWORD, KIBANA_URL, NTFY_TOPIC.
@@ -96,7 +100,7 @@ BREACH_IF_NA = {"ingest_lag_seconds"}
 # rather than just silencing it). Inventing an uncalibrated number here would be
 # worse than no threshold at all. Still participates in the errors/exit-3 path
 # below like every other metric — an unmeasurable value is never silently benign.
-NO_TARGET = {"raw_alert_volume"}
+NO_TARGET = {"raw_alert_volume", "field_truncation_count"}
 
 
 # FAIL CLOSED (audit P1-2): verify TLS against the stack CA instead of verify=False.
@@ -459,6 +463,31 @@ def metric_raw_alert_volume():
             "value": zeek_notices + rule_hits}
 
 
+def metric_field_truncation_count():
+    """Count of pipeline.truncated:"true" docs in the window (#252).
+
+    process.args/process.parent.args/winlog.event_data.ScriptBlockText are
+    mapped ignore_above:8191 (#249/#250, raised from 1024) — a value longer
+    than that ceiling is silently dropped from the index while remaining in
+    _source, invisible to any query. PowerShell 4104 ScriptBlockText chunks
+    commonly run well past 8191 characters, so an obfuscated payload could
+    slip past rules/sigma/posh_ps_obfuscated_scriptblock.yml with no signal
+    it happened. configs/logstash.conf's ruby filter now tags
+    pipeline.truncated="true" (+ pipeline.truncated_fields) when it detects
+    this; this metric turns that tag into a measured rate.
+
+    NO_TARGET (see below): #252's own suggested fix treats a bigger/unbounded
+    field as conditional on real data showing 8191 is actually hit — no real
+    Windows/process telemetry flows through this pipeline in this environment
+    yet (per #253's live-verification notes), so there is no data to set a
+    threshold against. This metric exists to produce that data, not to
+    enforce a guessed number.
+    """
+    win = {"range": {"@timestamp": {"gte": WINDOW}}}
+    return _count("logstash-security-*",
+                  {"bool": {"filter": [win, {"term": {"pipeline.truncated": "true"}}]}})
+
+
 def main():
     if not ES_PASS:
         print("ERROR: ES_PASS / ELASTIC_PASSWORD required", file=sys.stderr)
@@ -475,6 +504,7 @@ def main():
         "stuck_approval_claims": metric_stuck_approval_claims,
         "orphaned_claims": metric_orphaned_claims,
         "raw_alert_volume": metric_raw_alert_volume,
+        "field_truncation_count": metric_field_truncation_count,
     }
     values, errors = {}, {}
     for name, fn in metric_fns.items():

@@ -143,6 +143,25 @@ within a milestone, not milestone completions in their own right:
   2026-08-02; closes #249/#250), live-verified against the running cluster,
   and rolled out to every tenant's `logstash-security-*` data stream via a
   non-destructive rollover.
+- **Field-truncation visibility (#252).** #253's `ignore_above: 8191` fixed
+  the 1024 ceiling for most command-line fields, but PowerShell 4104
+  `ScriptBlockText` chunks commonly run past 8191 — live-verified: a
+  synthetic 8516-character value containing a real obfuscation indicator
+  (`FromBase64String`) was silently unqueryable while staying intact in
+  `_source`, the exact blind spot `posh_ps_obfuscated_scriptblock.yml`
+  exists to catch. `configs/logstash.conf` now tags `pipeline.truncated`
+  (+ which field) when `process.args`/`process.parent.args`/`ScriptBlockText`
+  exceed the ceiling; `metric_field_truncation_count()` turns that into a
+  measured, `NO_TARGET` SLO baseline rather than a guessed number. Live
+  verification of this fix surfaced two unrelated, pre-existing outages it
+  had to fix to even restart `logstash`: `LOGSTASH_ENRICH_PASSWORD` (#286)
+  was never in `scripts/setup/.env`, so the `logstash_enrich` ES identity
+  had never actually been provisioned; and a stray apostrophe in a
+  `docker-compose.yml` comment (introduced by #257/PR #315) silently
+  truncated the entire `provision` service's bootstrap script after its
+  third command — the same interpolation-fragility class #303 fixed for
+  Compose's variable pass, but on the runtime shell-parsing side, which no
+  existing CI check catches.
 - **Detection framework enrichment (PR #112).** The detection plane spans
   **37 ATT&CK techniques across 9 tactics** (see
   [`docs/detections/attack-coverage.md`](docs/detections/attack-coverage.md)). The

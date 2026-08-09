@@ -157,6 +157,7 @@ services:
       - SOC_AGENT_KIBANA_PASSWORD=${SOC_AGENT_KIBANA_PASSWORD:-}
       - SLO_METRICS_PASSWORD=${SLO_METRICS_PASSWORD:-}
       - AGENT_CHECKPOINTS_PASSWORD=${AGENT_CHECKPOINTS_PASSWORD:-}
+      - AGENT_CHECKPOINTS_COMPACTOR_PASSWORD=${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD:-}
       - INTEL_WRITER_PASSWORD=${INTEL_WRITER_PASSWORD:-}
       - LOGSTASH_ENRICH_PASSWORD=${LOGSTASH_ENRICH_PASSWORD:-}
     volumes:
@@ -240,6 +241,20 @@ services:
           # literal ${...} for bash to expand from AGENT_CHECKPOINTS_PASSWORD
           # in this services own environment block instead, never touching argv.
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/agent_checkpoints -d "{\"password\":\"$${AGENT_CHECKPOINTS_PASSWORD}\",\"roles\":[\"agent_checkpoints\"],\"full_name\":\"SOC AI agent checkpoints (Suburban-SOC)\"}" > /dev/null;
+        fi;
+        if [ x$${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD} != x ]; then
+          echo "Provisioning agent_checkpoints_compactor role + user (#256 — a SEPARATE delete-capable identity for the scheduled TTL-retention script, deliberately never merged into agent_checkpoints above: that role's whole point (#245) is holding NO delete privilege, so a compromised live agent/CLI credential can't erase a claim doc and re-open the at-most-once execution gate)";
+          # read+delete, same index pattern as agent_checkpoints — nothing
+          # else. compact_agent_checkpoints.py's own TERMINAL_CLAIM_PHASES
+          # never includes CLAIMED (asserted in the script itself), so even
+          # with delete granted here, a live/unresolved claim is never a
+          # candidate this credential could act on.
+          # configs/elasticsearch/roles/agent_checkpoints_compactor.json is
+          # authoritative (re-applied by apply_roles.sh) - keep this inline
+          # copy in sync.
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/agent_checkpoints_compactor -d "{\"indices\":[{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\",\"delete\"]}]}" > /dev/null;
+          # $$ (not $), same reasoning as AGENT_CHECKPOINTS_PASSWORD above.
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/agent_checkpoints_compactor -d "{\"password\":\"$${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD}\",\"roles\":[\"agent_checkpoints_compactor\"],\"full_name\":\"SOC agent-checkpoints TTL retention (Suburban-SOC, #256)\"}" > /dev/null;
         fi;
         if [ x$${LOGSTASH_ENRICH_PASSWORD} != x ]; then
           echo "Provisioning logstash_enrich_reader role + logstash_enrich user (#286 security-auditor CRITICAL — the uid-keyed conn.log<->intel.log correlation in configs/logstash.conf needs its OWN read credential, NOT logstash_internal: that identity holds only logstash_writer (write/manage, no read at all — confirmed the correlation 403s on every event without this) and widening logstash_writer to read would hand the shared Logstash/agent credential cross-tenant read of all security telemetry, which this stack cannot scope back with field-level security on a Basic license)";

@@ -162,6 +162,46 @@ within a milestone, not milestone completions in their own right:
   third command — the same interpolation-fragility class #303 fixed for
   Compose's variable pass, but on the runtime shell-parsing side, which no
   existing CI check catches.
+- **PowerShell/service-binPath payload-length bypass fix (M15, #263).** #252
+  made truncation measurable but deliberately left the 8191 ceiling in
+  place, pending data. #263 (filed earlier, during #217's review) already
+  had enough to act on without new data: Windows' own `CreateProcess`
+  command-line limit is ~32,767 characters and 4104 chunks commonly run
+  ~20,000, both of which silently exceeded the 8191 `ignore_above` ceiling
+  and evaded `proc_creation_win_powershell_encoded.yml`,
+  `posh_ps_obfuscated_scriptblock.yml`, and
+  `system_win_suspicious_service_binpath_lolbin.yml` on any realistic
+  payload, not an edge case. Raised to 32766 for `process.args`/
+  `process.parent.args`/`winlog.event_data.ScriptBlockText`/
+  `winlog.event_data.ImagePath` and the `long_command_fields`
+  dynamic_template; `configs/logstash.conf`'s truncation-tag ceiling kept in
+  lockstep (now a CI-enforced test, not just a comment) so
+  `pipeline.truncated` doesn't false-fire on values that are now correctly
+  indexed. Applied to the live template and rolled over across every
+  tenant's `logstash-security-*` data stream (non-destructive — history
+  keeps its old mapping until it ages out under ILM, same pattern as #253).
+  A parallel security-auditor + code-reviewer pass, followed by live
+  empirical verification, found the first version of this fix introduced a
+  worse bug than the one it closed: `ignore_above` is a *character* ceiling,
+  but Lucene's own per-term hard limit is a UTF-8 *byte* ceiling — a value
+  under the char ceiling but byte-heavy (multi-byte content, e.g. Unicode
+  identifier obfuscation in `ScriptBlockText`) crashed the *whole document*
+  at index time (confirmed live: HTTP 400, Lucene "immense term" rejection)
+  instead of just dropping the one field. Fixed with a byte-safety clamp in
+  the ruby filter (tagged `pipeline.byte_clamped`, its own new
+  `metric_field_byte_clamp_count()` SLO metric) that only activates in the
+  narrow window `ignore_above` itself cannot cover. The same review also
+  found — and live-confirmed via a spliced-pipeline replay of the real
+  filter — that the truncation tag had silently never worked for
+  `process.args`/`process.parent.args` on real Sysmon-sourced events at all:
+  the pipeline's Sysmon `mutate.rename` block targets bare dotted strings
+  (`"process.args"`), which Logstash creates as a flat literal field rather
+  than the nested structure the filter's lookups expected. Worked around
+  locally with a fallback lookup; the rename block itself (touching 9 fields
+  across the whole Sysmon rule surface) is deliberately left for its own
+  dedicated follow-up (filed as
+  [#328](https://github.com/voltron-1/Suburban_SOC/issues/328)) rather than
+  expanding this fix's blast radius.
 - **Detection framework enrichment (PR #112).** The detection plane spans
   **37 ATT&CK techniques across 9 tactics** (see
   [`docs/detections/attack-coverage.md`](docs/detections/attack-coverage.md)). The

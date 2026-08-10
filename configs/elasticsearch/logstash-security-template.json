@@ -3,7 +3,7 @@
   "priority": 200,
   "data_stream": {},
   "_meta": {
-    "description": "Suburban-SOC unified security index. Pins ECS fields to keyword/ip/date so cross-index aggregations and dashboards are consistent (fixes the dynamic text+keyword drift that silently failed shard aggregations). WS0.3: tenant.id is a first-class keyword. WS0.5: backed by a per-tenant data stream (logstash-security-<tenant>) under ILM policy logstash-security-ilm. #249/#250: command-line/script-block-shaped fields (process.args, *CommandLine, *ScriptBlockText, *uri — explicit properties plus the long_command_fields dynamic_template) use a lowercase normalizer (so Sigma's lowercase literals match mixed-case real telemetry via wildcard-query normalization) and a raised ignore_above:8191 (vs the general 1024) so long values, e.g. encoded PowerShell, aren't silently dropped from the index. Aggregations/sorts on these fields return the lowercased form; _source keeps original casing for Discover/evidence.",
+    "description": "Suburban-SOC unified security index. Pins ECS fields to keyword/ip/date so cross-index aggregations and dashboards are consistent (fixes the dynamic text+keyword drift that silently failed shard aggregations). WS0.3: tenant.id is a first-class keyword. WS0.5: backed by a per-tenant data stream (logstash-security-<tenant>) under ILM policy logstash-security-ilm. #249/#250: command-line/script-block-shaped fields (process.args, *CommandLine, *ScriptBlockText, *uri — explicit properties plus the long_command_fields dynamic_template) use a lowercase normalizer (so Sigma's lowercase literals match mixed-case real telemetry via wildcard-query normalization) and a raised ignore_above so long values, e.g. encoded PowerShell, aren't silently dropped from the index. #263: process.args/process.parent.args/winlog.event_data.ScriptBlockText/winlog.event_data.ImagePath (and the long_command_fields dynamic_template backing any future field of the same shape) are raised further to ignore_above:32766 — 8191 (#249/#250's original raise from the default 1024) was still below real PowerShell 4104 chunk sizes (~20000 chars) and encoded-command-line lengths, letting both PowerShell Sigma rules and system_win_suspicious_service_binpath_lolbin.yml be silently bypassed by payload length. Note ignore_above:32766 is a CHARACTER ceiling, not the Lucene per-term 32766-BYTE hard limit it's numerically equal to — multi-byte UTF-8 content can exceed the byte limit while under the char ceiling, which would otherwise reject the whole document rather than just dropping the field (confirmed live during #263's review); configs/logstash.conf's ruby filter clamps byte-oversized values before they reach Elasticsearch to prevent that, tagging pipeline.byte_clamped separately from pipeline.truncated. Aggregations/sorts on these fields return the lowercased form; _source keeps original casing for Discover/evidence (except the rare byte-clamped case, where _source itself is clamped too — no way to preserve full fidelity there without risking the same document-rejection failure).",
     "managed_by": "configs/elasticsearch/apply-templates.sh"
   },
   "template": {
@@ -25,7 +25,7 @@
           "long_command_fields": {
             "match_mapping_type": "string",
             "path_match": ["*command_line", "*CommandLine", "*args", "*ScriptBlockText", "*uri", "*url"],
-            "mapping": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 }
+            "mapping": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 32766 }
           }
         },
         {
@@ -42,17 +42,17 @@
 
         "process": { "properties": {
           "executable": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 },
-          "args":       { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 },
+          "args":       { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 32766 },
           "parent": { "properties": {
             "name": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 },
-            "args": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 }
+            "args": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 32766 }
           }}
         }},
 
         "winlog": { "properties": {
           "event_data": { "properties": {
-            "ScriptBlockText": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 },
-            "ImagePath": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 8191 }
+            "ScriptBlockText": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 32766 },
+            "ImagePath": { "type": "keyword", "normalizer": "lowercase_normalizer", "ignore_above": 32766 }
           }}
         }},
 

@@ -23,8 +23,13 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
                                                   the claim-squatting signature (#257)
   Field truncation count           measured    — pipeline.truncated over the window
                                                   (#252), no target — baseline for
-                                                  whether ScriptBlockText's 8191
-                                                  ignore_above ceiling is ever hit
+                                                  whether ScriptBlockText's 32766
+                                                  ignore_above ceiling (#263) is ever hit
+  Field byte-clamp count           measured    — pipeline.byte_clamped over the window
+                                                  (#263), no target — a nonzero count means
+                                                  multi-byte content had to be defensively
+                                                  clamped to avoid a Lucene immense-term
+                                                  whole-document rejection
 
 Pure stdlib (requests). Env (auto-loaded from scripts/setup/.env):
   ES_URL, ES_USER, ES_PASS/ELASTIC_PASSWORD, KIBANA_URL, NTFY_TOPIC.
@@ -100,7 +105,7 @@ BREACH_IF_NA = {"ingest_lag_seconds"}
 # rather than just silencing it). Inventing an uncalibrated number here would be
 # worse than no threshold at all. Still participates in the errors/exit-3 path
 # below like every other metric — an unmeasurable value is never silently benign.
-NO_TARGET = {"raw_alert_volume", "field_truncation_count"}
+NO_TARGET = {"raw_alert_volume", "field_truncation_count", "field_byte_clamp_count"}
 
 
 # FAIL CLOSED (audit P1-2): verify TLS against the stack CA instead of verify=False.
@@ -467,25 +472,55 @@ def metric_field_truncation_count():
     """Count of pipeline.truncated:"true" docs in the window (#252).
 
     process.args/process.parent.args/winlog.event_data.ScriptBlockText are
-    mapped ignore_above:8191 (#249/#250, raised from 1024) — a value longer
-    than that ceiling is silently dropped from the index while remaining in
-    _source, invisible to any query. PowerShell 4104 ScriptBlockText chunks
-    commonly run well past 8191 characters, so an obfuscated payload could
-    slip past rules/sigma/posh_ps_obfuscated_scriptblock.yml with no signal
-    it happened. configs/logstash.conf's ruby filter now tags
+    mapped ignore_above:32766 (#249/#250 raised it from 1024 to 8191; #263
+    raised it again to 32766, the Lucene keyword term byte ceiling, after
+    8191 turned out to still be below real PowerShell 4104 chunk sizes and
+    encoded command-line lengths) — a value longer than that ceiling is
+    silently dropped from the index while remaining in _source, invisible to
+    any query. configs/logstash.conf's ruby filter tags
     pipeline.truncated="true" (+ pipeline.truncated_fields) when it detects
     this; this metric turns that tag into a measured rate.
 
-    NO_TARGET (see below): #252's own suggested fix treats a bigger/unbounded
-    field as conditional on real data showing 8191 is actually hit — no real
-    Windows/process telemetry flows through this pipeline in this environment
-    yet (per #253's live-verification notes), so there is no data to set a
-    threshold against. This metric exists to produce that data, not to
-    enforce a guessed number.
+    NO_TARGET (see below): whether a still-bigger/unbounded field (a
+    wildcard-typed multi-field, #326) is ever needed is conditional on real
+    data showing 32766 is actually hit — no real Windows/process telemetry
+    flows through this pipeline in this environment yet (per #253's
+    live-verification notes), so there is no data to set a threshold
+    against. This metric exists to produce that data, not to enforce a
+    guessed number.
     """
     win = {"range": {"@timestamp": {"gte": WINDOW}}}
     return _count("logstash-security-*",
                   {"bool": {"filter": [win, {"term": {"pipeline.truncated": "true"}}]}})
+
+
+def metric_field_byte_clamp_count():
+    """Count of pipeline.byte_clamped:"true" docs in the window (#263).
+
+    ignore_above:32766 on process.args/process.parent.args/winlog.event_data.
+    ScriptBlockText/winlog.event_data.ImagePath is a CHARACTER ceiling, but
+    Lucene's own per-term hard limit is a UTF-8 BYTE ceiling (also 32766) —
+    a value under the char ceiling but byte-heavy (multi-byte UTF-8 content,
+    e.g. Unicode identifier/homoglyph obfuscation) can still exceed Lucene's
+    byte limit. Confirmed live during #263's review: unclamped, that makes
+    Elasticsearch reject the WHOLE DOCUMENT (HTTP 400 "immense term"), not
+    just drop the field — total event loss, strictly worse than the
+    field-drop field_truncation_count measures. configs/logstash.conf's ruby
+    filter defensively clamps the value before it reaches Elasticsearch and
+    tags pipeline.byte_clamped="true" (+ pipeline.byte_clamped_fields); this
+    metric turns that tag into a measured rate.
+
+    NO_TARGET (see below), matching field_truncation_count's own precedent:
+    a nonzero count here is unusual enough to be worth manually
+    investigating on sight (it means genuinely pathological multi-byte
+    content, not just a long script), but no real Windows/process telemetry
+    flows through this pipeline in this environment yet (per #253's
+    live-verification notes), so there is no data to justify a specific
+    breach threshold rather than a guessed one.
+    """
+    win = {"range": {"@timestamp": {"gte": WINDOW}}}
+    return _count("logstash-security-*",
+                  {"bool": {"filter": [win, {"term": {"pipeline.byte_clamped": "true"}}]}})
 
 
 def main():
@@ -505,6 +540,7 @@ def main():
         "orphaned_claims": metric_orphaned_claims,
         "raw_alert_volume": metric_raw_alert_volume,
         "field_truncation_count": metric_field_truncation_count,
+        "field_byte_clamp_count": metric_field_byte_clamp_count,
     }
     values, errors = {}, {}
     for name, fn in metric_fns.items():

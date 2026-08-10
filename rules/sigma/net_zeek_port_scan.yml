@@ -5,8 +5,13 @@ description: |
     Detects host and port scanning activity reported by Zeek's scan-detection
     policy through the notice.log channel. Pairs with the RECONNAISSANCE
     emulation (tests/anomaly_simulation/sim_portscan.sh).
-    Requires a scan-detection policy loaded in local.zeek (e.g.
-    '@load policy/misc/scan' or an equivalent package) so the notes below fire.
+    Requires scripts/setup/configs/zeek/scan-detection.zeek loaded alongside
+    config.zeek (a custom reimplementation - modern Zeek dropped the legacy
+    policy/misc/scan framework the stock policy would have used). Not loaded
+    via configs/zeek/local.zeek, which is dead config, unused by any real
+    capture path since #286; the real wiring lives in
+    scripts/setup/stream_capture.sh and
+    configs/systemd/zeek-host-capture.service's ExecStart.
     Deliberately status: experimental so deploy_detections.sh does not also
     deploy this as a Detection Engine rule (issue #192 pattern): the same
     Scan::Port_Scan/Address_Scan/Random_Scan notices already get

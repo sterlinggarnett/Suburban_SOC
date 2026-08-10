@@ -5,8 +5,11 @@ description: |
     Detects SSH brute-force / password-guessing activity reported by Zeek's
     detect-bruteforcing policy through notice.log. Pairs with the
     CREDENTIAL_ACCESS emulation (tests/anomaly_simulation/sim_brute_ssh.sh).
-    Requires '@load policy/protocols/ssh/detect-bruteforcing' in local.zeek
-    (loaded by default in most local.zeek setups).
+    Requires 'policy/protocols/ssh/detect-bruteforcing' loaded alongside
+    config.zeek - configs/zeek/local.zeek is NOT used by any real capture
+    path (dead config since #286); the real wiring lives in
+    scripts/setup/stream_capture.sh and
+    configs/systemd/zeek-host-capture.service's ExecStart (#261).
     Deliberately status: experimental so deploy_detections.sh does not also
     deploy this as a Detection Engine rule (issue #192 pattern): the same
     SSH::Password_Guessing/Login_By_Password_Guesser notices already get

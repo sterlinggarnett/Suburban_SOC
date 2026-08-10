@@ -10,8 +10,13 @@ Two lanes, 22 emulation->detection pairs. `[x]` = wiring validated by `validate_
 
 Operational to-dos (Linux lane):
 - [ ] `chmod +x tests/anomaly_simulation/sim_portscan.sh`
-- [ ] Load Zeek scan-detection policy in `local.zeek` (`@load policy/misc/scan`)
-- [ ] Load `@load policy/protocols/ssh/detect-bruteforcing` in `local.zeek`
+- [x] Load Zeek scan-detection policy alongside `config.zeek` — not via
+      `local.zeek` (dead config, unused by any real capture path since #286);
+      wired as `scan-detection.zeek` (a custom reimplementation; modern Zeek
+      dropped `policy/misc/scan`) in `scripts/setup/stream_capture.sh` and
+      `configs/systemd/zeek-host-capture.service`
+- [x] Load `policy/protocols/ssh/detect-bruteforcing` alongside `config.zeek`
+      in the same two real capture entry points (#261)
 - [ ] Confirm Filebeat ships Zeek `files.log`
 - [ ] Live-fire: run each sim, confirm the Zeek notice fires and the rule matches
 

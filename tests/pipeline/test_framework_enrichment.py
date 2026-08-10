@@ -99,6 +99,28 @@ class DetectionAsCodeTests(unittest.TestCase):
         self.assertEqual(n_ids, n_tactic, f"{n_ids} technique ids but {n_tactic} tactic names")
         self.assertEqual(n_ids, n_nist, f"{n_ids} technique ids but {n_nist} nist functions")
 
+    def test_t1110_is_notice_based_not_per_event(self):
+        # #261: T1110 must key on the aggregated SSH::Password_Guessing/
+        # Login_By_Password_Guesser notice.log entry (mirroring T1046's own
+        # Scan::Port_Scan match), not on every individual auth_success=false
+        # connection event — an unauthenticated actor could otherwise inflate
+        # raw_alert_volume's zeek_notices count at will with a failed-login burst.
+        # Only the conditional itself is checked, from its `if` through to the
+        # mapping block (not surrounding prose comments, which are free to
+        # mention the old field by name) — spans multi-line conditionals too,
+        # unlike a single-line `startswith("if ")` scan, which a reflow
+        # (e.g. wrapping onto a second line) would silently defeat.
+        block_start = CONF.index('"[threat][technique][id]"   => "T1110"')
+        preceding = CONF[max(0, block_start - 400):block_start]
+        self.assertIn("if ", preceding, "no `if` conditional found ahead of the T1110 mapping")
+        condition = preceding[preceding.rindex("if "):]
+        self.assertNotIn("auth_success", condition,
+                         "T1110 branch regressed to per-event auth_success matching")
+        self.assertIn("SSH::Password_Guessing", condition,
+                      "T1110 branch no longer matches the aggregated Zeek notice")
+        self.assertIn("SSH::Login_By_Password_Guesser", condition,
+                      "T1110 branch dropped the Login_By_Password_Guesser notice type")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

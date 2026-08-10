@@ -192,7 +192,7 @@ ExecStartPre=-/usr/bin/docker rm -f zeek-host-capture
 # leaves systemd reporting this unit healthy while no packets are actually
 # being captured (security-auditor emergency review - this is the likely
 # reason the first two restarts read as "clean" before the third crash-looped).
-ExecStart=/bin/bash -c 'set -o pipefail; /usr/bin/tcpdump -i ${CAPTURE_IFACE} -s 0 -U -w - | /usr/bin/docker run -i --rm --name zeek-host-capture -v /storage/PCAP/zeek_logs:/data/zeek_logs -v /storage/PCAP/intel:/data/intel -v /home/tjlam/projects/Suburban-SOC/scripts/setup/configs/zeek:/data/policy:ro -w /data/zeek_logs zeek/zeek zeek -C -r - LogAscii::use_json=T /data/intel/config.zeek /data/policy/scan-detection.zeek'
+ExecStart=/bin/bash -c 'set -o pipefail; /usr/bin/tcpdump -i ${CAPTURE_IFACE} -s 0 -U -w - | /usr/bin/docker run -i --rm --name zeek-host-capture -v /storage/PCAP/zeek_logs:/data/zeek_logs -v /storage/PCAP/intel:/data/intel -v /home/tjlam/projects/Suburban-SOC/scripts/setup/configs/zeek:/data/policy:ro -w /data/zeek_logs zeek/zeek zeek -C -r - LogAscii::use_json=T /data/intel/config.zeek /data/policy/scan-detection.zeek policy/protocols/ssh/detect-bruteforcing'
 ExecStop=-/usr/bin/docker stop -t 10 zeek-host-capture
 Restart=always
 RestartSec=5

@@ -22,7 +22,7 @@ NIST_CSF_Control  : PR.IR-02 (Infrastructure Resilience)
 
 [EMULATION: CREDENTIAL_ACCESS_SSH]
 Execution_Vector  : tests/anomaly_simulation/sim_brute_ssh.sh
-Log_Source        : policy/protocols/ssh/detect-bruteforcing -> notice.log
+Log_Source        : configs/systemd/zeek-host-capture.service -> notice.log
 ECS_Mapping       : threat.technique.id = "T1110" | threat.tactic.name = "Credential Access"
 Target_Sigma_Rule : rules/sigma/net_zeek_ssh_bruteforce.yml
 NIST_CSF_Control  : DE.AE-02 (Detection and Anomaly Validation)

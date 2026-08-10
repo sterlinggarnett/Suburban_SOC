@@ -16,7 +16,7 @@ M13's rule-count goal. M12/M13/M14 sections below are retained as history,
 not active work. Multi-phase execution gating applies: each issue is its
 own gated unit, no unattended multi-issue runs.
 
-- [~] **#263 (P1, security) — IN REVIEW** — `ignore_above: 8191` let
+- [x] **#263 (P1, security) — COMPLETE, MERGED** — `ignore_above: 8191` let
   `proc_creation_win_powershell_encoded.yml`/`posh_ps_obfuscated_scriptblock.yml`
   be bypassed by payload length (PowerShell 4104 chunks routinely run
   ~20000 chars, well past the old ceiling). Raised to 32766 (Lucene's own
@@ -26,8 +26,25 @@ own gated unit, no unattended multi-issue runs.
   lolbin.yml` shares the identical bypass shape via `ImagePath`) and the
   `long_command_fields` dynamic_template. Applied live, all 6
   `logstash-security-*` data streams rolled over.
-  [PR #329](https://github.com/voltron-1/Suburban_SOC/pull/329) — 17/17 CI
-  checks green including `live-fire`, **awaiting merge sign-off**.
+  [PR #329](https://github.com/voltron-1/Suburban_SOC/pull/329) merged
+  2026-08-10 (squash, `fea5c24`), auto-closing #263 — no GitHub-side human
+  review, explicit review-bypass confirmed by the repo owner (17/17 CI
+  green, sub-agent review only, same basis as M13's #298/#300/#301 and
+  M14's session-initiated fixes).
+  CI on the PR broke *after* the fix was otherwise ready: the `detections`
+  job failed on `build_kql_docs.py --check`, reproducing identically
+  against `main`'s own already-committed docs/rules — an unpinned
+  `sigma-cli`/`pysigma-backend-elasticsearch` install (no version lock)
+  had drifted to a newer release that renders multi-word Lucene terms as
+  quoted strings instead of backslash-escaped spaces, on 2 rules untouched
+  by #263 (`auth_win_priv_group_membership_change.yml`,
+  `create_remote_thread_win_susp_target.yml`) — same drift class as the
+  unpinned-`ruff` break M12 Phase 0 hit (fixed via PR #255). Unblocked by
+  regenerating the doc via the project's own generator (no manual edits),
+  verified by replicating the full `detections` job locally post-fix.
+  Follow-up filed: [#330](https://github.com/voltron-1/Suburban_SOC/issues/330)
+  (pin the sigma toolchain versions in CI so this can't recur on an
+  unrelated PR).
   A parallel security-auditor + code-reviewer pass on the first draft,
   independently converging on the same finding, caught that the naive fix
   shipped a worse bug than the one it closed: `ignore_above` is a
@@ -68,8 +85,7 @@ own gated unit, no unattended multi-issue runs.
 - [ ] **#267 (P1)** — `soar_quarantine_alert.json` Watcher has no HMAC auth
   and may not install at all. Not started.
 
-Next unstarted item: **#261** (#263 awaiting merge sign-off, not yet
-counted done).
+Next unstarted item: **#261**.
 
 ---
 
@@ -1244,6 +1260,24 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-10
+
+- **#263 merged.** [PR #329](https://github.com/voltron-1/Suburban_SOC/pull/329)
+  merged (squash, `fea5c24`), auto-closing #263 — no GitHub-side human
+  review, explicit review-bypass confirmed by the repo owner (17/17 CI
+  green, sub-agent review only). Investigated a CI failure reported on the
+  PR first: the `detections` job's `build_kql_docs.py --check` step was
+  failing, root-caused to an unpinned `sigma-cli`/`pysigma-backend-elasticsearch`
+  install drifting to a newer release that renders Lucene query text
+  differently — reproduced identically against `main`'s own committed
+  files, confirming it predated and was unrelated to #263's diff (same
+  drift class as the unpinned-`ruff` break M12 Phase 0 hit, fixed via
+  PR #255). Unblocked by regenerating `SIEM_KQL_Documentation.md` via the
+  project's own generator; full `detections` job replicated locally
+  post-fix to confirm. Follow-up filed:
+  [#330](https://github.com/voltron-1/Suburban_SOC/issues/330) (pin the
+  sigma toolchain versions in CI). See NEXT UP above for full detail.
 
 ## LAST SESSION — 2026-08-09 (later)
 

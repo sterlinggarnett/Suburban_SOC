@@ -9,13 +9,77 @@ Status: `[ ]` todo · `[~]` in-progress · `[x]` done · `[!]` blocked
 
 ## NEXT UP
 
-**Current milestone: [M14 — SOAR Approval-Plane Operability & Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/18).**
+**Current milestone: [M15 — Detection Correctness & Pipeline Fidelity](https://github.com/voltron-1/Suburban_SOC/milestone/19).**
+Started 2026-08-09, immediately after M14 closed (8/8 issues, plus #252).
+Whether the *existing* rule corpus behaves as written, as distinct from
+M13's rule-count goal. M12/M13/M14 sections below are retained as history,
+not active work. Multi-phase execution gating applies: each issue is its
+own gated unit, no unattended multi-issue runs.
+
+- [~] **#263 (P1, security) — IN REVIEW** — `ignore_above: 8191` let
+  `proc_creation_win_powershell_encoded.yml`/`posh_ps_obfuscated_scriptblock.yml`
+  be bypassed by payload length (PowerShell 4104 chunks routinely run
+  ~20000 chars, well past the old ceiling). Raised to 32766 (Lucene's own
+  per-term byte ceiling) for `process.args`/`process.parent.args`/
+  `winlog.event_data.ScriptBlockText`/`winlog.event_data.ImagePath` (added
+  to scope — security-auditor found `system_win_suspicious_service_binpath_
+  lolbin.yml` shares the identical bypass shape via `ImagePath`) and the
+  `long_command_fields` dynamic_template. Applied live, all 6
+  `logstash-security-*` data streams rolled over.
+  [PR #329](https://github.com/voltron-1/Suburban_SOC/pull/329) — 17/17 CI
+  checks green including `live-fire`, **awaiting merge sign-off**.
+  A parallel security-auditor + code-reviewer pass on the first draft,
+  independently converging on the same finding, caught that the naive fix
+  shipped a worse bug than the one it closed: `ignore_above` is a
+  *character* ceiling, but Lucene's own per-term hard limit is a UTF-8
+  *byte* ceiling — a value under the char ceiling but byte-heavy (multi-byte
+  content, e.g. Unicode identifier/homoglyph obfuscation in
+  `ScriptBlockText`, a real T1027 technique) crashed the *whole document* at
+  index time instead of gracefully dropping the field. Live-confirmed: HTTP
+  400, Lucene "immense term" rejection. Fixed with a byte-safety clamp in
+  the ruby truncation filter (tagged `pipeline.byte_clamped`, its own new
+  `metric_field_byte_clamp_count()` SLO metric), mutually exclusive with the
+  char-ceiling tag by construction. The same review found — and
+  live-confirmed via a spliced-pipeline replay of the real filter — that
+  truncation tagging had silently never worked for `process.args`/
+  `process.parent.args` on real Sysmon-sourced events at all: the Sysmon
+  `mutate.rename` block targets bare dotted strings, which Logstash creates
+  as flat literal fields rather than the nested structure the filter's
+  lookups expected. Worked around locally with a fallback lookup; the
+  rename block itself (9 fields across the whole Sysmon rule surface) is
+  deliberately left for its own dedicated regression pass, filed as
+  [#328](https://github.com/voltron-1/Suburban_SOC/issues/328). Also: the
+  "keep `ceiling` in lockstep with the template's `ignore_above`" invariant,
+  previously enforced only by a comment, is now a CI-enforced test; fixed 3
+  pre-existing, unrelated `test_slo_metrics.py` failures (local
+  `SLO_COVERAGE_MIN` env mismatch, same pattern 2 sibling tests already
+  worked around — confirmed via a clean pre-diff snapshot comparison that
+  they fail identically without this change, so not a regression). Every
+  claim live-verified against the real running stack by a tester-debugger
+  agent (real compiled Sigma query, real scratch index, real template; the
+  actual `logstash` binary for both the byte-clamp and field-path-fallback
+  checks) — not just reasoned about. Known, deliberately out-of-scope
+  residual gaps noted in the PR: `*uri` → `url.path` still falls through to
+  `ignore_above: 1024` (separate field, separate rule, lower severity); #326
+  (wildcard-typed multi-field decision) untouched, still gated on real
+  telemetry data.
+- [ ] **#261 (P1)** — Zeek T1046/T1110 classification tags every matching
+  event rather than an aggregated notice. Not started.
+- [ ] **#267 (P1)** — `soar_quarantine_alert.json` Watcher has no HMAC auth
+  and may not install at all. Not started.
+
+Next unstarted item: **#261** (#263 awaiting merge sign-off, not yet
+counted done).
+
+---
+
+<details>
+<summary>M14 history (complete) — click to expand</summary>
+
+**Milestone: [M14 — SOAR Approval-Plane Operability & Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/18).**
 Started 2026-08-08, immediately after M13 closed (35 → 105 Sigma rules, all 7
-user stories merged). M12/M13 sections below are retained as history, not
-active work — see the M14 entry further down (search "M14 — SOAR
-Approval-Plane") for the live status of each of its issues. Multi-phase
-execution gating applies: each issue is its own gated unit, no unattended
-multi-issue runs.
+user stories merged). Multi-phase execution gating applied: each issue was
+its own gated unit, no unattended multi-issue runs.
 
 - [x] **#275 (P0, bug) — COMPLETE, MERGED** — `slo_metrics_reader` never
   granted `soc-agent-health-*`. Live-verified against a real, security-
@@ -233,8 +297,11 @@ against unmodified `HEAD`).
   `ScriptBlockText`, gated on real data from the new metric — 0 real
   `ScriptBlockText` docs exist in this environment today).
 
-Next unstarted item: none — M14 and #252 are both done; see MILESTONE
-BACKLOG below for M15/M16.
+Next unstarted item: none — M14 and #252 are both done; M15 (including
+#263) is the active milestone, tracked in NEXT UP at the top of this file,
+not here.
+
+</details>
 
 ---
 
@@ -699,17 +766,8 @@ a follow-up during an M11/M12 security review, real but deliberately out of
 scope for the issue being fixed at the time. Triaged into three milestones so
 they stop being invisible.
 
-M14 is now IN PROGRESS — see NEXT UP at the top of this file, not here.
-
-**[M15 — Detection Correctness & Pipeline Fidelity](https://github.com/voltron-1/Suburban_SOC/milestone/19)** (3) —
-whether the *existing* corpus behaves as written, as distinct from M13's count.
-- [ ] **#263** (P1, security) — `ignore_above: 8191` lets both PowerShell rules be
-  bypassed by payload length. **Compounds as M13 grows the corpus**, so this
-  should not trail M13 by much.
-- [ ] **#261** (P1) — Zeek T1046/T1110 classification tags every matching event
-  rather than an aggregated notice.
-- [ ] **#267** (P1) — `soar_quarantine_alert.json` Watcher has no HMAC auth and may
-  not install at all.
+M14 is complete and M15 is now IN PROGRESS — see NEXT UP at the top of this
+file, not here.
 
 **[M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20)** (3)
 - [ ] **#265** (P2) — **DEFERRED**, gated on an external event: Winlogbeat/endpoint

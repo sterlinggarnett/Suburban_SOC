@@ -441,6 +441,29 @@ class MetricFunctionTests(unittest.TestCase):
         self.assertIn("logstash-security-*", index)
         self.assertIn({"term": {"pipeline.truncated": "true"}}, query["bool"]["filter"])
 
+    # --- #263: field byte-clamp count -------------------------------------
+    def test_field_byte_clamp_count_raises_on_es_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_field_byte_clamp_count()
+
+    def test_field_byte_clamp_count_returns_count_on_success(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 2})):
+            self.assertEqual(slo_metrics.metric_field_byte_clamp_count(), 2)
+
+    def test_field_byte_clamp_count_returns_zero_when_no_clamp_seen(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 0})):
+            self.assertEqual(slo_metrics.metric_field_byte_clamp_count(), 0)
+
+    def test_field_byte_clamp_count_queries_pipeline_byte_clamped_tag(self):
+        with mock.patch.object(slo_metrics, "_count", return_value=0) as mock_count:
+            slo_metrics.metric_field_byte_clamp_count()
+        index, query = mock_count.call_args[0]
+        self.assertIn("logstash-security-*", index)
+        self.assertIn({"term": {"pipeline.byte_clamped": "true"}}, query["bool"]["filter"])
+
 
 class EsKbWrapperTests(unittest.TestCase):
     """Cover the real es()/kb() request wrappers — every test above mocks them
@@ -500,7 +523,7 @@ class MainExitCodeTests(unittest.TestCase):
 
         with mock.patch.object(slo_metrics, "es", side_effect=fake_es), \
              mock.patch.object(slo_metrics, "kb", return_value=_FakeResponse(200, {"total": 0})), \
-             mock.patch.object(slo_metrics, "metric_coverage", return_value=12.0), \
+             mock.patch.object(slo_metrics, "metric_coverage", return_value=105.0), \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
             code = self._run_main_capturing_exit()
         self.assertEqual(code, 0)
@@ -508,7 +531,7 @@ class MainExitCodeTests(unittest.TestCase):
     def _mock_all_metrics(self, mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                            ingest_lag=10.0, parse_err=0.0, audit_write_failures=0.0,
                            orphaned_claims=0.0, raw_alert_volume=None,
-                           field_truncation_count=0):
+                           field_truncation_count=0, field_byte_clamp_count=0):
         if raw_alert_volume is None:
             raw_alert_volume = {"zeek_notices": 0, "rule_hits": 0, "value": 0}
         return [
@@ -526,6 +549,8 @@ class MainExitCodeTests(unittest.TestCase):
                                return_value=raw_alert_volume),
             mock.patch.object(slo_metrics, "metric_field_truncation_count",
                                return_value=field_truncation_count),
+            mock.patch.object(slo_metrics, "metric_field_byte_clamp_count",
+                               return_value=field_byte_clamp_count),
             mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(200, {})),
         ]
 
@@ -558,9 +583,15 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertIn("orphaned_claims", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_audit_write_failures_below_threshold_does_not_breach(self):
+        # coverage pinned to the real env's SLO_COVERAGE_MIN (105-rule
+        # corpus) rather than _mock_all_metrics' default 12.0 — that default
+        # predates the corpus growing past M12 and trips an unrelated
+        # breach in this environment regardless of this test's own subject
+        # (same pre-existing gap the field_truncation_count/
+        # field_byte_clamp_count NO_TARGET tests already work around).
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
-            for p in self._mock_all_metrics(audit_write_failures=2.0):
+            for p in self._mock_all_metrics(audit_write_failures=2.0, coverage=105.0):
                 stack.enter_context(p)
             code = self._run_main_capturing_exit()
         self.assertEqual(code, 0)
@@ -578,11 +609,15 @@ class MainExitCodeTests(unittest.TestCase):
     def test_raw_alert_volume_never_breaches_regardless_of_value(self):
         # #216: NO_TARGET means this is measured but never checked against a
         # threshold — an arbitrarily large value must not trip a breach.
+        # coverage pinned to the real env's SLO_COVERAGE_MIN for the same
+        # pre-existing reason as test_audit_write_failures_below_threshold_
+        # does_not_breach above.
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
             for p in self._mock_all_metrics(
                     raw_alert_volume={"zeek_notices": 500000, "rule_hits": 499999,
-                                       "value": 999999}):
+                                       "value": 999999},
+                    coverage=105.0):
                 stack.enter_context(p)
             code = self._run_main_capturing_exit()
         self.assertEqual(code, 0)
@@ -607,8 +642,8 @@ class MainExitCodeTests(unittest.TestCase):
 
     def test_field_truncation_count_never_breaches_regardless_of_value(self):
         # #252: NO_TARGET, same as raw_alert_volume — a large count is a
-        # baseline signal for whether the 8191 ceiling needs raising, not a
-        # threshold breach. coverage is pinned to the real env's
+        # baseline signal for whether the 32766 ceiling (#263) needs
+        # revisiting, not a threshold breach. coverage is pinned to the real env's
         # SLO_COVERAGE_MIN (105-rule corpus) rather than _mock_all_metrics'
         # default 12.0 — that default predates the corpus growing past M12
         # and trips an unrelated breach in this environment regardless of
@@ -638,6 +673,35 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 3)
         ntfy_post.assert_called_once()
         self.assertIn("field_truncation_count", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_field_byte_clamp_count_never_breaches_regardless_of_value(self):
+        # #263: NO_TARGET, same reasoning as field_truncation_count — no real
+        # data yet to justify a specific breach threshold rather than a
+        # guessed one, even though any nonzero count is worth investigating
+        # manually. coverage pinned to the real env's SLO_COVERAGE_MIN for
+        # the same pre-existing reason as the sibling test above.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
+            for p in self._mock_all_metrics(field_byte_clamp_count=500, coverage=105.0):
+                stack.enter_context(p)
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 0)
+
+    def test_field_byte_clamp_count_unmeasurable_is_never_silent(self):
+        # Regression guard: metric_field_byte_clamp_count must actually be
+        # wired into main()'s metric_fns dict, not just defined.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in self._mock_all_metrics():
+                stack.enter_context(p)
+            stack.enter_context(mock.patch.object(
+                slo_metrics, "metric_field_byte_clamp_count",
+                side_effect=slo_metrics.MetricUnavailable("es down")))
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 3)
+        ntfy_post.assert_called_once()
+        self.assertIn("field_byte_clamp_count", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_ntfy_failure_is_swallowed_not_fatal(self):
         # A downed ntfy.sh must not crash main() or change the breach exit code.

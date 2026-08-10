@@ -1,92 +1,331 @@
 #!/usr/bin/env python3
 """
-Field-truncation tagging fixture tests (#252).
+Field-truncation tagging fixture tests (#252, extended #263).
 
 SCOPE (same documented scope as tests/pipeline/test_grok_parse_failures.py):
 a Python re-implementation of configs/logstash.conf's field-truncation ruby
 filter's LOGIC, for fast fixture tests without a live Logstash. It does NOT
 exercise the actual compiled ruby filter that runs in the container — see
-tests/pipeline's live-verification notes / the manual live check run against
-the real stack for that. Keep this in sync by hand with the ruby block at
-configs/logstash.conf (Component 4 area, "#252" comment).
+the tester-debugger live-verification notes for that. Keep this in sync by
+hand with the ruby block at configs/logstash.conf (Component 4 area, "#252"
+comment).
 
-process.args/process.parent.args/winlog.event_data.ScriptBlockText are
-mapped ignore_above:8191 (#249/#250) — a value longer than that ceiling is
-silently dropped from the index while remaining in _source. This filter
+process.args/process.parent.args/winlog.event_data.ScriptBlockText/
+winlog.event_data.ImagePath are mapped ignore_above:32766 (#249/#250 raised
+it to 8191; #263 raised it again to 32766 and added ImagePath, after 8191
+turned out to still be below real PowerShell 4104 chunk sizes). A value
+longer than CEILING (32766 chars) is silently dropped from the ES index
+while remaining in _source — ignore_above's own char-based check handles
+this server-side, safely, before Lucene ever sees the term. This filter
 tags pipeline.truncated="true" + pipeline.truncated_fields instead of
 letting that drop stay invisible.
+
+#263 review found a SEPARATE, more dangerous failure mode: ignore_above is a
+character count, but Lucene's own per-term hard limit is a UTF-8 BYTE count
+(32766) — a value under CEILING in characters but byte-heavy (multi-byte
+UTF-8 content, only possible via non-ASCII text) can still exceed Lucene's
+byte limit, which — confirmed live — makes Elasticsearch reject the WHOLE
+DOCUMENT (HTTP 400 "immense term"), not just drop the field. The filter
+guards this with BYTE_CEILING, clamping the value before it reaches
+Elasticsearch. The two checks are deliberately mutually exclusive (char
+check first): since UTF-8 byte length is never less than character length,
+checking bytesize unconditionally before the char check would make every
+char-ceiling hit ALSO trip the byte clamp, since BYTE_CEILING < CEILING —
+silently making pipeline.truncated unreachable. Confirmed the fixed logic
+still discriminates via test_ascii_value_over_ceiling_char_tagged_not_byte_
+clamped below, not just by eyeballing the ruby diff.
+
+#263 also found the Sysmon `mutate.rename` block (configs/logstash.conf,
+~line 514) targets bare dotted strings ("process.args"), which Logstash
+creates as a FLAT field literally named "process.args" — not the nested
+[process][args] structure this filter's long_fields keys originally assumed
+alone. Confirmed live: the nested lookup returns nil for real Sysmon-sourced
+process.args/process.parent.args, so those two fields were never actually
+tagged. The filter now falls back to the flat dotted-literal key when the
+nested lookup misses (winlog.event_data.ScriptBlockText/ImagePath are
+unaffected — nothing renames them, always genuinely nested).
 
 Run:  python tests/pipeline/test_field_truncation.py  (or: pytest tests/pipeline)
 """
 
+import json
+import re
 import unittest
+from pathlib import Path
 
-CEILING = 8191
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+TEMPLATE_PATH = ROOT / "configs" / "elasticsearch" / "logstash-security-template.json"
+LOGSTASH_CONF_PATH = ROOT / "configs" / "logstash.conf"
+
+CEILING = 32766
+BYTE_CEILING = 32000
 LONG_FIELDS = {
-    "process.args": lambda e: e.get("process", {}).get("args"),
-    "process.parent.args": lambda e: e.get("process", {}).get("parent", {}).get("args"),
-    "winlog.event_data.ScriptBlockText": lambda e: e.get("winlog", {}).get("event_data", {}).get("ScriptBlockText"),
+    "process.args": ["process", "args"],
+    "process.parent.args": ["process", "parent", "args"],
+    "winlog.event_data.ScriptBlockText": ["winlog", "event_data", "ScriptBlockText"],
+    "winlog.event_data.ImagePath": ["winlog", "event_data", "ImagePath"],
 }
 
 
+def _nested_get(event: dict, path_parts):
+    cur: object = event
+    for part in path_parts:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+def _get_with_fallback(event: dict, label: str, path_parts):
+    """Mirrors the ruby filter's actual_path fallback: try the nested
+    bracket-style path first, then the flat dotted-literal key (the shape
+    Logstash's Sysmon rename block actually produces for process.args/
+    process.parent.args — confirmed live during #263's review)."""
+    val = _nested_get(event, path_parts)
+    if val is None:
+        val = event.get(label)
+    return val
+
+
+def _clamp_bytes(val: str, byte_ceiling: int) -> str:
+    """Mirrors ruby's val.byteslice(0, byte_ceiling).scrub: cut at a byte
+    boundary (which may split a multi-byte character), then repair any
+    resulting invalid byte sequence — Python's errors="replace" matches
+    scrub's default replacement-character behavior."""
+    return val.encode("utf-8")[:byte_ceiling].decode("utf-8", errors="replace")
+
+
 def tag_truncation(event: dict):
-    """Mirrors configs/logstash.conf's #252 ruby filter. Returns the list of
-    field labels that exceeded CEILING (empty if none did)."""
-    hit = []
-    for label, getter in LONG_FIELDS.items():
-        val = getter(event)
-        if isinstance(val, str) and len(val) > CEILING:
-            hit.append(label)
-    return hit
+    """Mirrors configs/logstash.conf's #252/#263 ruby filter. Returns
+    (char_hit, byte_hit): field labels dropped by ignore_above (char count)
+    and field labels defensively byte-clamped to avoid a Lucene immense-term
+    document rejection, respectively. Mutually exclusive per field — see
+    module docstring for why checking both unconditionally would be wrong."""
+    char_hit = []
+    byte_hit = []
+    for label, path_parts in LONG_FIELDS.items():
+        val = _get_with_fallback(event, label, path_parts)
+        if not isinstance(val, str):
+            continue
+        if len(val) > CEILING:
+            char_hit.append(label)
+        elif len(val.encode("utf-8")) > BYTE_CEILING:
+            byte_hit.append(label)
+    return char_hit, byte_hit
 
 
 class FieldTruncationTaggingTests(unittest.TestCase):
     def test_short_scriptblocktext_not_tagged(self):
         event = {"winlog": {"event_data": {"ScriptBlockText": "Invoke-Something -Arg 1"}}}
-        self.assertEqual(tag_truncation(event), [])
+        self.assertEqual(tag_truncation(event), ([], []))
 
     def test_long_scriptblocktext_tagged(self):
-        # ~20000 chars, the commonly-cited real PowerShell 4104 chunk size
-        # this issue is about — well past the 8191 ignore_above ceiling.
-        event = {"winlog": {"event_data": {"ScriptBlockText": "A" * 20000}}}
-        self.assertEqual(tag_truncation(event), ["winlog.event_data.ScriptBlockText"])
+        # #263: 32766 covers real PowerShell 4104 chunk sizes (~20000 chars)
+        # and Windows' own ~32767-char CreateProcess command-line limit, so a
+        # value that still trips CEILING is synthetic/adversarial, not a
+        # realistic organic one — well past the ignore_above ceiling. Pure
+        # ASCII, so char length == byte length: the char check fires first
+        # (mutually exclusive branches), landing in char_hit not byte_hit.
+        event = {"winlog": {"event_data": {"ScriptBlockText": "A" * 40000}}}
+        self.assertEqual(tag_truncation(event), (["winlog.event_data.ScriptBlockText"], []))
 
-    def test_exactly_at_ceiling_not_tagged(self):
-        # ignore_above:8191 keeps values UP TO 8191 chars indexed — only
-        # strictly-over should tag, or every field at the exact boundary
-        # would falsely alarm.
-        event = {"process": {"args": "A" * 8191}}
-        self.assertEqual(tag_truncation(event), [])
+    def test_exactly_at_byte_ceiling_not_tagged(self):
+        # For pure ASCII, bytes==chars, so BYTE_CEILING (32000) — not
+        # CEILING (32766) — is the binding constraint near the boundary.
+        # Only strictly-over either ceiling should tag, or every field at
+        # the exact boundary would falsely alarm.
+        event = {"process": {"args": "A" * BYTE_CEILING}}
+        self.assertEqual(tag_truncation(event), ([], []))
+
+    def test_ascii_value_between_byte_and_char_ceiling_byte_clamped(self):
+        # Deliberate, documented interaction: an ASCII value exactly at
+        # CEILING (32766 chars = 32766 bytes, since bytes==chars for ASCII)
+        # is still over BYTE_CEILING (32000) — the mutually-exclusive
+        # char-check-first branching means values in the narrow
+        # BYTE_CEILING+1..CEILING band land in byte_hit, not char_hit, even
+        # for pure ASCII. Zero practical impact on #263's real target
+        # (realistic payloads are ~3000-20000 chars, far under BYTE_CEILING)
+        # — this is the cost of the safety margin BYTE_CEILING intentionally
+        # keeps below CEILING (see CeilingConsistencyTests).
+        event = {"process": {"args": "A" * CEILING}}
+        self.assertEqual(tag_truncation(event), ([], ["process.args"]))
 
     def test_one_over_ceiling_tagged(self):
-        event = {"process": {"args": "A" * 8192}}
-        self.assertEqual(tag_truncation(event), ["process.args"])
+        event = {"process": {"args": "A" * 32767}}
+        self.assertEqual(tag_truncation(event), (["process.args"], []))
 
     def test_multiple_long_fields_all_listed(self):
         event = {
-            "process": {"args": "A" * 9000, "parent": {"args": "B" * 9000}},
-            "winlog": {"event_data": {"ScriptBlockText": "C" * 9000}},
+            "process": {"args": "A" * 33000, "parent": {"args": "B" * 33000}},
+            "winlog": {"event_data": {"ScriptBlockText": "C" * 33000}},
         }
         self.assertEqual(
             tag_truncation(event),
-            ["process.args", "process.parent.args", "winlog.event_data.ScriptBlockText"],
+            (["process.args", "process.parent.args", "winlog.event_data.ScriptBlockText"], []),
         )
 
     def test_missing_fields_no_crash_no_tag(self):
-        self.assertEqual(tag_truncation({}), [])
+        self.assertEqual(tag_truncation({}), ([], []))
 
     def test_non_string_field_ignored(self):
         # Malformed/mistyped upstream data must not crash the filter.
         event = {"process": {"args": 12345}}
-        self.assertEqual(tag_truncation(event), [])
+        self.assertEqual(tag_truncation(event), ([], []))
 
     def test_other_long_fields_under_ceiling_not_tagged(self):
-        # A field this filter doesn't check (e.g. url.original, also mapped
-        # ignore_above:8191 via the long_command_fields dynamic_template) is
-        # deliberately out of scope for #252 — ScriptBlockText/process.args
-        # are the attacker-controlled fields the issue is about.
-        event = {"url": {"original": "A" * 20000}}
-        self.assertEqual(tag_truncation(event), [])
+        # A field this filter doesn't check (e.g. url.original, an EXPLICIT
+        # property at ignore_above:8191 — explicit properties always take
+        # precedence over the long_command_fields dynamic_template, and
+        # url.original's path doesn't match that template's path_match
+        # patterns anyway) is deliberately out of scope for #252 —
+        # ScriptBlockText/process.args/ImagePath are the attacker-controlled
+        # fields the issue is about. Fixture must stay above whatever
+        # CEILING currently is, or this assertion holds trivially regardless
+        # of correctness.
+        event = {"url": {"original": "A" * (CEILING + 1000)}}
+        self.assertEqual(tag_truncation(event), ([], []))
+
+    def test_imagepath_over_ceiling_tagged(self):
+        # #263 security-auditor HIGH: system_win_suspicious_service_binpath_
+        # lolbin.yml selects on ImagePath|contains — an encoded PowerShell
+        # binPath (the same long-payload shape #263 is about) silently
+        # bypassed that rule while ImagePath stayed at the old 8191 ceiling,
+        # untracked by this filter. Now in scope with the other 3 fields.
+        event = {"winlog": {"event_data": {"ImagePath": "A" * 40000}}}
+        self.assertEqual(tag_truncation(event), (["winlog.event_data.ImagePath"], []))
+
+    def test_flat_dotted_process_args_tagged_via_fallback(self):
+        # #263 security-auditor MEDIUM (confirmed live via tester-debugger):
+        # Logstash's Sysmon rename block targets bare "process.args" (no
+        # brackets), which creates a FLAT top-level field literally named
+        # "process.args", not nested [process][args]. The filter must still
+        # tag it via the flat-key fallback, or this is dead code on every
+        # real Sysmon-sourced process creation event.
+        event = {"process.args": "A" * 40000}
+        self.assertEqual(tag_truncation(event), (["process.args"], []))
+
+    def test_flat_dotted_process_parent_args_tagged_via_fallback(self):
+        event = {"process.parent.args": "A" * 40000}
+        self.assertEqual(tag_truncation(event), (["process.parent.args"], []))
+
+    def test_nested_takes_precedence_over_flat_when_both_present(self):
+        # Mirrors the ruby filter's actual_path selection: nested is tried
+        # first and used if present, regardless of what a flat key holds.
+        event = {
+            "process": {"args": "A" * 40000},
+            "process.args": "short",
+        }
+        self.assertEqual(tag_truncation(event), (["process.args"], []))
+
+
+class ByteClampTaggingTests(unittest.TestCase):
+    """#263 HIGH (both security-auditor and code-reviewer, confirmed live):
+    ignore_above is a character ceiling; Lucene's own per-term hard limit is
+    a UTF-8 BYTE ceiling. A value under CEILING chars but byte-heavy
+    (multi-byte UTF-8 — impossible for pure ASCII, where bytes==chars
+    exactly) can still exceed Lucene's byte limit. Live-confirmed
+    consequence if unguarded: Elasticsearch rejects the WHOLE DOCUMENT
+    (HTTP 400 document_parsing_exception -> illegal_argument_exception
+    "immense term"), not just drops the field — worse than the bug #263 set
+    out to fix. These tests exercise the byte_hit side of tag_truncation and
+    the clamp helper independently."""
+
+    def test_ascii_value_over_ceiling_char_tagged_not_byte_clamped(self):
+        # The critical regression case: without the mutually-exclusive
+        # branch ordering, this ASCII value (bytes==chars, both over
+        # BYTE_CEILING since BYTE_CEILING < CEILING) would land in byte_hit
+        # instead of char_hit, making pipeline.truncated permanently dead
+        # for realistic long ASCII payloads — exactly the original #252/#263
+        # signal this filter exists to produce.
+        event = {"winlog": {"event_data": {"ScriptBlockText": "A" * 33000}}}
+        self.assertEqual(tag_truncation(event), (["winlog.event_data.ScriptBlockText"], []))
+
+    def test_multibyte_value_under_char_ceiling_over_byte_ceiling_clamped(self):
+        # 9000 chars (well under CEILING=32766) of a 4-byte-UTF-8 character
+        # (emoji) = 36000 UTF-8 bytes (over BYTE_CEILING=32000, over
+        # Lucene's real 32766 hard limit too) — the exact shape confirmed
+        # live to trigger the HTTP 400 immense-term document rejection when
+        # unclamped.
+        event = {"winlog": {"event_data": {"ScriptBlockText": "\U0001F600" * 9000}}}
+        self.assertEqual(tag_truncation(event), ([], ["winlog.event_data.ScriptBlockText"]))
+
+    def test_multibyte_value_under_both_ceilings_not_tagged(self):
+        # 5000 emoji chars = 20000 bytes — under both CEILING and
+        # BYTE_CEILING, matching a realistic ~20000-char 4104 chunk that
+        # happens to contain multi-byte content.
+        event = {"winlog": {"event_data": {"ScriptBlockText": "\U0001F600" * 5000}}}
+        self.assertEqual(tag_truncation(event), ([], []))
+
+    def test_clamp_helper_produces_valid_utf8_under_byte_ceiling(self):
+        val = "\U0001F600" * 9000
+        clamped = _clamp_bytes(val, BYTE_CEILING)
+        self.assertLessEqual(len(clamped.encode("utf-8")), BYTE_CEILING)
+        # Round-trips clean (scrub's replacement-character repair leaves
+        # valid UTF-8, not raw truncated bytes that would themselves fail to
+        # parse).
+        clamped.encode("utf-8").decode("utf-8")
+
+
+class CeilingConsistencyTests(unittest.TestCase):
+    """#263 security-auditor MEDIUM: the "keep `ceiling` in lockstep with the
+    template's ignore_above" invariant stated in configs/logstash.conf's
+    comment was previously enforced by nothing but that comment — a future
+    edit to either side could silently drift and either false-alarm
+    (Logstash tags truncated for values ES actually indexes fine) or, worse,
+    go blind (ES silently drops values Logstash never flags). Parse both
+    real files and assert they agree with each other and with this test
+    module's own CEILING, converting the stated invariant into a CI gate."""
+
+    def _logstash_ceiling(self):
+        text = LOGSTASH_CONF_PATH.read_text(encoding="utf-8")
+        match = re.search(r"^\s*ceiling\s*=\s*(\d+)\s*$", text, re.MULTILINE)
+        self.assertIsNotNone(match, "could not find 'ceiling = <N>' in configs/logstash.conf")
+        return int(match.group(1))
+
+    def _logstash_byte_ceiling(self):
+        text = LOGSTASH_CONF_PATH.read_text(encoding="utf-8")
+        match = re.search(r"^\s*byte_ceiling\s*=\s*(\d+)\s*$", text, re.MULTILINE)
+        self.assertIsNotNone(match, "could not find 'byte_ceiling = <N>' in configs/logstash.conf")
+        return int(match.group(1))
+
+    def _template_ignore_above(self):
+        template = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+        mappings = template["template"]["mappings"]
+        props = mappings["properties"]
+        dynamic = mappings["dynamic_templates"][0]["long_command_fields"]["mapping"]["ignore_above"]
+        return {
+            "process.args": props["process"]["properties"]["args"]["ignore_above"],
+            "process.parent.args": props["process"]["properties"]["parent"]["properties"]["args"]["ignore_above"],
+            "winlog.event_data.ScriptBlockText":
+                props["winlog"]["properties"]["event_data"]["properties"]["ScriptBlockText"]["ignore_above"],
+            "winlog.event_data.ImagePath":
+                props["winlog"]["properties"]["event_data"]["properties"]["ImagePath"]["ignore_above"],
+            "long_command_fields (dynamic_template)": dynamic,
+        }
+
+    def test_logstash_ceiling_matches_this_modules_ceiling(self):
+        self.assertEqual(self._logstash_ceiling(), CEILING)
+
+    def test_logstash_byte_ceiling_matches_this_modules_byte_ceiling(self):
+        self.assertEqual(self._logstash_byte_ceiling(), BYTE_CEILING)
+
+    def test_byte_ceiling_stays_below_lucene_hard_limit_with_margin(self):
+        # Must stay under Lucene's real 32766-byte hard limit, with margin
+        # for lowercase_normalizer's case-folding growth (applied by ES
+        # after this filter runs — a small number of Unicode code points,
+        # e.g. U+0130, grow in UTF-8 byte length when case-folded).
+        self.assertLess(self._logstash_byte_ceiling(), 32766)
+
+    def test_byte_ceiling_stays_below_char_ceiling(self):
+        # Load-bearing for the mutually-exclusive branch ordering in
+        # tag_truncation/the ruby filter — see module docstring.
+        self.assertLess(self._logstash_byte_ceiling(), self._logstash_ceiling())
+
+    def test_template_ignore_above_fields_match_ceiling(self):
+        ignore_above = self._template_ignore_above()
+        for label, value in ignore_above.items():
+            self.assertEqual(value, CEILING, f"{label}: ignore_above={value}, expected {CEILING}")
 
 
 if __name__ == "__main__":

@@ -80,12 +80,69 @@ own gated unit, no unattended multi-issue runs.
   `ignore_above: 1024` (separate field, separate rule, lower severity); #326
   (wildcard-typed multi-field decision) untouched, still gated on real
   telemetry data.
-- [ ] **#261 (P1)** — Zeek T1046/T1110 classification tags every matching
-  event rather than an aggregated notice. Not started.
+- [x] **#261 (P1) — COMPLETE, MERGED** — T1110's pipeline tag matched every
+  Zeek `auth_success=false` event, not an aggregated notice (unlike T1046,
+  its own sibling branch) — an unauthenticated actor could inflate
+  `raw_alert_volume` at will with a failed-login burst. Fixed to match
+  `[note] in ["SSH::Password_Guessing", "SSH::Login_By_Password_Guesser"]`,
+  mirroring T1046's pattern.
+  [PR #334](https://github.com/voltron-1/Suburban_SOC/pull/334) merged
+  2026-08-11 (squash, `d500961`), auto-closing #261 — no GitHub-side human
+  review, explicit review-bypass confirmed by the repo owner, 17/17 CI green.
+  Root-cause investigation found the naive fix would have silently regressed
+  T1110 to zero detections: `policy/protocols/ssh/detect-bruteforcing`, the
+  Zeek policy that emits those notices, was not loaded by any real capture
+  invocation — `configs/zeek/local.zeek`, which the Sigma rule's own
+  docstring assumed loaded it, is dead config unused by any real capture
+  path since #286. Same failure class as T1046/`Scan::Port_Scan`, which
+  needed its own custom reimplementation (`scan-detection.zeek`) for the
+  identical reason. Scope expanded (confirmed with the repo owner) to wire
+  `detect-bruteforcing` into the two real capture entry points
+  (`scripts/setup/stream_capture.sh`,
+  `configs/systemd/zeek-host-capture.service`) alongside the existing
+  `scan-detection.zeek` load, rather than ship a precision fix that could
+  never actually fire.
+  security-auditor (0 CRITICAL/HIGH) + code-reviewer (Approve) ran in
+  parallel; both independently found the same regression-test brittleness
+  (fixed). tester-debugger live-verified both halves against the real
+  stack, not just reasoned about: a spliced-pipeline replay against the
+  real `docker.elastic.co/logstash/logstash:9.3.2` image (matches this
+  repo's own pin) confirmed the compiled filter tags a synthetic notice and
+  not a synthetic raw `auth_success` event; a real two-container Docker
+  bridge-network SSH brute force (not loopback), captured and replayed
+  through `zeek` with `detect-bruteforcing` loaded, fired a genuine
+  `SSH::Password_Guessing` notice. Re-evaluated promoting
+  `net_zeek_ssh_bruteforce.yml`/`net_zeek_port_scan.yml` out of
+  `experimental` (the issue's 3rd acceptance criterion): confirmed staying
+  `experimental` is correct — promoting now would guarantee a clean
+  double-count against the now-precise pipeline tag. Fixed 6 stale
+  references across `slo_metrics.py`, both `net_zeek_*.yml` docstrings,
+  `emulation_telemetry.map`, and `coverage_checklist.md` that pointed at the
+  dead `local.zeek` or the old per-event behavior — the exact drift that let
+  this bug hide. CI failed once after the initial push on an unrelated
+  validator (`tests/validate_emulation_map.py`, the "purple-team loop is
+  real" check) — a doc-field edit pointed at a path that only exists inside
+  the Docker image, not the repo; fixed to reference the real in-repo wiring
+  file instead, reverified clean.
+  Follow-ups filed, deliberately out of scope:
+  [#331](https://github.com/voltron-1/Suburban_SOC/issues/331) (T1046's own
+  `scan-detection.zeek` is SYN-only and source-spoofable, a *cheaper*
+  `raw_alert_volume` inflation vector than the SSH path just fixed —
+  pre-existing, not touched by this diff),
+  [#332](https://github.com/voltron-1/Suburban_SOC/issues/332) (session-cadence
+  SSH threshold rule for low-and-slow/distributed coverage below
+  `detect-bruteforcing`'s 30-attempt threshold),
+  [#333](https://github.com/voltron-1/Suburban_SOC/issues/333) (Zeek's SSH
+  auth-outcome inference may be blind to very recent OpenSSH clients,
+  10.2p1 observed live during verification; root cause unconfirmed). Also
+  commented on the already-open
+  [#293](https://github.com/voltron-1/Suburban_SOC/issues/293) (pin
+  `zeek/zeek`) noting this PR adds a new dependency on that image's internal
+  script-path structure.
 - [ ] **#267 (P1)** — `soar_quarantine_alert.json` Watcher has no HMAC auth
   and may not install at all. Not started.
 
-Next unstarted item: **#261**.
+Next unstarted item: **#267**.
 
 ---
 
@@ -1260,6 +1317,25 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-11
+
+- **#261 merged.** [PR #334](https://github.com/voltron-1/Suburban_SOC/pull/334)
+  merged (squash, `d500961`), auto-closing #261 — no GitHub-side human
+  review, explicit review-bypass confirmed by the repo owner, 17/17 CI
+  green. T1110's pipeline tag matched every failed SSH auth instead of the
+  aggregated notice; root-cause investigation found the naive fix would
+  have silently regressed T1110 to zero detections (the notice-emitting
+  Zeek policy was never loaded by any real capture invocation), so scope
+  expanded to wire it into the two real capture entry points alongside the
+  existing T1046 wiring. security-auditor + code-reviewer + tester-debugger
+  all ran, both live-fire checks passed against the real stack (spliced
+  Logstash 9.3.2 replay; a real two-container SSH brute-force fired a
+  genuine Zeek notice). One CI failure after the initial push — an
+  unrelated purple-team validator caught a doc field pointing at a
+  Docker-image-internal path instead of a real repo file — fixed,
+  reverified green. 3 follow-ups filed (#331, #332, #333) plus a comment on
+  #293. See NEXT UP above for full detail.
 
 ## LAST SESSION — 2026-08-10
 

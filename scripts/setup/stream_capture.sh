@@ -37,7 +37,8 @@ run_zeek() {
     -v "${SCRIPT_DIR}/configs/zeek:/data/policy:ro" \
     -w /data/zeek_logs \
     zeek/zeek \
-    zeek -C -r - LogAscii::use_json=T /data/intel/config.zeek /data/policy/scan-detection.zeek
+    zeek -C -r - LogAscii::use_json=T /data/intel/config.zeek /data/policy/scan-detection.zeek \
+      policy/protocols/ssh/detect-bruteforcing
 }
 
 case "$MODE" in

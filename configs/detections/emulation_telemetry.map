@@ -8,7 +8,7 @@
 
 [EMULATION: RECONNAISSANCE]
 Execution_Vector  : tests/anomaly_simulation/sim_portscan.sh
-Log_Source        : configs/zeek/local.zeek -> notice.log
+Log_Source        : scripts/setup/configs/zeek/scan-detection.zeek -> notice.log
 ECS_Mapping       : threat.technique.id = "T1046" | threat.tactic.name = "Discovery"
 Target_Sigma_Rule : rules/sigma/net_zeek_port_scan.yml
 NIST_CSF_Control  : DE.CM-01 (Security Continuous Monitoring)
@@ -22,7 +22,7 @@ NIST_CSF_Control  : PR.IR-02 (Infrastructure Resilience)
 
 [EMULATION: CREDENTIAL_ACCESS_SSH]
 Execution_Vector  : tests/anomaly_simulation/sim_brute_ssh.sh
-Log_Source        : configs/zeek/local.zeek -> notice.log
+Log_Source        : configs/systemd/zeek-host-capture.service -> notice.log
 ECS_Mapping       : threat.technique.id = "T1110" | threat.tactic.name = "Credential Access"
 Target_Sigma_Rule : rules/sigma/net_zeek_ssh_bruteforce.yml
 NIST_CSF_Control  : DE.AE-02 (Detection and Anomaly Validation)

@@ -444,11 +444,17 @@ def metric_raw_alert_volume():
       - zeek_notices: threat.technique.id tagged in-pipeline directly on
         logstash-security-* docs (excludes the parse-failure quarantine index,
         which can carry the same tag). Named for the ATT&CK technique it
-        represents, not for Zeek's own notice.log framework - T1046 (port
-        scan) is a real aggregated Zeek notice, but T1110 (brute force) tags
-        every single auth_success=false event, not a thresholded notice. An
-        unauthenticated actor can inflate this half at will with a failed-
-        login burst; see #261 for tightening that pipeline classification.
+        represents, not for Zeek's own notice.log framework - both T1046
+        (Scan::Port_Scan) and T1110 (SSH::Password_Guessing/
+        Login_By_Password_Guesser) are real, thresholded, aggregated Zeek
+        notices (#261 fixed T1110's tag, which previously matched every
+        single auth_success=false event instead). Still inflatable by a
+        different vector: scan-detection.zeek's Scan::Port_Scan fires on the
+        initial SYN alone (no completed handshake), so a spoofed-source SYN
+        sweep can generate one notice per forged source per its 1-minute
+        resuppression window - see #261's PR discussion for detail, tracked
+        separately since fixing it needs a source-spoofing defense, not a
+        pipeline classification change.
       - rule_hits: Sigma/Elastic Detection Engine alerts in
         .alerts-security.alerts-* (same index metric_mttd() already reads).
         Queried strict (#216) - this index should always exist once Kibana's

@@ -543,8 +543,14 @@ class ThresholdLiveFireTests(LiveFireTestCase):
         return json.loads(line)
 
     def _index_failed_logon(self, doc_id: str, target_user: str, timestamp: str):
+        # #297 (security-auditor review): event_id as a string, not an int —
+        # this writes directly to ES (bypasses configs/logstash.conf
+        # entirely) so it isn't affected by that issue's bug, but the
+        # fixture should still model the real Winlogbeat-emitted shape
+        # (ECS types winlog.event_id as keyword/string) rather than a shape
+        # production never actually sends.
         self._index(doc_id, {"@timestamp": timestamp, "winlog": {
-            "event_id": 4625, "event_data": {"TargetUserName": target_user}}})
+            "event_id": "4625", "event_data": {"TargetUserName": target_user}}})
 
     def _bucket_count(self, rule: dict, target_user: str) -> int:
         # The rule's own from/to (ES understands "now-6m"/"now" date math

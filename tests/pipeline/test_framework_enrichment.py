@@ -60,6 +60,15 @@ _NIST_ASSIGN_RE = re.compile(r"\[nist\]\[function\]\"\s*=>")
 _RENAME_BLOCK_RE = re.compile(r"rename\s*=>\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", re.DOTALL)
 _RENAME_PAIR_RE = re.compile(r'"([^"]+)"\s*=>\s*"([^"]+)"')
 
+# #290 security-auditor follow-up: a stray apostrophe inside a multi-line
+# `code => '...'` ruby filter block — even just in a comment — closes the
+# Logstash single-quoted string literal early and breaks the WHOLE pipeline
+# config at startup, not just that filter. Requires the closing quote on its
+# own line, matching this file's own established multi-line-block
+# convention — reliably finds the TRUE delimiter even if a stray apostrophe
+# is present inside (which a naive non-greedy match-to-first-quote would not).
+_RUBY_MULTILINE_CODE_RE = re.compile(r"code\s*=>\s*'\n(.*?)\n\s*'\n", re.DOTALL)
+
 # #297: Winlogbeat's own ECS mapping types winlog.event_id as `keyword` (a
 # string) — a bare integer literal never matches it in Logstash's Ruby-backed
 # conditionals. Captures the compared value up to the next whitespace/paren
@@ -71,7 +80,6 @@ _RENAME_PAIR_RE = re.compile(r'"([^"]+)"\s*=>\s*"([^"]+)"')
 # literal written on the LEFT (e.g. "4625 == [winlog][event_id]" — not used
 # anywhere in this file today).
 _EVENT_ID_COMPARISON_RE = re.compile(r"\[winlog\]\[event_id\]\s*(?:==|!=|in)\s*([^\s{)]+)")
-
 
 def rule_technique(text: str):
     m = _TECH_RE.search(text)
@@ -239,6 +247,26 @@ class DetectionAsCodeTests(unittest.TestCase):
                     bad.append((source, target))
         self.assertEqual([], bad,
                          f"dotted (non-bracket) rename targets create flat fields, not nested: {bad}")
+
+    def test_no_apostrophe_inside_a_ruby_single_quoted_code_block(self):
+        # #290 security-auditor follow-up: hit this live while adding that
+        # fix's byte-clamp comment — an apostrophe in "#263's Lucene..."
+        # inside a `code => '...'` block closed the Logstash string literal
+        # early, breaking the ENTIRE pipeline config at startup
+        # (LogStash::ConfigurationError), not just that one filter. Even a
+        # comment-only apostrophe does this; Logstash does not know or care
+        # that the text is a comment once it is inside its own string
+        # literal. Turns that hard-won lesson into a CI gate instead of
+        # relying on every future editor remembering it by hand.
+        blocks = _RUBY_MULTILINE_CODE_RE.findall(CONF)
+        self.assertGreaterEqual(len(blocks), 2,
+                                "expected to find multiple multi-line ruby code => '...' blocks "
+                                "in configs/logstash.conf")
+        bad = [i for i, block in enumerate(blocks) if "'" in block]
+        self.assertEqual([], bad,
+                         f"multi-line ruby code block(s) at index {bad} contain a single-quote/"
+                         f"apostrophe character (comments included) — this closes the Logstash "
+                         f"string literal early and breaks the whole pipeline config at startup")
 
     def test_windows_security_event_id_compared_as_string(self):
         # #297: [winlog][event_id] == 4625 (bare integer) never matches the

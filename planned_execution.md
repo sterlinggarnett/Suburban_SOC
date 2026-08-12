@@ -139,10 +139,72 @@ own gated unit, no unattended multi-issue runs.
   [#293](https://github.com/voltron-1/Suburban_SOC/issues/293) (pin
   `zeek/zeek`) noting this PR adds a new dependency on that image's internal
   script-path structure.
-- [ ] **#267 (P1)** — `soar_quarantine_alert.json` Watcher has no HMAC auth
-  and may not install at all. Not started.
+- [x] **#267 (P1) — COMPLETE, MERGED** — the live SOAR trigger
+  (`configs/logstash.conf`, superseding the dead `soar_quarantine_alert.json`
+  Watcher, #220) only ever covered 1 of the Watcher's original 3 conditions
+  (`zeek.intel` IOC hits) — T1046/T1110 network detections were
+  pipeline-tagged for dashboards but never reached automated SOAR response.
+  [PR #335](https://github.com/voltron-1/Suburban_SOC/pull/335) merged
+  2026-08-12 (squash, `77a04c7`), auto-closing #267 — no GitHub-side human
+  review, explicit review-bypass confirmed by the repo owner, 13/13 CI
+  green. Wired T1110 into live dispatch (both the filter-stage HMAC-signing
+  condition and the separate output-stage http-dispatch condition, kept in
+  lockstep by a new regression test), plus a `source.ip` fallback rename
+  for `zeek.notice` events that set Zeek's `Notice::Info$src` without
+  `$conn` (stock `detect-bruteforcing.zeek`'s `Password_Guessing` notice
+  does this — the existing `id.orig_h` rename never fires for it).
+  T1046 was originally planned to be wired in too, but security-auditor
+  review found `scan-detection.zeek` fires on a bare SYN with no completed
+  handshake — wiring it into live dispatch, with no rate limiting anywhere
+  in the agent's `/alert` path (`severity` hardcoded `"critical"`,
+  concurrency capped at `--workers 1 --threads 4`), would have turned a
+  spoofed-source SYN sweep into an automated-containment amplifier against
+  an attacker-chosen victim IP. Left T1046 dashboard-tagged only, unchanged
+  from before this fix, deferred until
+  [#331](https://github.com/voltron-1/Suburban_SOC/issues/331) (a
+  source-spoofing defense) exists — commented on that issue to record the
+  new blocking relationship. Retired `soar_quarantine_alert.json` for real:
+  moved to `rules/elastic_watcher/retired/` so `deploy_dashboards.sh`'s
+  install glob stops PUTting it (it was still being installed on every
+  deployment despite being dead code since #220), and added an idempotent
+  `DELETE` step to `deploy_dashboards.sh`/`.ps1` so already-deployed
+  clusters actually converge. security-auditor (1 HIGH, resolved by the
+  T1046/T1110 split above) + code-reviewer (1 Must-Fix:
+  `tests/anomaly_simulation/preflight.sh` still hard-gated on the
+  now-never-installed Watcher, would have permanently broken the SOP-022
+  live-lab harness — fixed) ran in parallel; tester-debugger independently
+  re-verified via a second spliced-pipeline replay exercising the real
+  `http` output plugin against a local fake server, not just a
+  textual-identity check — confirmed real dispatch for tagged events, none
+  for untagged ones. Swept 5 docs that described the retired Watcher as
+  live or claimed all 3 conditions dispatch.
 
-Next unstarted item: **#267**.
+All 3 of M15's P1 issues (#263, #261, #267) are now complete. Checked the
+GitHub milestone directly rather than assume that closed the milestone: it
+does not — 9 more issues are tagged to M15 (#328, #297, #295, #292, #291,
+#290, #288, #287, #283), never individually triaged into this doc before
+now. All P2/P3, no P1 remaining:
+
+- **P2**: #328 (Sysmon `mutate.rename` creates flat dotted-key fields, not
+  nested — the #263-era follow-up), #297 (`[winlog][event_id] == 4625`
+  integer-vs-string comparison may never match), #295 (`ScriptBlockText`
+  `ignore_above:8191` truncation — the pre-#263 issue #263 was itself a
+  follow-up of), #290 (ES template has no case-normalization for new
+  Zeek-derived fields), #287 (`logstash.conf`<->`suburban-soc-ecs.yml`
+  field-mapping drift has no automated check — recurred in #217/#232/#233/#228).
+- **P3**: #292 (DNS TXT-based C2 download direction, no field mapping/rule),
+  #291 (Zeek network Sigma rules compile to expensive leading-wildcard
+  queries, no dataset prefilter), #288 (validate-certs SSL cert-chain
+  validation has no capture-loss/resource guard), #283 (T1562.004 firewall-
+  rule-added detection could use Security 4946).
+
+No P1 to auto-pick from this backlog — which of these 9 to prioritize next
+is a real call, not a mechanical one (different concern areas: pipeline
+robustness bugs like #328/#297, systemic gaps like #287's recurring
+field-mapping drift, new coverage like #292/#283, performance like #291).
+
+Next unstarted item: none auto-selected — see the M15 backlog above, or
+check the issue tracker for a new milestone.
 
 ---
 
@@ -1317,6 +1379,30 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-12
+
+- **#267 merged, M15's P1 tier complete.** [PR #335](https://github.com/voltron-1/Suburban_SOC/pull/335)
+  merged (squash, `77a04c7`), auto-closing #267 — no GitHub-side human
+  review, explicit review-bypass confirmed by the repo owner, 13/13 CI
+  green. The live SOAR trigger only ever covered 1 of the retired Watcher's
+  3 original conditions (`zeek.intel` IOC hits) — T1046/T1110 network
+  detections were pipeline-tagged for dashboards but never dispatched to
+  automated response. Wired T1110 in (handshake-backed, safe); a
+  security-auditor HIGH finding caught that wiring T1046 in too would have
+  turned its already-known spoofable-SYN weakness (#331) into a real
+  automated-containment amplifier against an attacker-chosen IP (no rate
+  limiting anywhere in the `/alert` path) — split the fix, left T1046
+  dashboard-only, deferred to #331. code-reviewer caught a Must-Fix
+  (`preflight.sh` would have permanently broken the SOP-022 harness).
+  tester-debugger independently re-verified via a real fake-HTTP-server
+  test of the output-stage dispatch, not just a textual check. Retired the
+  dead Watcher file for real (moved out of `deploy_dashboards.sh`'s install
+  glob, added a `DELETE` step so already-deployed clusters converge).
+  Checked the GitHub milestone directly before declaring M15 done — it
+  isn't: 9 more issues are tagged to it (never previously tracked in this
+  doc), all P2/P3, no P1. See NEXT UP above for the full backlog list and
+  full #267 detail.
 
 ## LAST SESSION — 2026-08-11
 

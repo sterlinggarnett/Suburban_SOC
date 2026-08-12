@@ -99,12 +99,15 @@ practical floor for the Recommended tier.
 | ntfy | Mobile push notifications | Apache 2.0 (public server free) | $0 |
 | Discord webhooks | SOC channel alerts | Free | $0 |
 
-> ⚠️ **Hidden-cost watch — Kibana Watcher.** The SOAR trigger uses a Kibana Watcher
-> (`soar_quarantine_alert`). Classic **Watcher** is historically an Elastic **Gold/Platinum**
-> (paid) feature, *not* part of the free Basic tier. If a license audit matters, budget for
-> either (a) an Elastic subscription, or (b) re-implementing the trigger on the **free**
-> path — Kibana **Rules/Alerting** connectors or the project's own polling agent. This
-> analysis assumes the free path and therefore **$0**.
+> ✅ **Resolved — Kibana Watcher.** The SOAR trigger originally used a Kibana Watcher
+> (`soar_quarantine_alert`), and Classic **Watcher** is historically an Elastic
+> **Gold/Platinum** (paid) feature, *not* part of the free Basic tier — a real licensing
+> risk at the time. That Watcher was superseded by an ingest-time HMAC-signed HTTP
+> output in `configs/logstash.conf` (a free-tier Logstash feature, no Watcher dependency)
+> and, as of [#267](https://github.com/voltron-1/Suburban_SOC/issues/267), fully retired
+> (moved to `rules/elastic_watcher/retired/`, historical reference only, no longer
+> installed). This analysis's **$0** figure reflects the current, Watcher-free
+> architecture, not an assumption about a path not yet taken.
 
 ---
 

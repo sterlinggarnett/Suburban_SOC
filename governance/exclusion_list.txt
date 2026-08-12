@@ -36,3 +36,12 @@
 # --- Known-good MAC addresses for the above (DHCP-independent protection) ---
 # AA:BB:CC:DD:EE:01  # OpenWrt router LAN interface
 # AA:BB:CC:DD:EE:02  # SOC host NIC
+#
+# #267: a MAC-only entry does NOT protect against every alert path. Some
+# live SOAR triggers never populate source_mac (e.g. configs/logstash.conf's
+# Category 6 T1110 dispatch — no per-notice MAC correlation exists for
+# aggregated Zeek notices, unlike the single-connection zeek.intel path
+# #286 correlates). is_excluded() only checks the MAC branch when a MAC is
+# present, so a MAC-only entry is silently skipped on those paths. List
+# every protected asset by BOTH IP and MAC — do not rely on a MAC-only
+# entry as sole protection.

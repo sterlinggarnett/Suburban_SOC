@@ -38,7 +38,7 @@ Run `tests/anomaly_simulation/preflight.sh` to validate all items below in one s
 | Elasticsearch reachable | `curl -k -u "elastic:$ELASTIC_PASSWORD" https://localhost:9200` | `docker compose up -d` |
 | `logstash-security-*` index has data | check Kibana Discover | run a capture script per SOP-001 |
 | AI Agent listening on :5000 | `curl http://localhost:5000/weekly-report/status` | start per Step 4 below |
-| Kibana Watcher `soar_quarantine_alert` installed | `curl -k -u "elastic:$ELASTIC_PASSWORD" https://localhost:9200/_watcher/watch/soar_quarantine_alert` | Step 5 below |
+| ~~Kibana Watcher `soar_quarantine_alert` installed~~ | retired (#267) — see Step 5 | N/A, skip Step 5 |
 | OpenWrt SSH reachable | `ssh -i ~/.ssh/id_ed25519_hivemind root@192.168.1.1 'echo ok'` | check key + router |
 | `DISCORD_WEBHOOK_URL` set (optional) | `echo $DISCORD_WEBHOOK_URL` | export from `.env` if you want Discord embeds |
 
@@ -80,16 +80,21 @@ flask --app agent_app run --host 0.0.0.0 --port 5000
 
 Expected: `Running on http://0.0.0.0:5000`. Leave this terminal open.
 
-### Step 5 — Install / refresh the Kibana Watcher
+### Step 5 — SKIP (retired, #267)
 
-```bash
-curl -X PUT -u elastic:$ES_PASS \
-  -H "Content-Type: application/json" \
-  -d @rules/elastic_watcher/soar_quarantine_alert.json \
-  "http://localhost:9200/_watcher/watch/soar_quarantine_alert"
-```
-
-Expected: `"_id": "soar_quarantine_alert", "_version": N`.
+The `soar_quarantine_alert` Watcher was superseded by `configs/logstash.conf`'s
+ingest-time HMAC-signed trigger (#220) — nothing to install. As of #267 that
+live trigger covers 2 of the Watcher's original 3 conditions live (`zeek.intel`
+IOC hits, SSH brute-force T1110 — both handshake-backed, not spoofable).
+`Scan::Port_Scan` (T1046) stays dashboard-only, same as before #267: it fires
+on a bare SYN with no completed handshake, so wiring it into live SOAR
+dispatch without a source-spoofing defense would let a forged-source SYN
+sweep trigger automated response against an attacker-chosen IP — deferred
+until [#331](https://github.com/voltron-1/Suburban_SOC/issues/331). The
+Watcher file itself has moved to
+`rules/elastic_watcher/retired/soar_quarantine_alert.json` (historical
+reference only, do not install) and is no longer picked up by
+`deploy_dashboards.sh`. Proceed to Step 6.
 
 ### Step 6 — Run the three attack simulations
 
@@ -210,7 +215,7 @@ ssh -i ~/.ssh/id_ed25519_hivemind root@192.168.1.1 \
 | `verify_quarantine.sh exit 3` | OpenWrt SSH key missing or wrong | check `SSH_KEY` env, regen with `ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_hivemind` and copy to router |
 | AI Agent doesn't invoke isolate.sh | `sudo` requires password | add NOPASSWD entry in sudoers for the isolate.sh path |
 | Discord embed not delivered | `DISCORD_WEBHOOK_URL` not exported | `export DISCORD_WEBHOOK_URL=...` in the same shell that runs Flask |
-| Watcher never fires | `threat.indicator.domain` not present in `zeek.conn` | enrich via the threat-intel feed or test by POSTing directly to `/alert` per Step 7 |
+| Live trigger never fires | `threat.indicator.domain` not present in `zeek.conn`, or a Zeek notice never made it past `event.dataset == "zeek.notice"` with a `T1110` tag (**T1046 does not dispatch — dashboard-tagged only, deliberately, until #331**) | enrich via the threat-intel feed, check `configs/logstash.conf`'s Category 5/6 blocks, or test by POSTing directly to `/alert` per Step 7 (the Watcher-based trigger is retired, #267 — this is the ingest-time trigger now) |
 
 ---
 

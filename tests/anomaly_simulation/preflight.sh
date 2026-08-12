@@ -24,7 +24,6 @@ AGENT_URL="${AGENT_URL:-http://localhost:5000}"
 OPENWRT_HOST="${OPENWRT_HOST:-192.168.1.1}"
 OPENWRT_USER="${OPENWRT_USER:-root}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519_hivemind}"
-WATCHER_NAME="${WATCHER_NAME:-soar_quarantine_alert}"
 
 FAILS=0
 WARNS=0
@@ -92,17 +91,14 @@ else
 fi
 
 # --- Kibana Watcher ---
-section "Kibana Watcher (${WATCHER_NAME})"
-watcher_resp=$(curl -fsS --max-time 5 "${ES_URL}/_watcher/watch/${WATCHER_NAME}" 2>/dev/null || true)
-if echo "$watcher_resp" | grep -q '"found":true'; then
-  green "Watcher ${WATCHER_NAME} installed"
-elif echo "$watcher_resp" | grep -q '"_id"'; then
-  green "Watcher ${WATCHER_NAME} installed"
-elif [[ -z "$watcher_resp" ]]; then
-  red "Watcher API unreachable or auth required — confirm ES_USER/ES_PASS in .env if x-pack security is on"
-else
-  red "Watcher ${WATCHER_NAME} not installed — see Step 5 of docs/SOP-022-anomaly-validation-procedure.md"
-fi
+# #267: the soar_quarantine_alert Watcher is retired — configs/logstash.conf's
+# ingest-time trigger now covers all 3 of its original conditions, and it's no
+# longer installed by deploy_dashboards.sh at all (moved to
+# rules/elastic_watcher/retired/, out of its install glob). Not a real
+# prerequisite anymore, so this is informational only, never a FAIL — see
+# docs/SOP-022-anomaly-validation-procedure.md Step 5.
+section "Kibana Watcher (retired, #267)"
+green "N/A — superseded by configs/logstash.conf's ingest-time trigger, nothing to check"
 
 # --- OpenWrt SSH ---
 section "OpenWrt SSH (${OPENWRT_USER}@${OPENWRT_HOST})"

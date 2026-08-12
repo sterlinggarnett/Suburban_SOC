@@ -149,6 +149,19 @@ else
   red "    No watcher directory at ${WATCHER_DIR}"
 fi
 
+# #267: soar_quarantine_alert was retired (moved out of $WATCHER_DIR so the
+# loop above stops installing it) but a cluster this script already ran
+# against still has it ACTIVE on a 1-minute schedule - retirement only
+# stops future installs, it does not un-install what is already there.
+# Idempotent: 404 (already gone / never installed) counts as success.
+del_code=$(curl -s -o /dev/null -w '%{http_code}' "${AUTH[@]}" \
+  -X DELETE "${ES_URL}/_watcher/watch/soar_quarantine_alert" || true)
+if [[ "$del_code" =~ ^(20|404) ]]; then
+  green "    Removed retired watcher soar_quarantine_alert (HTTP ${del_code})"
+else
+  red   "    WARN: could not remove retired watcher soar_quarantine_alert -> HTTP ${del_code}"
+fi
+
 # -----------------------------------------------------------------------------
 # 5b. Install the data lifecycle (WS0.5): ILM + snapshots + data-stream templates
 # -----------------------------------------------------------------------------

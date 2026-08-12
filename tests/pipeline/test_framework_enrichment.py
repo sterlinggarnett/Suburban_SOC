@@ -49,6 +49,17 @@ _ID_ASSIGN_RE = re.compile(r"\[threat\]\[technique\]\[id\]\"\s*=>\s*\"([^\"]+)\"
 _TACTIC_ASSIGN_RE = re.compile(r"\[threat\]\[tactic\]\[name\]\"\s*=>")
 _NIST_ASSIGN_RE = re.compile(r"\[nist\]\[function\]\"\s*=>")
 
+# #328: a `rename => { ... }` target that is a dotted string ("process.args")
+# rather than Logstash bracket notation ("[process][args]") creates a FLAT
+# field with a literal dot in the key, not real nesting — this file already
+# documents the footgun at its network-rename block, but the Sysmon block
+# had it anyway (#328) until a live splice test caught it. This shape has
+# now occurred twice in this file; check every rename block, not just the
+# two already found, so a third occurrence fails CI instead of needing
+# another live-verification pass to notice.
+_RENAME_BLOCK_RE = re.compile(r"rename\s*=>\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", re.DOTALL)
+_RENAME_PAIR_RE = re.compile(r'"([^"]+)"\s*=>\s*"([^"]+)"')
+
 
 def rule_technique(text: str):
     m = _TECH_RE.search(text)
@@ -180,6 +191,42 @@ class DetectionAsCodeTests(unittest.TestCase):
         self.assertIn('== "zeek.notice"', preceding)
         self.assertIn("![source][ip]", preceding,
                       "src fallback must not unconditionally overwrite an already-set source.ip")
+
+    def test_no_rename_block_uses_a_dotted_string_target(self):
+        # #328: a rename target must be Logstash bracket notation
+        # ("[process][args]"), never a bare dotted string ("process.args") —
+        # the latter creates a FLAT field with a literal dot in the key, not
+        # real nesting, silently breaking any later filter that reads the
+        # bracket path. Found live in the Sysmon block despite this file
+        # already documenting the footgun at its network-rename block —
+        # check every rename block in the file, not just those two, so a
+        # third occurrence fails CI instead of needing another live splice
+        # test to notice.
+        #
+        # security-auditor review: a bare dotted string is not the only bad
+        # shape. A dot INSIDE one bracket pair ("[process.args]") is the
+        # identical bug — Logstash treats everything inside a single [ ]
+        # pair as one literal field name, dot included, so this also
+        # creates a flat "process.args" field, not nested [process][args].
+        # This file already uses that exact single-bracket-with-a-dot form
+        # deliberately elsewhere, but only as a rename SOURCE (e.g.
+        # "[id.orig_h]", referencing a real flat field Zeek emits) - never
+        # as a target. A future edit mirroring that existing source-side
+        # idiom onto a rename's target side would reintroduce #328 with a
+        # green build unless this checks both shapes.
+        blocks = _RENAME_BLOCK_RE.findall(CONF)
+        self.assertGreaterEqual(len(blocks), 2,
+                                "expected to find multiple rename blocks in configs/logstash.conf")
+        bad = []
+        for block in blocks:
+            for source, target in _RENAME_PAIR_RE.findall(block):
+                bracket_segments = re.findall(r"\[([^\]]*)\]", target)
+                bare_dotted = not target.startswith("[") and "." in target
+                dotted_inside_brackets = any("." in seg for seg in bracket_segments)
+                if bare_dotted or dotted_inside_brackets:
+                    bad.append((source, target))
+        self.assertEqual([], bad,
+                         f"dotted (non-bracket) rename targets create flat fields, not nested: {bad}")
 
 
 if __name__ == "__main__":

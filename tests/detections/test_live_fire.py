@@ -361,6 +361,129 @@ class NetworkLiveFireTests(LiveFireTestCase):
         self.assert_rule_fires_correctly("net_zeek_dns_dga_nxdomain_burst.yml")
 
 
+class FieldCaseNormalizationLiveFireTests(LiveFireTestCase):
+    """#290: dns.question.name/url.path/tls.validation_status/zeek.http.host
+    fell through to configs/elasticsearch/logstash-security-template.json's
+    plain, case-sensitive strings_as_keyword dynamic template instead of
+    long_command_fields' lowercase_normalizer treatment — a single
+    uppercase character anywhere in real telemetry silently evaded a
+    query|endswith/uri|contains/validation_status|contains rule while
+    sigma_eval.py's case-insensitive-by-default fixture match (mirroring
+    Sigma's own documented semantics) stayed green. That divergence is
+    exactly what a Python re-implementation of Sigma matching can never
+    catch. tls.client.server_name (security-auditor follow-up review) has
+    the identical defect shape and a live dashboard consumer, fixed in the
+    same template change. Tests for the 3 fields with a real rule consumer
+    compile that rule for real and index a mixed-case value it should
+    match — 2 of the 3 (dns/http) mutate the case of an already-passing
+    fixtures.json true_positive directly; the ssl/tls one uses a distinct,
+    real OpenSSL certificate-validation error string instead (still
+    matching the rule's own `contains` alternative case-insensitively) —
+    requiring the REAL Elasticsearch mapping (not sigma_eval.py) to
+    normalize it either way. The 2 fields with no rule consumer yet
+    (zeek.http.host, tls.client.server_name) get a direct mapping probe
+    instead."""
+
+    def test_dns_query_matches_regardless_of_case(self):
+        rule_path = SIGMA_DIR / "net_zeek_dns_crypto_mining_pool.yml"
+        rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+        mapping = load_pipeline_field_mapping(rule.get("logsource", {}))
+        compiled = sigma_convert_one(rule_path)
+
+        mixed_case = {"query": "Worker1.Pool.MineXMR.COM"}
+        self._index("tp-mixedcase", translate_fixture(mixed_case, mapping))
+        self._refresh()
+
+        matched = self._matched_ids(compiled["query"])
+        self.assertIn("tp-mixedcase", matched,
+                      "net_zeek_dns_crypto_mining_pool.yml's compiled query did not match a "
+                      "mixed-case real-world dns.question.name value — #290's lowercase_normalizer "
+                      "fix is not actually applied against a real index")
+
+    def test_http_uri_matches_regardless_of_case(self):
+        rule_path = SIGMA_DIR / "net_zeek_http_cobalt_strike_beacon.yml"
+        rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+        mapping = load_pipeline_field_mapping(rule.get("logsource", {}))
+        compiled = sigma_convert_one(rule_path)
+
+        mixed_case = {"method": "GET", "uri": "/Pixel.GIF"}
+        self._index("tp-mixedcase", translate_fixture(mixed_case, mapping))
+        self._refresh()
+
+        matched = self._matched_ids(compiled["query"])
+        self.assertIn("tp-mixedcase", matched,
+                      "net_zeek_http_cobalt_strike_beacon.yml's compiled query did not match a "
+                      "mixed-case real-world url.path value — #290's lowercase_normalizer fix is "
+                      "not actually applied against a real index")
+
+    def test_url_path_over_old_default_ceiling_not_dropped(self):
+        # url.path had NO explicit ignore_above before this fix, falling to
+        # strings_as_keyword's default 1024 — confirms #290's own suspicion
+        # that the uri->url.path rename (#228) silently dropped ignore_above
+        # coverage. 5000 chars is comfortably over the old 1024 default and
+        # under the new 32766 ceiling.
+        long_uri = "/exfil?" + ("A" * 5000)
+        self._index("long-path", {"@timestamp": datetime.now(timezone.utc).isoformat(),
+                                   "url": {"path": long_uri}})
+        self._refresh()
+        matched = self._matched_ids("url.path:*exfil*")
+        self.assertIn("long-path", matched,
+                      "a url.path value over the old ignore_above:1024 default was not indexed — "
+                      "#290's ignore_above:32766 fix is not actually applied against a real index")
+
+    def test_tls_validation_status_matches_regardless_of_case(self):
+        # code-reviewer + security-auditor review: the first two tests in
+        # this class cover 2 of the 4 fields #290 fixed; this closes the gap
+        # for tls.validation_status, which has 2 real rule consumers
+        # (net_zeek_ssl_self_signed_c2.yml, net_zeek_ssl_expired_cert_
+        # connection.yml), both using a case-sensitive contains modifier.
+        rule_path = SIGMA_DIR / "net_zeek_ssl_self_signed_c2.yml"
+        rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+        mapping = load_pipeline_field_mapping(rule.get("logsource", {}))
+        compiled = sigma_convert_one(rule_path)
+
+        mixed_case = {"validation_status": "Self Signed Certificate In Certificate Chain"}
+        self._index("tp-mixedcase", translate_fixture(mixed_case, mapping))
+        self._refresh()
+
+        matched = self._matched_ids(compiled["query"])
+        self.assertIn("tp-mixedcase", matched,
+                      "net_zeek_ssl_self_signed_c2.yml's compiled query did not match a mixed-case "
+                      "real-world tls.validation_status value — #290's lowercase_normalizer fix is "
+                      "not actually applied against a real index")
+
+    def test_zeek_http_host_normalizer_applied(self):
+        # zeek.http.host (renamed from Zeek's `host` by configs/network/
+        # filebeat.yml) has a real producer but, unlike its 3 siblings, no
+        # Sigma rule selects on it yet — direct mapping probe instead of a
+        # compiled-rule test, matching test_url_path_over_old_default_
+        # ceiling_not_dropped's approach for the same reason.
+        self._index("host-mixedcase", {"@timestamp": datetime.now(timezone.utc).isoformat(),
+                                        "zeek": {"http": {"host": "Evil.Example.COM"}}})
+        self._refresh()
+        matched = self._matched_ids('zeek.http.host:"evil.example.com"')
+        self.assertIn("host-mixedcase", matched,
+                      "a lowercase exact-match query did not match a mixed-case real-world "
+                      "zeek.http.host value — #290's lowercase_normalizer fix is not actually "
+                      "applied against a real index")
+
+    def test_tls_client_server_name_normalizer_applied(self):
+        # security-auditor review (#290 follow-up): tls.client.server_name
+        # is the same #228-batch hostname-shaped field, with a real producer
+        # (configs/logstash.conf) AND a live dashboard consumer
+        # (configs/server/network_dashboard_v3.ndjson's SNI panel) but no
+        # Sigma rule yet — direct mapping probe, same reasoning as
+        # zeek.http.host above.
+        self._index("sni-mixedcase", {"@timestamp": datetime.now(timezone.utc).isoformat(),
+                                       "tls": {"client": {"server_name": "Evil-C2.Example.COM"}}})
+        self._refresh()
+        matched = self._matched_ids('tls.client.server_name:"evil-c2.example.com"')
+        self.assertIn("sni-mixedcase", matched,
+                      "a lowercase exact-match query did not match a mixed-case real-world "
+                      "tls.client.server_name value — the lowercase_normalizer fix is not actually "
+                      "applied against a real index")
+
+
 class LinuxAuthLiveFireTests(LiveFireTestCase):
     def test_su_session_opened_fires_against_real_es(self):
         # M13 US7 (#230/#243): `message` is the first field this whole rule

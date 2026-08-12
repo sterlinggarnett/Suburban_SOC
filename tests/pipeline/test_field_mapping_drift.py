@@ -60,6 +60,7 @@ Run:  python tests/pipeline/test_field_mapping_drift.py  (or: pytest tests/pipel
 import re
 import unittest
 from pathlib import Path
+from typing import Optional
 
 import yaml
 
@@ -134,7 +135,7 @@ def _parse_rename_pairs(rename_block_text: str) -> dict:
     }
 
 
-def extract_pipeline_renames(conf_text: str = None, filebeat_text: str = None) -> dict:
+def extract_pipeline_renames(conf_text: Optional[str] = None, filebeat_text: Optional[str] = None) -> dict:
     """{dataset_scope: {raw_field: target_field}}. "*" applies to every
     zeek_logs event: the unconditional Category 0 rename block, plus the
     presence-gated `if [source] {...}` rename (scoped by field presence,
@@ -178,7 +179,7 @@ def extract_pipeline_renames(conf_text: str = None, filebeat_text: str = None) -
         scope_close = _matching_brace(cat0, scope_open)
         dataset_spans.append((dm.group(1), scope_open, scope_close))
 
-    renames = {"*": {}}
+    renames: dict = {"*": {}}
     for m in re.finditer(r"rename\s*=>\s*\{", cat0):
         block_open = cat0.index("{", m.end() - 1)
         block_close = _matching_brace(cat0, block_open)

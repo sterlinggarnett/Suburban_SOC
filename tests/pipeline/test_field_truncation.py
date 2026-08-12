@@ -65,6 +65,7 @@ LONG_FIELDS = {
     "process.parent.args": ["process", "parent", "args"],
     "winlog.event_data.ScriptBlockText": ["winlog", "event_data", "ScriptBlockText"],
     "winlog.event_data.ImagePath": ["winlog", "event_data", "ImagePath"],
+    "url.path": ["url", "path"],
 }
 
 
@@ -279,8 +280,27 @@ class CeilingConsistencyTests(unittest.TestCase):
                 props["winlog"]["properties"]["event_data"]["properties"]["ScriptBlockText"]["ignore_above"],
             "winlog.event_data.ImagePath":
                 props["winlog"]["properties"]["event_data"]["properties"]["ImagePath"]["ignore_above"],
+            "url.path": props["url"]["properties"]["path"]["ignore_above"],
             "long_command_fields (dynamic_template)": dynamic,
         }
+
+    def _walk_ceiling_paths(self, properties, prefix=()):
+        """Yield the dotted path of every explicit property mapped at exactly
+        CEILING (32766) — walks the REAL template rather than trusting a
+        hand-maintained list, so this discovers a field even if nobody
+        remembered to add it anywhere else."""
+        for key, val in properties.items():
+            if not isinstance(val, dict):
+                continue
+            if "properties" in val:
+                yield from self._walk_ceiling_paths(val["properties"], prefix + (key,))
+            elif val.get("ignore_above") == CEILING:
+                yield ".".join(prefix + (key,))
+
+    def _template_ceiling_paths(self):
+        template = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+        props = template["template"]["mappings"]["properties"]
+        return set(self._walk_ceiling_paths(props))
 
     def test_logstash_ceiling_matches_this_modules_ceiling(self):
         self.assertEqual(self._logstash_ceiling(), CEILING)
@@ -304,6 +324,48 @@ class CeilingConsistencyTests(unittest.TestCase):
         ignore_above = self._template_ignore_above()
         for label, value in ignore_above.items():
             self.assertEqual(value, CEILING, f"{label}: ignore_above={value}, expected {CEILING}")
+
+    def test_every_ceiling_field_has_a_byte_clamp_entry(self):
+        # #290 security-auditor HIGH: url.path was raised to ignore_above:
+        # 32766 without being added to logstash.conf's long_fields clamp
+        # hash or this module's LONG_FIELDS mirror — silently reintroducing
+        # #263's Lucene immense-term whole-document-rejection bug on a new
+        # attacker-controlled field (live-confirmed: a 20000-char/40000-byte
+        # url.path crashed the whole document via HTTP 400), with CI staying
+        # green because nothing walked the template to notice a 5th field
+        # had appeared. Derives "which fields need clamping" FROM the
+        # template itself (every EXPLICIT property at exactly CEILING)
+        # rather than trusting a hand-maintained list to stay in sync with
+        # it, so a 6th explicit-property field raised to 32766 later can't
+        # skip this check the same way. Narrower than it may sound
+        # (security-auditor follow-up review): does NOT see fields created
+        # through the long_command_fields dynamic_template (also at
+        # ignore_above:32766, e.g. winlog.event_data.CommandLine on the
+        # Security channel, which keeps Winlogbeat's raw un-renamed shape)
+        # — those are unclamped too, pre-existing since #263 raised that
+        # dynamic_template's ceiling, not introduced here. Deliberately not
+        # expanded to cover it in this fix; tracked as a follow-up issue.
+        template_paths = self._template_ceiling_paths()
+
+        logstash_text = LOGSTASH_CONF_PATH.read_text(encoding="utf-8")
+        long_fields_block = re.search(r"long_fields\s*=\s*\{(.*?)\n\s*\}", logstash_text, re.DOTALL)
+        self.assertIsNotNone(long_fields_block,
+                             "could not find 'long_fields = {...}' in configs/logstash.conf")
+        logstash_labels = set(re.findall(r'=>\s*"([^"]+)"', long_fields_block.group(1)))
+
+        missing_from_logstash = template_paths - logstash_labels
+        self.assertEqual(set(), missing_from_logstash,
+                         f"template field(s) mapped ignore_above:{CEILING} with no matching entry "
+                         f"in configs/logstash.conf's long_fields clamp hash — the byte-clamp never "
+                         f"runs for them, risking a Lucene immense-term whole-document rejection on "
+                         f"an unclamped field: {missing_from_logstash}")
+
+        missing_from_python_mirror = template_paths - set(LONG_FIELDS.keys())
+        self.assertEqual(set(), missing_from_python_mirror,
+                         f"template field(s) mapped ignore_above:{CEILING} missing from this "
+                         f"module's own LONG_FIELDS mirror — tag_truncation() won't tag them even "
+                         f"though the real ruby filter clamps them, giving this test suite false "
+                         f"confidence: {missing_from_python_mirror}")
 
 
 if __name__ == "__main__":

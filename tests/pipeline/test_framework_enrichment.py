@@ -60,6 +60,18 @@ _NIST_ASSIGN_RE = re.compile(r"\[nist\]\[function\]\"\s*=>")
 _RENAME_BLOCK_RE = re.compile(r"rename\s*=>\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", re.DOTALL)
 _RENAME_PAIR_RE = re.compile(r'"([^"]+)"\s*=>\s*"([^"]+)"')
 
+# #297: Winlogbeat's own ECS mapping types winlog.event_id as `keyword` (a
+# string) — a bare integer literal never matches it in Logstash's Ruby-backed
+# conditionals. Captures the compared value up to the next whitespace/paren
+# rather than anchoring on a trailing "{" (security-auditor + code-reviewer,
+# independently: the "{" anchor misses a bare-integer comparison folded into
+# a compound condition, e.g. "== 4624 and [...] {", where the literal isn't
+# immediately followed by the brace). `==`/`!=`/`in` are the only comparison
+# forms Sigma/Logstash conditionals in this file use; does not cover the
+# literal written on the LEFT (e.g. "4625 == [winlog][event_id]" — not used
+# anywhere in this file today).
+_EVENT_ID_COMPARISON_RE = re.compile(r"\[winlog\]\[event_id\]\s*(?:==|!=|in)\s*([^\s{)]+)")
+
 
 def rule_technique(text: str):
     m = _TECH_RE.search(text)
@@ -227,6 +239,43 @@ class DetectionAsCodeTests(unittest.TestCase):
                     bad.append((source, target))
         self.assertEqual([], bad,
                          f"dotted (non-bracket) rename targets create flat fields, not nested: {bad}")
+
+    def test_windows_security_event_id_compared_as_string(self):
+        # #297: [winlog][event_id] == 4625 (bare integer) never matches the
+        # real string-typed field Winlogbeat sends — live-confirmed against
+        # the real logstash:9.3.2 binary that the pre-fix comparison left
+        # [event][outcome] unset for both the 4625 (failure) and 4624
+        # (success) login-tracking branches. Pins the exact expected set (not
+        # just "quoted") so a typo'd event id can't silently pass by
+        # coincidentally still looking like a quoted string.
+        comparisons = _EVENT_ID_COMPARISON_RE.findall(CONF)
+        self.assertEqual({'"4624"', '"4625"'}, set(comparisons),
+                         f"expected exactly the 4624/4625 [winlog][event_id] comparisons "
+                         f"(quoted), found {comparisons}")
+        bad = [v for v in comparisons
+               if not ((v.startswith('"') and v.endswith('"'))
+                       or (v.startswith("'") and v.endswith("'")))]
+        self.assertEqual([], bad,
+                         f"[winlog][event_id] compared against a bare (non-string) literal: {bad} — "
+                         f"Winlogbeat emits event_id as keyword/string, so this comparison silently "
+                         f"never matches in Logstash's Ruby-backed conditional evaluation")
+
+    def test_windows_security_event_id_maps_to_correct_outcome(self):
+        # security-auditor review: the quoting check above proves SHAPE, not
+        # CORRECTNESS — a transposed mapping (4625->success, 4624->failure)
+        # or a swap with a third event id would still pass it, and would be
+        # worse than #297's original bug: an actively INVERTED outcome
+        # (every real logon failure stamped "success") is more misleading
+        # than an absent field. Pin the actual id->outcome mapping, and that
+        # each comparison sits inside the Security-channel gate.
+        for event_id, outcome in (('"4625"', "failure"), ('"4624"', "success")):
+            idx = CONF.index(f"[winlog][event_id] == {event_id}")
+            preceding = CONF[max(0, idx - 700):idx]
+            self.assertIn('[winlog][channel] == "Security"', preceding,
+                          f"{event_id} comparison is not inside the Security channel gate")
+            following = CONF[idx:idx + 200]
+            self.assertIn(f'"[event][outcome]" => "{outcome}"', following,
+                          f"{event_id} does not map to [event][outcome] = {outcome!r}")
 
 
 if __name__ == "__main__":

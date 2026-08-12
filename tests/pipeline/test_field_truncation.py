@@ -36,14 +36,14 @@ still discriminates via test_ascii_value_over_ceiling_char_tagged_not_byte_
 clamped below, not just by eyeballing the ruby diff.
 
 #263 also found the Sysmon `mutate.rename` block (configs/logstash.conf,
-~line 514) targets bare dotted strings ("process.args"), which Logstash
+~line 523) targeted bare dotted strings ("process.args"), which Logstash
 creates as a FLAT field literally named "process.args" — not the nested
-[process][args] structure this filter's long_fields keys originally assumed
-alone. Confirmed live: the nested lookup returns nil for real Sysmon-sourced
-process.args/process.parent.args, so those two fields were never actually
-tagged. The filter now falls back to the flat dotted-literal key when the
-nested lookup misses (winlog.event_data.ScriptBlockText/ImagePath are
-unaffected — nothing renames them, always genuinely nested).
+[process][args] structure this filter's long_fields keys expect. Confirmed
+live: the nested lookup returned nil for real Sysmon-sourced process.args/
+process.parent.args, so those two fields were never actually tagged. Worked
+around at the time with a flat-key fallback (#263); #328 fixed the rename
+block itself (bracket notation), so the fallback is no longer needed —
+nothing in this pipeline produces the flat dotted-key shape anymore.
 
 Run:  python tests/pipeline/test_field_truncation.py  (or: pytest tests/pipeline)
 """
@@ -77,17 +77,6 @@ def _nested_get(event: dict, path_parts):
     return cur
 
 
-def _get_with_fallback(event: dict, label: str, path_parts):
-    """Mirrors the ruby filter's actual_path fallback: try the nested
-    bracket-style path first, then the flat dotted-literal key (the shape
-    Logstash's Sysmon rename block actually produces for process.args/
-    process.parent.args — confirmed live during #263's review)."""
-    val = _nested_get(event, path_parts)
-    if val is None:
-        val = event.get(label)
-    return val
-
-
 def _clamp_bytes(val: str, byte_ceiling: int) -> str:
     """Mirrors ruby's val.byteslice(0, byte_ceiling).scrub: cut at a byte
     boundary (which may split a multi-byte character), then repair any
@@ -105,7 +94,7 @@ def tag_truncation(event: dict):
     char_hit = []
     byte_hit = []
     for label, path_parts in LONG_FIELDS.items():
-        val = _get_with_fallback(event, label, path_parts)
+        val = _nested_get(event, path_parts)
         if not isinstance(val, str):
             continue
         if len(val) > CEILING:
@@ -195,28 +184,17 @@ class FieldTruncationTaggingTests(unittest.TestCase):
         event = {"winlog": {"event_data": {"ImagePath": "A" * 40000}}}
         self.assertEqual(tag_truncation(event), (["winlog.event_data.ImagePath"], []))
 
-    def test_flat_dotted_process_args_tagged_via_fallback(self):
-        # #263 security-auditor MEDIUM (confirmed live via tester-debugger):
-        # Logstash's Sysmon rename block targets bare "process.args" (no
-        # brackets), which creates a FLAT top-level field literally named
-        # "process.args", not nested [process][args]. The filter must still
-        # tag it via the flat-key fallback, or this is dead code on every
-        # real Sysmon-sourced process creation event.
+    def test_flat_dotted_key_no_longer_matched(self):
+        # #328 fixed the Sysmon rename block to bracket notation, so nothing
+        # in the pipeline produces a flat "process.args"-shaped key anymore
+        # — the #263-era fallback that used to catch it was removed as dead
+        # code in the same fix. A stray flat key (should never occur from
+        # any real source post-#328) must NOT be picked up as a substitute
+        # for the real nested field, or a future regression of the rename
+        # block back to dotted-string form would silently start passing
+        # this suite again via the wrong mechanism.
         event = {"process.args": "A" * 40000}
-        self.assertEqual(tag_truncation(event), (["process.args"], []))
-
-    def test_flat_dotted_process_parent_args_tagged_via_fallback(self):
-        event = {"process.parent.args": "A" * 40000}
-        self.assertEqual(tag_truncation(event), (["process.parent.args"], []))
-
-    def test_nested_takes_precedence_over_flat_when_both_present(self):
-        # Mirrors the ruby filter's actual_path selection: nested is tried
-        # first and used if present, regardless of what a flat key holds.
-        event = {
-            "process": {"args": "A" * 40000},
-            "process.args": "short",
-        }
-        self.assertEqual(tag_truncation(event), (["process.args"], []))
+        self.assertEqual(tag_truncation(event), ([], []))
 
 
 class ByteClampTaggingTests(unittest.TestCase):

@@ -24,7 +24,7 @@ A SOC without validated detections is a black box. Operators must routinely prov
 - **SAFETY WARNING:** These scripts generate real attack traffic. They must only target `127.0.0.1` or explicitly authorized lab equipment.
 
 # Analysis
-The validation relies on python-based simulation scripts generating traffic, Zeek capturing it, and Kibana Watcher / AI Agent triggering the response. End-to-end success means the target MAC is dropped by OpenWrt's firewall.
+The validation relies on python-based simulation scripts generating traffic, Zeek capturing it, and the AI Agent's ingest-time SOAR trigger (`configs/logstash.conf`, #267 — no separate Watcher install required) triggering the response. End-to-end success means the target MAC is dropped by OpenWrt's firewall.
 
 ## Monitoring and Notifications
 The `run_all.sh` harness outputs terminal status. The AI Agent pushes `ntfy` and Discord alerts upon quarantine execution.
@@ -46,9 +46,8 @@ Expected output will confirm detections for Port Scan, Brute Force, and Malware 
 
 ### Containment
 To trigger and validate the SOAR quarantine path:
-1. Ensure the Kibana Watcher (`soar_quarantine_alert.json`) is installed.
-2. POST a synthetic alert to the AI Agent (`http://localhost:5000/alert`).
-3. Run `./verify_quarantine.sh <TARGET_MAC>` to confirm the OpenWrt `uci` rule is active.
+1. POST a synthetic alert to the AI Agent (`http://localhost:5000/alert`) — the ingest-time trigger in `configs/logstash.conf` dispatches automatically for a real detection; a manual POST substitutes for that when testing the containment plumbing directly (#267 retired the separate Watcher-install step this used to require).
+2. Run `./verify_quarantine.sh <TARGET_MAC>` to confirm the OpenWrt `uci` rule is active.
 
 ### Eradication & Recovery
 To recover the router state after the drill:
@@ -60,4 +59,4 @@ To recover the router state after the drill:
 - [Detailed Procedure](./SOP-022-anomaly-validation-procedure.md) — prerequisites table, numbered steps, detection-mapping table, troubleshooting matrix, evidence-capture checklist (#215)
 - `tests/anomaly_simulation/run_all.sh`
 - `tests/anomaly_simulation/preflight.sh`
-- `rules/elastic_watcher/soar_quarantine_alert.json`
+- `rules/elastic_watcher/retired/soar_quarantine_alert.json` (historical reference, retired #267)

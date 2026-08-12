@@ -98,6 +98,22 @@ if (Test-Path $WatcherDir) {
     }
 } else { Write-Warn2 "No watcher directory at $WatcherDir" }
 
+# #267: soar_quarantine_alert was retired (moved out of $WatcherDir so the
+# loop above stops installing it) but a cluster this script already ran
+# against still has it ACTIVE on a 1-minute schedule - retirement only
+# stops future installs, it does not un-install what is already there.
+# Idempotent: a 404 (already gone / never installed) counts as success.
+try {
+    Invoke-RestMethod -Method Delete -Uri "$EsUrl/_watcher/watch/soar_quarantine_alert" | Out-Null
+    Write-Ok "Removed retired watcher soar_quarantine_alert"
+} catch {
+    if ($_.Exception.Response.StatusCode.value__ -eq 404) {
+        Write-Ok "Retired watcher soar_quarantine_alert already absent"
+    } else {
+        Write-Warn2 "WARN: could not remove retired watcher soar_quarantine_alert"
+    }
+}
+
 # 5. Sync logstash.conf + restart --------------------------------------------
 Write-Step "[6/6] Syncing logstash.conf to Docker mount + restarting Logstash"
 if (Test-Path $LogstashSrc) {

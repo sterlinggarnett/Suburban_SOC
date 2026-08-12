@@ -36,6 +36,14 @@ PIPELINE = (ROOT / "configs" / "detections" / "suburban-soc-ecs.yml").read_text(
 # Network detections that must stay classified in the pipeline (non-Sigma source).
 NETWORK_TECHNIQUES = {"T1046", "T1110"}
 
+# #267: the ingest-time SOAR trigger's exact condition shape, expected to appear
+# twice (filter-stage HMAC signing + output-stage http dispatch) and identically.
+# T1110 only, deliberately NOT T1046 — see test_soar_trigger_excludes_spoofable_t1046.
+SOAR_TRIGGER_CONDITIONS_RE = re.compile(
+    r'if \(\[event\]\[dataset\] == "zeek\.intel" and \[threat\]\[indicator\]\[value\]\)'
+    r' or \[threat\]\[technique\]\[id\] == "T1110" \{'
+)
+
 _TECH_RE = re.compile(r"attack\.(t\d{4}(?:\.\d{3})?)", re.IGNORECASE)
 _ID_ASSIGN_RE = re.compile(r"\[threat\]\[technique\]\[id\]\"\s*=>\s*\"([^\"]+)\"")
 _TACTIC_ASSIGN_RE = re.compile(r"\[threat\]\[tactic\]\[name\]\"\s*=>")
@@ -120,6 +128,58 @@ class DetectionAsCodeTests(unittest.TestCase):
                       "T1110 branch no longer matches the aggregated Zeek notice")
         self.assertIn("SSH::Login_By_Password_Guesser", condition,
                       "T1110 branch dropped the Login_By_Password_Guesser notice type")
+
+    def test_soar_trigger_covers_t1110_not_t1046(self):
+        # #267: the live SOAR trigger (the ingest-time replacement for the
+        # now-retired rules/elastic_watcher/retired/soar_quarantine_alert.json
+        # Watcher) previously only fired on zeek.intel IOC hits — T1046/T1110
+        # Zeek detections were tagged for dashboards but never reached
+        # automated response. T1110 was wired in directly: it requires a
+        # completed TCP+SSH handshake (detect-bruteforcing.zeek's SumStats
+        # over real ssh_auth_failed events), not spoofable by a bare
+        # source-IP forger. T1046 was deliberately left OUT of live dispatch
+        # (security-auditor review): scan-detection.zeek fires on the
+        # initial SYN alone, no handshake required, so wiring it in would
+        # have turned a spoofed-source SYN sweep into an unrate-limited
+        # automated-response amplifier against an attacker-chosen victim IP
+        # — this repo has no rate limiting anywhere in the /alert path.
+        # Deferred until #331 (a source-spoofing defense) actually exists.
+        # T1046 still gets pipeline-tagged for dashboards, unaffected.
+        matches = SOAR_TRIGGER_CONDITIONS_RE.findall(CONF)
+        self.assertTrue(matches, "T1110 SOAR trigger condition not found in configs/logstash.conf")
+        self.assertNotIn('[threat][technique][id] in ["T1046"', CONF,
+                         "T1046 must not be wired into live SOAR dispatch until #331 is fixed")
+        self.assertNotIn('[threat][technique][id] in ["T1046", "T1110"]', CONF,
+                         "T1046 must not be wired into live SOAR dispatch until #331 is fixed")
+
+    def test_soar_trigger_signing_and_dispatch_conditions_match(self):
+        # #267: the filter-stage HMAC-signing block and the output-stage http
+        # dispatch block each gate on their own copy of the same condition —
+        # Logstash has no way to share one across filter{}/output{}. A
+        # signed-but-never-dispatched event is a silent no-op (the exact
+        # failure mode #267 found for T1110), so these two must never be
+        # allowed to drift apart again.
+        matches = SOAR_TRIGGER_CONDITIONS_RE.findall(CONF)
+        self.assertEqual(2, len(matches),
+                         f"expected exactly 2 SOAR trigger conditions (signing + dispatch), found {len(matches)}")
+        self.assertEqual(matches[0], matches[1],
+                         "SOAR signing and dispatch trigger conditions have desynced")
+
+    def test_zeek_notice_src_fallback_for_source_ip(self):
+        # #267: some zeek.notice types (e.g. detect-bruteforcing's
+        # Password_Guessing) set Zeek's Notice::Info$src without $conn, so
+        # notice.log carries a bare top-level src field but no id sub-record
+        # — the generic id.orig_h rename never fires for them, leaving
+        # source.ip empty and any SOAR dispatch targeting nothing. Guard
+        # both that the fallback exists and that it never overwrites a
+        # value the generic rename already set (the ![source][ip] guard).
+        self.assertIn('"[src]" => "[source][ip]"', CONF,
+                      "zeek.notice src -> source.ip fallback rename is missing")
+        idx = CONF.index('"[src]" => "[source][ip]"')
+        preceding = CONF[max(0, idx - 300):idx]
+        self.assertIn('== "zeek.notice"', preceding)
+        self.assertIn("![source][ip]", preceding,
+                      "src fallback must not unconditionally overwrite an already-set source.ip")
 
 
 if __name__ == "__main__":

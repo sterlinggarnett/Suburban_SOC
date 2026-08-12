@@ -183,9 +183,18 @@ cd tests/anomaly_simulation && ./sim_portscan.sh
 ```
 Evidence to capture:
 1. The `zeek.notice` `Scan::Port_Scan` doc — `ES "$ES_URL/logstash-security-*/_search?q=note:Scan::Port_Scan"`.
-2. The Watcher `/alert` firing → draft in the agent `/pending`.
-3. After approve → broker nftables **DROP** action in `soar-actions-*`.
-4. The Kibana **Case** and the append-only `soc-audit-*` record (same source IP + window).
+2. The pipeline-tagged `threat.technique.id: T1046` on that same doc
+   (`configs/logstash.conf` Category 5) — dashboard/metric evidence.
+
+**No SOAR draft is expected for this scenario.** T1046 is deliberately NOT
+wired into the live `/alert` dispatch (`configs/logstash.conf` Category 6,
+#267) — `scan-detection.zeek` fires on a bare SYN with no completed
+handshake, so a source-spoofed sweep could otherwise trigger automated
+containment against an attacker-chosen IP. Wiring T1046 into dispatch is
+deferred until [#331](https://github.com/voltron-1/Suburban_SOC/issues/331)
+(a source-spoofing defense) exists. Steps 3/4 (approve → broker DROP →
+Case/audit) do not apply to this scenario today; see Step A.2 for a
+scenario that does exercise the full SOAR chain.
 
 ### Step A.2 — SSH brute force (T1110)
 ```bash

@@ -249,8 +249,8 @@ The Suburban-SOC pipeline is a modular, end-to-end security monitoring and autom
 | **Zeek** | Native / WSL (`/opt/zeek/bin/zeek`) | File-based | Ingests raw PCAP via SSH/tcpdump, outputs structured JSON logs. Layer-2 MAC enrichment (`mac-logging` policy) is planned but not currently loaded on any real capture path — [#286](https://github.com/voltron-1/Suburban_SOC/issues/286) |
 | **Logstash** | Docker Container | 5044 in / 9200 out | Enriches, filters, and routes JSON logs; applies GeoIP lookups and ECS field mapping |
 | **Elasticsearch** | Docker Container | 9200 | Indexes and stores all structured log data across three index patterns (`logstash-security-*`, `.alerts-security.alerts-*`, `soar-actions-*`) |
-| **Kibana** | Docker Container | 5601 | Visualizes network events and threat dashboards; hosts the Watcher rule (`soar_quarantine_alert`) that triggers the SOAR loop |
-| **SOC AI Agent** | Docker Container (Flask) | 5000 | Receives Kibana Watcher webhooks; runs LLM triage (MITRE ATT&CK mapping), then *drafts* containment to a human-approval queue executed via `POST /approve` (auto-isolation only with `AUTONOMOUS_ISOLATION=true`; protected assets excluded); sends ntfy + Discord notifications |
+| **Kibana** | Docker Container | 5601 | Visualizes network events and threat dashboards |
+| **SOC AI Agent** | Docker Container (Flask) | 5000 | Receives an HMAC-signed `/alert` webhook from Logstash's own ingest-time trigger (`configs/logstash.conf`, not a Kibana Watcher — the original Watcher-based design was retired, [#267](https://github.com/voltron-1/Suburban_SOC/issues/267)); runs LLM triage (MITRE ATT&CK mapping), then *drafts* containment to a human-approval queue executed via `POST /approve` (auto-isolation only with `AUTONOMOUS_ISOLATION=true`; protected assets excluded); sends ntfy + Discord notifications |
 | **Hive-Mind Broker** | Python (FastAPI) | 8000 | Optional mesh dispatcher: receives an HMAC-signed block request and pushes firewall DROP rules to the OpenWrt mesh routers in `inventory.yaml` |
 
 > For a full breakdown see the [Architecture Wiki page](../../wiki/Architecture).

@@ -215,6 +215,15 @@ transformations:
   # source/destination condition — add field-mapping-zeek-notice (same
   # 4-tuple) at that point, don't assume it's already covered because this
   # comment is nearby.
+  #
+  # UPDATE (#291, security-auditor follow-up): the six-count above refers
+  # ONLY to field_name_mapping transformations. As of #291, every zeek/*
+  # rule — including zeek/notice, which still has no field_name_mapping —
+  # ALSO receives the separate add-condition-zeek-event-dataset
+  # transformation (bottom of this file), scoped by product:zeek alone.
+  # That transformation doesn't rename any field, so it doesn't extend the
+  # 4-tuple invariant above; it's a distinct kind of coverage gap this
+  # comment's own six-count was never meant to track.
   - id: field-mapping-zeek-dns
     type: field_name_mapping
     mapping:
@@ -328,3 +337,61 @@ transformations:
       - type: logsource
         product: zeek
         service: http
+
+  # #291 (security-auditor, #228 round 2): two related problems, one fix.
+  # (1) Performance — several zeek/* rules compile to a leading-wildcard or
+  # leading-.* regex query against a high-cardinality field with no explicit
+  # ES mapping (dns.question.name / url.path — falls to strings_as_keyword),
+  # e.g. net_zeek_dns_crypto_mining_pool.yml's 11-clause
+  # dns.question.name:(*nanopool.org OR ...). A leading wildcard/regex gives
+  # Lucene no prefix to seek on — effectively a full term-dictionary scan for
+  # that field on every scheduled run. (2) Correctness — the INVARIANT above
+  # (field-mapping-zeek-dns) deliberately pushes the connection 4-tuple into
+  # every zeek/* transformation, so a rule scoped to e.g. service: conn has
+  # NO field in its compiled query that actually confirms the match came
+  # FROM conn.log rather than ssl.log/http.log/etc. sharing the same
+  # 4-tuple-derived source.ip/destination.ip/source.port/destination.port —
+  # a single physical connection can produce multiple Zeek log records for
+  # the same 4-tuple, so an under-qualified rule can double-alert on one
+  # real event. Injecting an event.dataset:zeek.<service> AND-clause fixes
+  # (2) outright — live-verified end to end (see #291's PR) that a document
+  # from a DIFFERENT stream sharing the same 4-tuple no longer matches.
+  # (1) is a partial, not a full, fix (security-auditor follow-up review,
+  # correcting this comment's own earlier overclaim): the cheap term clause
+  # reduces how many documents reach scoring/collection, but Lucene builds
+  # a wildcard/regex MultiTermQuery's automaton against the field's full
+  # term dictionary independent of sibling AND clauses — it does not turn
+  # the leading-wildcard scan itself into a prefix seek. The real fix for
+  # (1) is at the mapping layer (e.g. an index_prefixes sub-field or a
+  # reversed-suffix field for endswith-style matches) — tracked separately,
+  # not claimed as closed by this transformation alone.
+  #
+  # template: true + $service substitutes each rule's own logsource.service
+  # at conversion time (verified: dns rules get zeek.dns, conn rules get
+  # zeek.conn, etc. — one generic transformation
+  # instead of a 7-way copy-paste of field-mapping-zeek-*'s per-service
+  # pattern, live-verified via `sigma convert` against all 18 real zeek
+  # rules in the corpus). event.dataset is the correct target field name
+  # directly (no further field_name_mapping needed) — configs/logstash.conf's
+  # Category 0 stamps it from the real source log filename
+  # (zeek.%{zeek_stream}) for every zeek_logs event, unconditionally, before
+  # any of the dataset-scoped renames run.
+  # DORMANT ASSUMPTION (code-reviewer + security-auditor review): scoped to
+  # product:zeek alone, no service check — pySigma's template substitution
+  # on a missing service renders the literal string "event.dataset:zeek.None"
+  # (confirmed against pySigma's own source, not just inferred), a
+  # permanently-unmatchable compiled query for a future zeek rule missing
+  # logsource.service. Every zeek rule in the corpus has one today; guarded
+  # (not just documented) by tests/detections/test_live_fire.py's
+  # ZeekEventDatasetScopingTests, which fails LOUDLY on this shape (not a
+  # silent skip) and runs in .github/workflows/detections.yml's REQUIRED
+  # detections job (its own dedicated step, "Zeek rules carry the
+  # event.dataset scoping condition"), not only the optional live-fire job.
+  - id: add-condition-zeek-event-dataset
+    type: add_condition
+    template: true
+    conditions:
+      event.dataset: "zeek.$service"
+    rule_conditions:
+      - type: logsource
+        product: zeek

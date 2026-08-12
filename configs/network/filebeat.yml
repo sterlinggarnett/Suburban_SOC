@@ -8,6 +8,12 @@ filebeat.inputs:
     enabled: true
     paths:
       - /storage/PCAP/zeek_logs/*.log
+      # #291: scripts/setup/zeek_run_pcap.sh (offline PCAP-replay analysis)
+      # writes into a per-pcap subdirectory (zeek_logs/<pcap_name>/<stream>.log)
+      # so the live-capture path's bare zeek_logs/<stream>.log filenames stay
+      # untouched by that script's own re-run/no-collision behavior — this
+      # second glob is what makes Filebeat actually pick up the replay logs.
+      - /storage/PCAP/zeek_logs/*/*.log
     parsers:
       - ndjson:
           target: ""

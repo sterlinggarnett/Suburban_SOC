@@ -25,7 +25,14 @@ jobs:
           python-version-file: .python-version
 
       - name: Install the Sigma toolchain
-        run: pip install --quiet sigma-cli pysigma-backend-elasticsearch pytest
+        # pyyaml/requests declared explicitly (security-auditor follow-up,
+        # #291) — the "Zeek rules carry the event.dataset scoping
+        # condition" step below imports both directly in
+        # tests/detections/test_live_fire.py, currently satisfied only as
+        # transitive deps of pysigma-backend-elasticsearch. If that ever
+        # changes, this step should fail with a normal ModuleNotFoundError,
+        # not something that looks unrelated to detections.
+        run: pip install --quiet sigma-cli pysigma-backend-elasticsearch pytest pyyaml requests
 
       - name: Pipeline consistency tests
         # #286 security-auditor MEDIUM: this used to invoke
@@ -42,6 +49,18 @@ jobs:
 
       - name: Threshold-rule companions are well-formed and paired (issue #192)
         run: python tests/detections/test_threshold_rules.py
+
+      - name: Zeek rules carry the event.dataset scoping condition (#291)
+        # Compile-only (no live Elasticsearch needed) — security-auditor
+        # review found the live-fire proof of this fix lived only in the
+        # non-required live-fire job below, so a regression to
+        # suburban-soc-ecs.yml's add-condition-zeek-event-dataset
+        # transformation (or a future zeek rule missing logsource.service,
+        # which pySigma's template substitution would silently render as
+        # the literal "event.dataset:zeek.None") could merge with no gate
+        # objecting. This class needs only the sigma CLI already installed
+        # above, not the live-fire job's Elasticsearch service container.
+        run: python -m pytest tests/detections/test_live_fire.py::ZeekEventDatasetScopingTests -v
 
       - name: Every Sigma rule converts to an Elastic detection rule
         run: |

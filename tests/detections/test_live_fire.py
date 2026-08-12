@@ -75,6 +75,7 @@ import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 import requests
 import yaml
@@ -179,13 +180,25 @@ def load_pipeline_field_mapping(rule_logsource: dict) -> dict:
     transformation are OR'd here, not pySigma's real AND-by-default; and if
     two transformations both matched, the LAST one's mapping wins here, not
     pySigma's real first-applied-consumes-the-field precedence. Both are
-    currently dormant — every transformation in the pipeline today has
-    exactly one rule_conditions entry, and the 7 conditions are mutually
-    exclusive product/category/service triples, so at most one transformation
-    can ever match a given rule. Asserted below so a future pipeline change
-    that breaks either assumption fails this test loudly instead of silently
-    producing a translation that has drifted from what `sigma convert`
-    actually does."""
+    currently dormant — every field_name_mapping transformation in the
+    pipeline today has exactly one rule_conditions entry, and the 7
+    conditions are mutually exclusive product/category/service triples, so
+    at most one field_name_mapping transformation can ever match a given
+    rule. Asserted below so a future pipeline change that breaks either
+    assumption fails this test loudly instead of silently producing a
+    translation that has drifted from what `sigma convert` actually does.
+
+    security-auditor follow-up (#291): this invariant covers field_name_
+    mapping transformations only, by construction — the `if t.get("type")
+    != "field_name_mapping": continue` filter below is what makes that
+    true, not an absence of overlapping rule_conditions in the pipeline as
+    a whole. suburban-soc-ecs.yml's add-condition-zeek-event-dataset
+    transformation (type: add_condition) is scoped to product:zeek alone
+    and DOES overlap all 6 zeek/* field_name_mapping conditions — it's
+    filtered out here because it's a different transformation type, not
+    because pipeline conditions stayed mutually exclusive. If this filter
+    is ever relaxed to cover other transformation types, the "at most one
+    match" assumption needs re-deriving, not just re-asserting."""
     pipeline = yaml.safe_load(PIPELINE_PATH.read_text(encoding="utf-8"))
     matched_ids = []
     merged = {}
@@ -209,14 +222,26 @@ def load_pipeline_field_mapping(rule_logsource: dict) -> dict:
     return merged
 
 
-def translate_fixture(fixture: dict, field_mapping: dict) -> dict:
+def translate_fixture(fixture: dict, field_mapping: dict, logsource: Optional[dict] = None) -> dict:
     """Rename fixture keys per field_mapping, building a nested ES document
     from dotted target paths (e.g. "winlog.event_data.ImagePath" ->
     {"winlog": {"event_data": {"ImagePath": ...}}}) — the real shape
     Winlogbeat/the pipeline produces, not the flat raw-Sigma-field shape
     sigma_eval.py's fixtures are written in. Stamps @timestamp (real telemetry
-    always carries one; a document with none is not realistic input)."""
+    always carries one; a document with none is not realistic input).
+
+    #291: also stamps event.dataset for zeek/* rules, matching
+    configs/logstash.conf's Category 0 (zeek.%{zeek_stream}, unconditional
+    for every zeek_logs event) and suburban-soc-ecs.yml's new
+    add-condition-zeek-event-dataset transformation, which now requires it
+    in every compiled zeek/* query. Without this, every zeek live-fire test
+    would silently start failing the moment that transformation landed —
+    CI's real ES would exercise it even though these tests SKIP (not fail)
+    locally with no reachable Elasticsearch, so this gap would not have
+    shown up in a plain local `pytest tests/` run."""
     doc: dict = {"@timestamp": datetime.now(timezone.utc).isoformat()}
+    if logsource and logsource.get("product") == "zeek" and logsource.get("service"):
+        doc["event"] = {"dataset": f"zeek.{logsource['service']}"}
     for key, value in fixture.items():
         target = field_mapping.get(key, key)
         parts = target.split(".")
@@ -305,11 +330,12 @@ class LiveFireTestCase(unittest.TestCase):
         fx = FIXTURES[rule_filename]
 
         compiled = sigma_convert_one(rule_path)
-        mapping = load_pipeline_field_mapping(rule.get("logsource", {}))
+        logsource = rule.get("logsource", {})
+        mapping = load_pipeline_field_mapping(logsource)
 
-        self._index("tp", translate_fixture(fx["true_positive"], mapping))
+        self._index("tp", translate_fixture(fx["true_positive"], mapping, logsource))
         for i, neg in enumerate(fx.get("true_negatives", [])):
-            self._index(f"tn-{i}", translate_fixture(neg, mapping))
+            self._index(f"tn-{i}", translate_fixture(neg, mapping, logsource))
         self._refresh()
 
         matched = self._matched_ids(compiled["query"])
@@ -490,6 +516,154 @@ class ThresholdLiveFireTests(LiveFireTestCase):
             f"threshold companion for {self.NDJSON.name}: {n} events timestamped an hour "
             f"before the rule's own \"from\": {rule['from']!r} still crossed threshold — "
             f"the lookback window is not actually being enforced")
+
+
+class ZeekEventDatasetScopingTests(unittest.TestCase):
+    """#291: every product:zeek Sigma rule's compiled query must include an
+    event.dataset:zeek.<service> AND-clause (suburban-soc-ecs.yml's
+    add-condition-zeek-event-dataset transformation, template:true +
+    $service). Compile-only — no live Elasticsearch needed, so this runs in
+    every `pytest tests/` invocation, not just when LIVE_FIRE_ES_URL is set.
+    Guards the fix in both directions this issue was about: a leading-
+    wildcard/regex query gets a cheap, prefix-seekable term clause ahead of
+    it (performance), and the one field that actually distinguishes which
+    Zeek log stream a document came from is present (correctness — see
+    CrossStreamEventDatasetLiveFireTests below for the live proof)."""
+
+    def _known_zeek_streams(self):
+        # security-auditor follow-up: a PRESENT but WRONG service (a typo —
+        # "conn_log", "dnss", "ssl_log") satisfies the prefix check below
+        # (self-consistent by construction: the expected clause is derived
+        # from the rule's OWN declared service) and deploys a rule that
+        # never fires, same dead-rule outcome as the missing-service case,
+        # reached by a likelier mistake. Derives the known-good set from
+        # the pipeline's own field_name_mapping transformations (the
+        # single source of truth for which zeek streams are real) rather
+        # than hardcoding it a second time, plus "notice" — the one
+        # documented exception (field-mapping-zeek-dns's own SCOPE
+        # comment): 2 real rules use it, no field_name_mapping transformation
+        # exists for it, and that's a known, deliberate gap, not a typo.
+        pipeline = yaml.safe_load(PIPELINE_PATH.read_text(encoding="utf-8"))
+        streams = {"notice"}
+        for t in pipeline.get("transformations", []):
+            if t.get("type") != "field_name_mapping":
+                continue
+            for cond in t.get("rule_conditions", []):
+                if cond.get("type") == "logsource" and cond.get("product") == "zeek" and cond.get("service"):
+                    streams.add(cond["service"])
+        return streams
+
+    def test_every_zeek_rule_compiled_query_has_event_dataset_clause(self):
+        # code-reviewer follow-up: glob *.yml (not net_zeek_*.yml) so this
+        # actually covers every product:zeek rule the docstring claims to
+        # guarantee, not just ones that happen to follow today's naming
+        # convention — dormant until a future zeek rule is named
+        # differently, matching this file's own repeated "don't let a
+        # convention silently stop being enforced" lesson.
+        known_streams = self._known_zeek_streams()
+        missing = []
+        no_service = []
+        unknown_service = []
+        for rule_path in sorted(SIGMA_DIR.glob("*.yml")):
+            rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+            logsource = rule.get("logsource", {})
+            if logsource.get("product") != "zeek":
+                continue
+            if not logsource.get("service"):
+                # code-reviewer follow-up: fail loudly instead of silently
+                # skipping. suburban-soc-ecs.yml's add-condition-zeek-
+                # event-dataset transformation is scoped to product:zeek
+                # alone (no service check) and pySigma's template
+                # substitution renders a missing service as the literal
+                # string "None" — a permanently-unmatchable compiled query,
+                # the exact #217-class silent-no-op this whole file exists
+                # to prevent, not something to quietly pass over here.
+                no_service.append(rule_path.name)
+                continue
+            if logsource["service"] not in known_streams:
+                unknown_service.append(f"{rule_path.name}: service={logsource['service']!r}, "
+                                       f"known streams: {sorted(known_streams)}")
+                continue
+            compiled = sigma_convert_one(rule_path)
+            # security-auditor follow-up: assert the clause's POSITION and
+            # POLARITY (a leading, ANDed prefix), not just substring
+            # presence — a bare `in` check would pass a malformed pipeline
+            # that OR'd the clause instead of ANDing it, or negated it
+            # (`NOT event.dataset:...`), neither of which actually scopes
+            # anything. No trailing "(" required: the backend only
+            # parenthesizes the rest of the query when it's itself a
+            # compound expression — confirmed against all 18 real compiled
+            # queries, 3 of which (single-clause rules, e.g.
+            # net_zeek_smtp_mass_outbound.yml's bare trans_depth:>20) have
+            # no trailing paren at all.
+            expected_prefix = f"event.dataset:zeek.{logsource['service']} AND "
+            if not compiled["query"].startswith(expected_prefix):
+                missing.append(f"{rule_path.name}: expected compiled query to start with "
+                               f"{expected_prefix!r}, got {compiled['query']!r}")
+        self.assertEqual([], no_service,
+                         f"product:zeek rule(s) with no logsource.service: {no_service} — "
+                         f"suburban-soc-ecs.yml's add-condition-zeek-event-dataset transformation "
+                         f"would render this as the literal 'event.dataset:zeek.None', a "
+                         f"permanently-unmatchable compiled query")
+        self.assertEqual([], unknown_service,
+                         f"product:zeek rule(s) with a service not recognized by the real "
+                         f"pipeline (likely a typo): {unknown_service} — this compiles to a "
+                         f"self-consistent but permanently-unmatchable query, since real "
+                         f"telemetry never carries that event.dataset value")
+        self.assertEqual([], missing,
+                         "zeek Sigma rule(s) missing the event.dataset scoping clause — "
+                         "leading-wildcard/regex queries lose their performance narrowing and "
+                         "the cross-stream duplicate-alert risk (#291) reopens:\n" +
+                         "\n".join(missing))
+
+
+class CrossStreamEventDatasetLiveFireTests(LiveFireTestCase):
+    """#291's correctness half, proven end-to-end against a real
+    Elasticsearch: a rule scoped to one Zeek service (e.g. service: conn)
+    must NOT match a document from a DIFFERENT stream that happens to share
+    the same 4-tuple-derived fields (e.g. a coincidental ssl.log connection
+    on the same destination.port) — the exact shape a single physical
+    connection producing multiple per-protocol Zeek log records can hit,
+    since suburban-soc-ecs.yml's own documented INVARIANT pushes the
+    connection 4-tuple into every zeek/* transformation."""
+
+    def test_rdp_inbound_rule_ignores_cross_stream_document_with_same_port(self):
+        # code-reviewer follow-up: goes through translate_fixture()/
+        # load_pipeline_field_mapping() — the SAME real pipeline mapping
+        # table every other test in this file uses — instead of
+        # hand-writing ECS field names directly, matching this module's own
+        # stated design principle (module docstring: "using the SAME
+        # mapping table ... not a second, hand-maintained translation that
+        # could drift from it"). Raw Sigma field names (id.resp_p/proto/
+        # id.orig_h) come straight from the rule's own detection block.
+        rule_path = SIGMA_DIR / "net_zeek_conn_external_rdp_inbound.yml"
+        rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+        compiled = sigma_convert_one(rule_path)
+
+        raw_fixture = {"id.resp_p": 3389, "proto": "tcp", "id.orig_h": "8.8.8.8"}
+        conn_mapping = load_pipeline_field_mapping({"product": "zeek", "service": "conn"})
+        real_conn = translate_fixture(raw_fixture, conn_mapping, {"product": "zeek", "service": "conn"})
+        # Cross-stream doc: same raw 4-tuple-shaped fields, but stamped as a
+        # DIFFERENT stream (ssl, which shares the identical 4-tuple mapping
+        # per the INVARIANT documented above field-mapping-zeek-dns in
+        # suburban-soc-ecs.yml) — reusing conn_mapping for field translation
+        # is correct since field-mapping-zeek-conn and field-mapping-zeek-ssl
+        # both define id.resp_p/proto/id.orig_h identically (confirmed by
+        # reading suburban-soc-ecs.yml directly); only the logsource passed
+        # to translate_fixture (for the event.dataset stamp) differs.
+        cross_stream_ssl = translate_fixture(raw_fixture, conn_mapping, {"product": "zeek", "service": "ssl"})
+        self._index("real-conn", real_conn)
+        self._index("cross-stream-ssl", cross_stream_ssl)
+        self._refresh()
+
+        matched = self._matched_ids(compiled["query"])
+        self.assertIn("real-conn", matched,
+                      "net_zeek_conn_external_rdp_inbound.yml's compiled query did not match "
+                      "its own real conn.log-shaped document")
+        self.assertNotIn("cross-stream-ssl", matched,
+                         "net_zeek_conn_external_rdp_inbound.yml's compiled query matched a "
+                         "DIFFERENT stream's document sharing the same 4-tuple-derived fields — "
+                         "#291's cross-stream duplicate-alert risk has reopened")
 
 
 if __name__ == "__main__":

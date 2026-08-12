@@ -174,10 +174,24 @@ transformations:
   # field that never exists in the real data - the rule could not fire at
   # all, independent of and worse than the severity-tuning this issue was
   # actually about. mime_type is untouched by the pipeline and needs no
-  # mapping here.
+  # mapping here. Connection 4-tuple + proto/service added (#287 review,
+  # tests/pipeline/test_field_mapping_drift.py): this file's own INVARIANT
+  # comment below (field-mapping-zeek-dns) says every zeek/* transformation
+  # must carry these, since logstash.conf renames them unconditionally for
+  # every zeek_logs event regardless of stream — this transformation was
+  # the one exception, silently violating its own documented rule since
+  # #217. Harmless today only because no files-scoped rule currently scopes
+  # a detection by source/destination; the next one to do so would have
+  # been a silent no-op.
   - id: field-mapping-zeek-files
     type: field_name_mapping
     mapping:
+      id.orig_h: source.ip
+      id.resp_h: destination.ip
+      id.orig_p: source.port
+      id.resp_p: destination.port
+      proto: network.transport
+      service: network.protocol
       source: zeek.source
     rule_conditions:
       - type: logsource

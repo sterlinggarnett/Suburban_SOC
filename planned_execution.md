@@ -179,29 +179,81 @@ own gated unit, no unattended multi-issue runs.
   for untagged ones. Swept 5 docs that described the retired Watcher as
   live or claimed all 3 conditions dispatch.
 
-All 3 of M15's P1 issues (#263, #261, #267) are now complete. Checked the
+All 3 of M15's P1 issues (#263, #261, #267) are complete. Checked the
 GitHub milestone directly rather than assume that closed the milestone: it
-does not — 9 more issues are tagged to M15 (#328, #297, #295, #292, #291,
+does not — 9 more issues were tagged to M15 (#328, #297, #295, #292, #291,
 #290, #288, #287, #283), never individually triaged into this doc before
-now. All P2/P3, no P1 remaining:
+now. All P2/P3, no P1 remaining.
 
-- **P2**: #328 (Sysmon `mutate.rename` creates flat dotted-key fields, not
-  nested — the #263-era follow-up), #297 (`[winlog][event_id] == 4625`
-  integer-vs-string comparison may never match), #295 (`ScriptBlockText`
-  `ignore_above:8191` truncation — the pre-#263 issue #263 was itself a
-  follow-up of), #290 (ES template has no case-normalization for new
-  Zeek-derived fields), #287 (`logstash.conf`<->`suburban-soc-ecs.yml`
-  field-mapping drift has no automated check — recurred in #217/#232/#233/#228).
+- [x] **#328 (P2, bug) — COMPLETE, MERGED** — `configs/logstash.conf`'s
+  Sysmon `mutate.rename` block targeted bare dotted strings as rename
+  destinations (e.g. `"[winlog][event_data][CommandLine]" => "process.args"`),
+  which Logstash treats as a FLAT field literally named `"process.args"`
+  (dot as a literal character), not the nested `[process][args]`
+  structure — the same footgun this file already documented at its
+  network-rename block, just never applied to the Sysmon block. 9 fields
+  affected. Live-verified during #263's own review (2026-08-09):
+  `event.get("[process][args]")` returned nil for real Sysmon-sourced
+  events, silently dead-coding #252/#263's truncation-tagging filter for
+  `process.args`/`process.parent.args` — worked around at the time with a
+  flat-key fallback lookup; this issue tracked the actual root cause.
+  [PR #340](https://github.com/voltron-1/Suburban_SOC/pull/340) merged
+  2026-08-12 (squash, `f3a1f94`), auto-closing #328, 13/13 CI green
+  including `live-fire`. Converted all 9 rename targets to bracket
+  notation; removed the truncation filter's flat-key fallback as dead
+  code (confirmed via repo-wide grep nothing else produces/consumes the
+  flat shape); added a new regression test scanning **every**
+  `rename => {...}` block in the file, not just the two already found —
+  this exact bug shape has now occurred twice in this file, real risk of
+  a third. Live-verified via a spliced-pipeline replay against the real
+  `docker.elastic.co/logstash/logstash:9.3.2` image (byte-identical
+  excerpts, short + 40000-char synthetic values): all 9 fields land
+  correctly nested, zero flat dotted keys anywhere, truncation tagging
+  fires via direct bracket lookup with no fallback needed.
+  security-auditor (0 CRITICAL/HIGH) + code-reviewer (Approve, no
+  Must-Fix) ran in parallel; tester-debugger independently rebuilt the
+  splice from scratch and diffed it byte-identical, full PASS. One
+  MEDIUM fixed pre-merge: the new regression test missed a second bad
+  shape — a dot *inside* one bracket pair (`"[process.args]"`), the
+  identical bug via different syntax (this file already uses that exact
+  single-bracket-with-a-dot form deliberately elsewhere, but only as a
+  rename *source*, never a target). 103/103 relevant tests pass.
+  Follow-ups filed, deliberately out of scope:
+  [#336](https://github.com/voltron-1/Suburban_SOC/issues/336) (widen the
+  hygiene check to `copy`/`replace`/`update` blocks + a
+  logstash.conf<->ecs.yml mapping-equivalence test),
+  [#337](https://github.com/voltron-1/Suburban_SOC/issues/337) (the
+  truncation filter's single hardcoded ceiling can't model 6 of the 9
+  fields' actual lower `ignore_above` ceilings; `user.name` has none at
+  all — the one genuine immense-term exposure),
+  [#338](https://github.com/voltron-1/Suburban_SOC/issues/338) (ABAC
+  enrichment now runs on Sysmon events for the first time, but Sysmon's
+  `DOMAIN\user` format never matches the bare-username-keyed lookup CSV),
+  [#339](https://github.com/voltron-1/Suburban_SOC/issues/339)
+  (`file.hash.sha256` stores Sysmon's algorithm-prefixed string verbatim,
+  not a parsed hash — latent, no rule consumes it yet).
+
+8 issues remain in the M15 backlog, none P1:
+
+- **P2**: #297 (`[winlog][event_id] == 4625` integer-vs-string comparison
+  may never match), #295 (`ScriptBlockText` `ignore_above:8191`
+  truncation — the pre-#263 issue #263 was itself a follow-up of), #290
+  (ES template has no case-normalization for new Zeek-derived fields),
+  #287 (`logstash.conf`<->`suburban-soc-ecs.yml` field-mapping drift has
+  no automated check — recurred in #217/#232/#233/#228, and again as
+  #328's own root cause; #336 above is a narrower follow-up already
+  filed against this same gap).
 - **P3**: #292 (DNS TXT-based C2 download direction, no field mapping/rule),
   #291 (Zeek network Sigma rules compile to expensive leading-wildcard
   queries, no dataset prefilter), #288 (validate-certs SSL cert-chain
   validation has no capture-loss/resource guard), #283 (T1562.004 firewall-
   rule-added detection could use Security 4946).
 
-No P1 to auto-pick from this backlog — which of these 9 to prioritize next
+No P1 to auto-pick from this backlog — which of these 8 to prioritize next
 is a real call, not a mechanical one (different concern areas: pipeline
-robustness bugs like #328/#297, systemic gaps like #287's recurring
-field-mapping drift, new coverage like #292/#283, performance like #291).
+robustness bugs like #297, systemic gaps like #287's recurring
+field-mapping drift — now evidenced twice, new coverage like #292/#283,
+performance like #291).
 
 Next unstarted item: none auto-selected — see the M15 backlog above, or
 check the issue tracker for a new milestone.

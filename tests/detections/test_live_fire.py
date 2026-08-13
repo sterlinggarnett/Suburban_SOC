@@ -413,11 +413,17 @@ class FieldCaseNormalizationLiveFireTests(LiveFireTestCase):
     def test_dns_query_matches_regardless_of_case(self):
         rule_path = SIGMA_DIR / "net_zeek_dns_crypto_mining_pool.yml"
         rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
-        mapping = load_pipeline_field_mapping(rule.get("logsource", {}))
+        logsource = rule.get("logsource", {})
+        mapping = load_pipeline_field_mapping(logsource)
         compiled = sigma_convert_one(rule_path)
 
         mixed_case = {"query": "Worker1.Pool.MineXMR.COM"}
-        self._index("tp-mixedcase", translate_fixture(mixed_case, mapping))
+        # #291 merge follow-up: this rule's compiled query now requires an
+        # event.dataset:zeek.dns AND-clause (add-condition-zeek-event-dataset)
+        # — pass logsource so translate_fixture stamps it, or this indexed
+        # doc never matches regardless of the case-normalization fix under
+        # test here.
+        self._index("tp-mixedcase", translate_fixture(mixed_case, mapping, logsource))
         self._refresh()
 
         matched = self._matched_ids(compiled["query"])
@@ -429,11 +435,15 @@ class FieldCaseNormalizationLiveFireTests(LiveFireTestCase):
     def test_http_uri_matches_regardless_of_case(self):
         rule_path = SIGMA_DIR / "net_zeek_http_cobalt_strike_beacon.yml"
         rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
-        mapping = load_pipeline_field_mapping(rule.get("logsource", {}))
+        logsource = rule.get("logsource", {})
+        mapping = load_pipeline_field_mapping(logsource)
         compiled = sigma_convert_one(rule_path)
 
         mixed_case = {"method": "GET", "uri": "/Pixel.GIF"}
-        self._index("tp-mixedcase", translate_fixture(mixed_case, mapping))
+        # #291 merge follow-up: see test_dns_query_matches_regardless_of_case
+        # above — this rule's compiled query now requires
+        # event.dataset:zeek.http too.
+        self._index("tp-mixedcase", translate_fixture(mixed_case, mapping, logsource))
         self._refresh()
 
         matched = self._matched_ids(compiled["query"])
@@ -465,11 +475,15 @@ class FieldCaseNormalizationLiveFireTests(LiveFireTestCase):
         # connection.yml), both using a case-sensitive contains modifier.
         rule_path = SIGMA_DIR / "net_zeek_ssl_self_signed_c2.yml"
         rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
-        mapping = load_pipeline_field_mapping(rule.get("logsource", {}))
+        logsource = rule.get("logsource", {})
+        mapping = load_pipeline_field_mapping(logsource)
         compiled = sigma_convert_one(rule_path)
 
         mixed_case = {"validation_status": "Self Signed Certificate In Certificate Chain"}
-        self._index("tp-mixedcase", translate_fixture(mixed_case, mapping))
+        # #291 merge follow-up: see test_dns_query_matches_regardless_of_case
+        # above — this rule's compiled query now requires
+        # event.dataset:zeek.ssl too.
+        self._index("tp-mixedcase", translate_fixture(mixed_case, mapping, logsource))
         self._refresh()
 
         matched = self._matched_ids(compiled["query"])

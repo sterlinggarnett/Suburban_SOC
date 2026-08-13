@@ -774,7 +774,6 @@ class CrossStreamEventDatasetLiveFireTests(LiveFireTestCase):
         # could drift from it"). Raw Sigma field names (id.resp_p/proto/
         # id.orig_h) come straight from the rule's own detection block.
         rule_path = SIGMA_DIR / "net_zeek_conn_external_rdp_inbound.yml"
-        rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
         compiled = sigma_convert_one(rule_path)
 
         raw_fixture = {"id.resp_p": 3389, "proto": "tcp", "id.orig_h": "8.8.8.8"}

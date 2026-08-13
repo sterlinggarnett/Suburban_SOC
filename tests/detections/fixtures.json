@@ -1350,6 +1350,30 @@
       }
     ]
   },
+  "net_zeek_dns_txt_answer_abuse.yml": {
+    "true_positive": {
+      "qtype_name": "TXT",
+      "query": "1a2b3c.c2.example.com",
+      "answers": "dGhpcyBpcyBhIHNpbXVsYXRlZCBlbmNvZGVkIEMyIHBheWxvYWQgY2h1bmsgMTIzNDU="
+    },
+    "true_negatives": [
+      {
+        "qtype_name": "TXT",
+        "query": "example.com",
+        "answers": "v=spf1 include:_spf.example.com ~all"
+      },
+      {
+        "qtype_name": "A",
+        "query": "1a2b3c.c2.example.com",
+        "answers": "dGhpcyBpcyBhIHNpbXVsYXRlZCBlbmNvZGVkIEMyIHBheWxvYWQgY2h1bmsgMTIzNDU="
+      },
+      {
+        "qtype_name": "TXT",
+        "query": "example.com",
+        "answers": "v=spf1 include:_spf.google.com include:mailgun.org ip4:203.0.113.0/24 -all"
+      }
+    ]
+  },
   "net_zeek_dns_dga_nxdomain_burst.yml": {
     "true_positive": {
       "rcode_name": "NXDOMAIN",

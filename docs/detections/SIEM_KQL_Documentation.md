@@ -5,7 +5,7 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**105 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**106 rules.** Each query is the exact Lucene the Sigma rule compiles to.
 
 ## SSH Login Attempt for a Nonexistent User
 
@@ -237,6 +237,14 @@ event.dataset:zeek.dns AND (dns.question.name:(*cloudflare\-dns.com OR *dns.goog
 
 ```
 event.dataset:zeek.dns AND dns.question.name:/.*[a-zA-Z0-9]{50,}\..*/
+```
+
+## TXT Record Answer with Encoded-Looking Payload (Possible C2 Download Direction)
+
+- **Rule:** `net_zeek_dns_txt_answer_abuse.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1071.004
+
+```
+event.dataset:zeek.dns AND (dns.question.type:TXT AND dns.answers:/.*[a-zA-Z0-9+\/=]{40,}.*/)
 ```
 
 ## TXT Record Query with Encoded-Looking Payload (Possible C2/Exfil Channel)

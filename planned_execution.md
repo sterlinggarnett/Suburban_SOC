@@ -233,30 +233,145 @@ now. All P2/P3, no P1 remaining.
   (`file.hash.sha256` stores Sysmon's algorithm-prefixed string verbatim,
   not a parsed hash — latent, no rule consumes it yet).
 
-8 issues remain in the M15 backlog, none P1:
+- [x] **#297 (P2, bug) — COMPLETE, MERGED** — `configs/logstash.conf`'s
+  Security-channel block compared `[winlog][event_id] == 4625/4624`
+  against BARE INTEGER literals. Winlogbeat's own ECS mapping types
+  `winlog.event_id` as `keyword` (a string), so the comparison silently
+  never matched — `[event][outcome]` never got stamped for any real
+  Windows login event. [PR #343](https://github.com/voltron-1/Suburban_SOC/pull/343)
+  merged 2026-08-12 (squash, `5ccc0d1`), auto-closing #297, 17/17 CI
+  green. Live-verified against the real `logstash:9.3.2` binary:
+  pre-fix, a synthetic `"4625"` string event produced no
+  `[event][outcome]`; post-fix, `"4625"` -> failure, `"4624"` -> success,
+  a negative-control event id -> no outcome field. Also switched
+  `add_field` -> `replace` (matches this field's own established
+  convention 60 lines below) and added two regression tests pinning the
+  exact quoted comparison set and the correct id->outcome mapping (the
+  first test alone would not have caught a transposed 4625/4624 mapping —
+  security-auditor finding). security-auditor + code-reviewer ran in
+  parallel, both converged independently on the same regex-robustness
+  gap (compound conditions); tester-debugger independently rebuilt the
+  splice tests from scratch. 468/468 relevant tests passed.
+- [x] **#295 (P2, bug) — CLOSED, already resolved** — both of this
+  issue's own suggested fixes (raise `ScriptBlockText`'s `ignore_above`
+  toward the real PowerShell 4104 chunk size; add a truncation-visibility
+  monitor) turned out to already be shipped, via #263
+  ([PR #329](https://github.com/voltron-1/Suburban_SOC/pull/329),
+  `ignore_above:32766`, Lucene's own byte ceiling) and #252
+  ([PR #327](https://github.com/voltron-1/Suburban_SOC/pull/327),
+  `pipeline.truncated`/`pipeline.byte_clamped` tagging +
+  `metric_field_truncation_count()`) — issues filed and merged after
+  #295 but before it was individually triaged into this doc. Verified
+  directly against current `main` (not just the PR descriptions) before
+  closing: both the template ceiling and the tagging/metric are live in
+  the current codebase. Closed 2026-08-12 with evidence, no new PR.
+- [x] **#290 (P2, bug) — COMPLETE, MERGED** — 5 Zeek-derived ECS fields
+  #228 introduced never got `long_command_fields`'s `lowercase_normalizer`
+  treatment, falling through to case-sensitive `strings_as_keyword`.
+  Investigated all 5: 4 are genuinely live (`dns.question.name`,
+  `url.path`, `tls.validation_status`, plus `tls.client.server_name`,
+  found via security-auditor review, not originally named in the issue)
+  with real Sigma-rule consumers; `user_agent.original` has NO producer
+  anywhere in the pipeline, excluded as speculative.
+  [PR #346](https://github.com/voltron-1/Suburban_SOC/pull/346) merged
+  2026-08-12 (squash, `3472729`), auto-closing #290, 17/17 CI green.
+  Live-verified against a real `elasticsearch:9.3.2` instance, before and
+  after, including the "evidence looks present, detection is dead"
+  failure mode. security-auditor found a real HIGH during review: raising
+  `url.path` to `ignore_above:32766` without adding it to the #263
+  byte-clamp `long_fields` hash reintroduced the Lucene immense-term
+  whole-document-rejection bug on an attacker-controlled field —
+  live-reproduced the crash, fixed it, added a self-enforcing CI test
+  deriving the clamp requirement from the template itself. A SECOND,
+  separate production-breaking bug was hit live while writing that fix's
+  own comment: an apostrophe inside a multi-line ruby `code => '...'`
+  block closes Logstash's string literal early and breaks the whole
+  pipeline config at startup — fixed, plus a permanent CI guard against
+  the whole class. This PR needed a merge-conflict resolution round after
+  #297 merged first — see the 2026-08-12 (later) LAST SESSION entry for
+  that story, including a real `pysigma`/`pysigma-backend-elasticsearch`
+  toolchain-version-drift CI failure it surfaced (commented on
+  [#330](https://github.com/voltron-1/Suburban_SOC/issues/330) with the
+  concrete version numbers).
+  Follow-ups filed: [#341](https://github.com/voltron-1/Suburban_SOC/issues/341)
+  (Endpoint dashboard `.keyword`-on-bare-keyword mapping gap, third
+  recurrence of this shape), [#342](https://github.com/voltron-1/Suburban_SOC/issues/342)
+  (Windows Security block has no IpAddress/TargetUserName ECS rename),
+  [#344](https://github.com/voltron-1/Suburban_SOC/issues/344)
+  (`long_command_fields` dynamic_template byte-clamp blind spot),
+  [#345](https://github.com/voltron-1/Suburban_SOC/issues/345) (automate
+  the data-stream rollover step in `apply-templates.sh`).
+- [x] **#287 (P2, bug) — COMPLETE, MERGED** — 4 consecutive
+  detection-expansion batches (#217, #232, #233/#234, #228) independently
+  hit the same bug: a Sigma rule selects a raw Zeek field name that
+  `logstash.conf`'s ingest-time renames either never produce or produce
+  under a different ECS target, compiling fine and passing its fixture
+  test while being a silent no-op in production. New
+  `tests/pipeline/test_field_mapping_drift.py` parses both files' real
+  content (brace-depth-counting for `logstash.conf`'s Category 0 block,
+  plus `filebeat.yml`'s own input-processor rename) and cross-references
+  every `product: zeek` mapping's raw_field -> target pair against what
+  the pipeline actually does.
+  [PR #348](https://github.com/voltron-1/Suburban_SOC/pull/348) merged
+  2026-08-12 (squash, `2013956`), auto-closing #287, 17/17 CI green.
+  security-auditor found the drift checker had its own version of the
+  drift bug it exists to catch (a compound conditional defeated the
+  scope-detection regex — code-reviewer independently found the identical
+  bug), plus 6 more MEDIUM findings, all fixed — including one real,
+  currently-existing gap the new checker surfaced and this PR fixed in
+  the same commit: `field-mapping-zeek-files` was silently missing the
+  connection 4-tuple its own file's documented invariant requires, since
+  #217. 17 tests total (up from an initial 3), each mutation-tested to
+  confirm it fails on the bug shape it exists to catch. Follow-up filed:
+  [#347](https://github.com/voltron-1/Suburban_SOC/issues/347) (extend
+  to the Sysmon process_creation/file_event renames).
+- [x] **#291 (P3, performance/correctness) — COMPLETE, MERGED** — several
+  zeek/* Sigma rules compiled to leading-wildcard/regex queries with no
+  ES seek optimization; separately, no rule had anything in its compiled
+  query confirming a match came from its own logsource's Zeek stream
+  rather than a sibling stream sharing the same connection 4-tuple (a
+  single physical connection can produce multiple Zeek log records for
+  the same 4-tuple, so an under-qualified rule could double-alert on one
+  real event). Added one generic pySigma `add_condition` transformation
+  (`template: true` + `$service`) covering all 7 zeek services, injecting
+  `event.dataset:zeek.<service>`.
+  [PR #350](https://github.com/voltron-1/Suburban_SOC/pull/350) merged
+  2026-08-13 (squash, `c4c6abe`), auto-closing #291, 17/17 CI green.
+  security-auditor found 3 real HIGH issues: (1) `zeek_run_pcap.sh`'s
+  offline-PCAP-replay workflow named logs so Category 0's grok captured
+  the whole underscore-joined stem as the stream name — harmless before
+  this fix, would have silently blinded every zeek rule against replay
+  data with this fix; root-caused and fixed (bonus: also fixed a second,
+  independent mis-scoping the old naming caused in `filebeat.yml`'s
+  host-header rename). (2) `SIEM_KQL_Documentation.md` was stale,
+  blocking the required `detections` CI gate — regenerated (twice: the
+  first regeneration used a stale local `pipx` toolchain instead of
+  matching CI's unpinned always-latest install, itself a live instance of
+  the #330 drift class, caught and corrected). (3) A missing
+  `logsource.service` on a future zeek rule would silently compile to
+  `event.dataset:zeek.None` — turned into a loud, CI-gated failure wired
+  into a new required `detections` job step, plus a second guard against
+  a *present but wrong* service value (a typo). Merging main into this
+  branch (after #290/#287 merged) surfaced one more real regression: 3 of
+  #290's own live-fire test methods called `translate_fixture()` directly
+  without the new required `logsource` stamp, which would have silently
+  broken them — found and fixed live against a real cluster before
+  pushing. Follow-up filed: [#349](https://github.com/voltron-1/Suburban_SOC/issues/349)
+  (no monitoring on `_zeek_path_nomatch` — a pre-existing gap this fix
+  makes consequential).
 
-- **P2**: #297 (`[winlog][event_id] == 4625` integer-vs-string comparison
-  may never match), #295 (`ScriptBlockText` `ignore_above:8191`
-  truncation — the pre-#263 issue #263 was itself a follow-up of), #290
-  (ES template has no case-normalization for new Zeek-derived fields),
-  #287 (`logstash.conf`<->`suburban-soc-ecs.yml` field-mapping drift has
-  no automated check — recurred in #217/#232/#233/#228, and again as
-  #328's own root cause; #336 above is a narrower follow-up already
-  filed against this same gap).
-- **P3**: #292 (DNS TXT-based C2 download direction, no field mapping/rule),
-  #291 (Zeek network Sigma rules compile to expensive leading-wildcard
-  queries, no dataset prefilter), #288 (validate-certs SSL cert-chain
-  validation has no capture-loss/resource guard), #283 (T1562.004 firewall-
-  rule-added detection could use Security 4946).
+3 issues remain in the M15 backlog, all P3:
 
-No P1 to auto-pick from this backlog — which of these 8 to prioritize next
-is a real call, not a mechanical one (different concern areas: pipeline
-robustness bugs like #297, systemic gaps like #287's recurring
-field-mapping drift — now evidenced twice, new coverage like #292/#283,
-performance like #291).
+- #292 (DNS TXT-based C2 download direction, no field mapping/rule),
+  #288 (validate-certs SSL cert-chain validation has no capture-loss/
+  resource guard), #283 (T1562.004 firewall-rule-added detection could
+  use Security 4946 — explicitly blocked on real Windows telemetry
+  verification this environment can't provide).
 
-Next unstarted item: none auto-selected — see the M15 backlog above, or
-check the issue tracker for a new milestone.
+Next unstarted item: none auto-selected — #292 and #288 are both real,
+scoped, achievable next picks; #283 is blocked on real-telemetry
+verification unavailable in this environment. Check the issue tracker for
+a new milestone once these 3 close.
 
 ---
 
@@ -1431,6 +1546,50 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-12 (later)
+
+- **5 more M15 issues closed (#297, #295, #290, #287, #291) — M15's P2
+  tier complete, only P3 (#292, #288, #283) remains.** Full detail on each
+  in NEXT UP above. Highlights: #295 turned out already resolved by
+  earlier PRs, closed with evidence rather than re-implemented. #290 and
+  #287's security-auditor reviews each caught a real HIGH the fix itself
+  hadn't anticipated — #290's review found the fix's own byte-clamp gap
+  would have reintroduced a Lucene immense-term whole-document-rejection
+  bug on an attacker-controlled field, PLUS a separate apostrophe-inside-
+  a-Logstash-string bug that breaks the entire pipeline config at
+  startup; #287's new drift-checker had its own version of the exact
+  drift bug it was built to catch (found independently by both
+  security-auditor and code-reviewer), and surfaced a real, currently-
+  existing config gap (`field-mapping-zeek-files` missing its 4-tuple
+  since #217) that got fixed in the same PR. #291's review found 3 real
+  HIGH issues, the standout being a genuine regression to the offline-
+  PCAP-replay operational SOP that this fix's own change would have
+  silently caused — root-caused and fixed, with a bonus fix to a second,
+  independent bug the same root cause had been quietly triggering since
+  #228.
+  PR #346 (#290) needed a real merge-conflict resolution after #297
+  merged first — mid-resolution, a `git stash` during the unresolved
+  merge lost git's `MERGE_HEAD` state; caught immediately via `git
+  status`, recovered by resetting and redoing the merge properly rather
+  than committing a same-content-but-wrong-ancestry commit. That merge
+  also surfaced a REAL, already-broken CI gate on `main` itself
+  (`SIEM_KQL_Documentation.md` stale) — and the first fix attempt used
+  the wrong local `sigma` toolchain (a stale `pipx` install shadowing the
+  intended `.venv-detections` one on `PATH`), a live instance of the
+  exact drift class issue #330 already tracks; diagnosed via concrete
+  package-version comparison and commented on #330 with the specifics.
+  PR #350 (#291) hit the same class of gap again on its own merge (3 of
+  #290's live-fire tests needed the same `logsource` fix #291's own
+  earlier work had already applied to 2 other call sites, but couldn't
+  have covered since #290's tests didn't exist on that branch yet) —
+  found and fixed live before pushing, not left for CI to catch. All 4
+  PRs (#343, #346, #348, #350) merged squash, no GitHub-side human
+  review — explicit review-bypass confirmed by the repo owner per-PR,
+  each green on all required CI immediately before its own merge.
+  6 follow-up issues filed across the 4 fixes (#341, #342, #344, #345 from
+  #290; #347 from #287; #349 from #291): all deliberately out of scope,
+  not blocking.
 
 ## LAST SESSION — 2026-08-12
 

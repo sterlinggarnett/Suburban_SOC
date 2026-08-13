@@ -360,18 +360,50 @@ now. All P2/P3, no P1 remaining.
   (no monitoring on `_zeek_path_nomatch` — a pre-existing gap this fix
   makes consequential).
 
-3 issues remain in the M15 backlog, all P3:
+- [x] **#292 (P3, detection gap) — COMPLETE, MERGED** — Zeek `dns.log`'s
+  `answers` field was never mapped to ECS, so TXT-based DNS C2's download
+  direction (payload in the answer, short/unremarkable query name —
+  Cobalt Strike's DNS-TXT channel, Empire, Merlin) was structurally
+  undetectable; the pre-existing `net_zeek_dns_txt_record_abuse.yml` only
+  ever selects on the query label (upload direction).
+  [PR #353](https://github.com/voltron-1/Suburban_SOC/pull/353) merged
+  2026-08-13 (squash, `2563d22`), auto-closing #292, 17/17 CI green.
+  Added the `answers` -> `dns.answers` rename (both `logstash.conf`
+  branches + `suburban-soc-ecs.yml`) and a new companion rule,
+  `net_zeek_dns_txt_answer_abuse.yml` (`qtype_name:TXT` + a base64-charset
+  length-as-entropy-proxy regex on `answers`). security-auditor found a
+  real gap in the fix's own first pass: `dns.answers` had no explicit
+  `ignore_above`, falling to the default 1024-char ceiling — unlike
+  `dns.question.name`, a Zeek TXT answer has no protocol-level length
+  bound, so that default was a live, silent evasion path for the exact
+  rule this fix exists to build. Fixed with an explicit
+  `ignore_above:8191` template property, live-proven to fail pre-fix and
+  pass post-fix against a real Elasticsearch 9.3.2 index. Two rounds of
+  parallel security-auditor + code-reviewer review; a follow-up
+  verification round on the fixes themselves caught two inaccuracies my
+  own comment fixes had introduced (corrected before merge). One finding
+  — the unauthenticated `:5514` HTTP input can forge or suppress Zeek
+  Sigma detections by spoofing `log.file.path` — was filed as a private
+  draft Security Advisory (`GHSA-qq8v-48c2-j5xx`) rather than a public
+  issue, since it's a live, unpatched gap in a public repo. Follow-ups
+  filed: [#351](https://github.com/voltron-1/Suburban_SOC/issues/351)
+  (`sigma_eval.py` has no array-value semantics — first multi-valued
+  field in the rule corpus), [#352](https://github.com/voltron-1/Suburban_SOC/issues/352)
+  (no visibility when a `dns.answers` element exceeds the new 8191
+  ceiling — residual, non-urgent); cross-referenced already-filed
+  [#345](https://github.com/voltron-1/Suburban_SOC/issues/345) (this fix
+  is also blocked on that same rollover-automation gap operationally).
 
-- #292 (DNS TXT-based C2 download direction, no field mapping/rule),
-  #288 (validate-certs SSL cert-chain validation has no capture-loss/
+2 issues remain in the M15 backlog, both P3:
+
+- #288 (validate-certs SSL cert-chain validation has no capture-loss/
   resource guard), #283 (T1562.004 firewall-rule-added detection could
   use Security 4946 — explicitly blocked on real Windows telemetry
   verification this environment can't provide).
 
-Next unstarted item: none auto-selected — #292 and #288 are both real,
-scoped, achievable next picks; #283 is blocked on real-telemetry
-verification unavailable in this environment. Check the issue tracker for
-a new milestone once these 3 close.
+Next unstarted item: #288 — the only remaining unblocked pick; #283 stays
+blocked on real-telemetry verification unavailable in this environment.
+Check the issue tracker for a new milestone once these 2 close.
 
 ---
 
@@ -1546,6 +1578,35 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-13
+
+- **#292 closed — DNS TXT-based C2 download direction now has field
+  mapping and rule coverage.** Full detail in NEXT UP above.
+  [PR #353](https://github.com/voltron-1/Suburban_SOC/pull/353) merged
+  squash (`2563d22`), 17/17 CI green. security-auditor's review caught a
+  real gap the fix's own first pass introduced (the new `dns.answers`
+  field defaulting to a 1024-char ignore_above ceiling — a live, silent
+  evasion path since, unlike the query-label field, a TXT answer has no
+  protocol-level length bound); fixed with an explicit `ignore_above:8191`
+  property, live-proven to fail pre-fix/pass post-fix against a real
+  Elasticsearch index. A second follow-up verification round (confirming
+  the fixes actually closed what the first review found) caught two
+  inaccuracies introduced by the fix's OWN corrective comments — worth
+  noting as a pattern: fixing a reviewer finding can introduce a fresh
+  one, so a fix-then-reverify loop matters even on the second pass, not
+  just the first. One finding didn't get a public GitHub issue: the
+  unauthenticated `:5514` HTTP input can forge or suppress Zeek Sigma
+  detections by spoofing `log.file.path` — filed as a private draft
+  Security Advisory (`GHSA-qq8v-48c2-j5xx`) instead, since this repo is
+  public and the gap is live/unpatched. 2 new follow-ups filed (#351,
+  #352); cross-referenced against already-filed #345 rather than
+  duplicating it.
+  Also swept the repo for local branches with commits not yet on GitHub —
+  found 9 stale branches that looked unpushed but were already
+  squash-merged (different local SHAs than what landed on main, confirmed
+  via `gh pr list --head <branch> --state all` against each), cleaned up;
+  #292's branch was the only one with genuine unpushed work.
 
 ## LAST SESSION — 2026-08-12 (later)
 

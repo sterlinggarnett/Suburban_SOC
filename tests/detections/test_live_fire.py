@@ -386,6 +386,48 @@ class NetworkLiveFireTests(LiveFireTestCase):
         # of that same assumption.
         self.assert_rule_fires_correctly("net_zeek_dns_dga_nxdomain_burst.yml")
 
+    def test_zeek_dns_txt_answer_abuse_fires_against_real_es(self):
+        # #292: field-mapping-zeek-dns's new answers -> dns.answers rename
+        # had never been proven against a real pipeline/index before this —
+        # confirms both the rename itself and that the `re` modifier's
+        # base64-charset pattern (+/=, unlike the query-side rules' plain
+        # alphanumeric class) compiles and matches as a real Lucene regexp
+        # query, not just sigma_eval.py's Python re.fullmatch. A scalar
+        # fixture value is realistic here, not a simplification: Zeek's
+        # `answers` is a JSON array in production, but Elasticsearch has no
+        # distinct array type — a 1-element array and a bare scalar index
+        # identically, so this exercises the same term the real regexp
+        # query would see either way.
+        self.assert_rule_fires_correctly("net_zeek_dns_txt_answer_abuse.yml")
+
+    def test_dns_answers_over_old_default_ceiling_not_dropped(self):
+        # security-auditor follow-up: dns.answers had no explicit ignore_above
+        # before #292's fix, falling to strings_as_keyword's default 1024 —
+        # unlike dns.question.name (protocol-capped at 253 bytes, can never
+        # reach even the OLD 1024 default), a Zeek dns.log answers element has
+        # no such bound, so this ceiling gap was a real, silent evasion path
+        # for the exact rule #292 exists to build: over 1024 chars, the value
+        # is accepted by Elasticsearch but never indexed, so the compiled
+        # query can never find it — no error, no pipeline.truncated tag,
+        # nothing. 2100 chars is comfortably over the old 1024 default and
+        # under the new 8191 ceiling this fix raised it to.
+        rule_path = SIGMA_DIR / "net_zeek_dns_txt_answer_abuse.yml"
+        rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+        logsource = rule.get("logsource", {})
+        mapping = load_pipeline_field_mapping(logsource)
+        compiled = sigma_convert_one(rule_path)
+
+        long_answer = "aB3" * 700  # 2100 chars, all in the rule's own charset
+        fixture = {"qtype_name": "TXT", "query": "1a2b3c.c2.example.com", "answers": long_answer}
+        self._index("long-answer", translate_fixture(fixture, mapping, logsource))
+        self._refresh()
+
+        matched = self._matched_ids(compiled["query"])
+        self.assertIn("long-answer", matched,
+                      "a dns.answers value over the old ignore_above:1024 default was not "
+                      "indexed — #292's ignore_above:8191 fix is not actually applied "
+                      "against a real index")
+
 
 class FieldCaseNormalizationLiveFireTests(LiveFireTestCase):
     """#290: dns.question.name/url.path/tls.validation_status/zeek.http.host
@@ -729,7 +771,7 @@ class ZeekEventDatasetScopingTests(unittest.TestCase):
             # (`NOT event.dataset:...`), neither of which actually scopes
             # anything. No trailing "(" required: the backend only
             # parenthesizes the rest of the query when it's itself a
-            # compound expression — confirmed against all 18 real compiled
+            # compound expression — confirmed against all 19 real compiled
             # queries, 3 of which (single-clause rules, e.g.
             # net_zeek_smtp_mass_outbound.yml's bare trans_depth:>20) have
             # no trailing paren at all.

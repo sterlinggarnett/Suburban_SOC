@@ -255,6 +255,11 @@ transformations:
       # deviates from the real ECS field name (recorded here so a future
       # ECS/Security-Onion migration doesn't silently break this instead).
       rcode_name: dns.response_code
+      # #292: TXT-record C2 download direction (payload in the answer, not
+      # the query label) — dns.answers is a flat string array, not ECS's
+      # canonical dns.answers.data/type/ttl object; see the matching
+      # comment on configs/logstash.conf's Category 0 rename for why.
+      answers: dns.answers
     rule_conditions:
       - type: logsource
         product: zeek
@@ -384,7 +389,7 @@ transformations:
   # at conversion time (verified: dns rules get zeek.dns, conn rules get
   # zeek.conn, etc. — one generic transformation
   # instead of a 7-way copy-paste of field-mapping-zeek-*'s per-service
-  # pattern, live-verified via `sigma convert` against all 18 real zeek
+  # pattern, live-verified via `sigma convert` against all 19 real zeek
   # rules in the corpus). event.dataset is the correct target field name
   # directly (no further field_name_mapping needed) — configs/logstash.conf's
   # Category 0 stamps it from the real source log filename

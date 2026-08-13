@@ -1,0 +1,42 @@
+title: TXT Record Answer with Encoded-Looking Payload (Possible C2 Download Direction)
+id: 51338966-e943-4a03-b2c9-30f2ecac3ddd
+status: experimental
+description: |
+    Detects a TXT-record DNS answer containing a long run of base64-charset
+    characters — the download half of TXT-based DNS C2 (Cobalt Strike's
+    DNS-TXT channel, Empire, Merlin), where payload rides in the answer with
+    a short, unremarkable query name (e.g. `1a2b3c.c2.example.com`). The
+    sibling net_zeek_dns_txt_record_abuse detects the upload direction (long
+    encoded QUERY label) and is structurally unable to catch this: its only
+    content selector is the query name, and the download direction's query
+    name can be short and unremarkable, so only the answer content carries
+    the signal here. #292.
+    Same length-as-entropy-proxy approach as the query-side rules (Sigma has
+    no native entropy function). The character class includes +/= alongside
+    alphanumerics, unlike the query-side rules, because DNS labels can't
+    carry +/= but a TXT answer's raw string content is not label-constrained
+    — real TXT-C2 payload chunks are typically base64, which uses that
+    charset.
+references:
+    - https://attack.mitre.org/techniques/T1071/004/
+author: Suburban-SOC
+date: 2026-08-12
+tags:
+    - attack.command_and_control
+    - attack.t1071.004
+logsource:
+    product: zeek
+    service: dns
+detection:
+    selection:
+        qtype_name: 'TXT'
+        answers|re: '.*[a-zA-Z0-9+/=]{40,}.*'
+    condition: selection
+falsepositives:
+    - DKIM public-key TXT records return a long base64 `p=...` value as the
+      answer itself — a stronger false-positive source here than on the
+      query-side sibling rule, since the DKIM key IS the long base64 blob,
+      not just a long selector label.
+    - SPF/DMARC includes and domain-verification tokens returned as TXT
+      answer content.
+level: medium

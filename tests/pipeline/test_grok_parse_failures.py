@@ -22,6 +22,12 @@ Run:  python tests/pipeline/test_grok_parse_failures.py  (or: pytest tests/pipel
 import json
 import re
 import unittest
+from pathlib import Path
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+FILEBEAT_YML_PATH = ROOT / "configs" / "network" / "filebeat.yml"
 
 # Direct translation of configs/logstash.conf's sshd grok pattern:
 #   ^%{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:[host][name]} sshd\[%{POSINT:[process][pid]}\]:
@@ -68,6 +74,32 @@ def zeek_json_parse(line: str):
         return "match"
     except (json.JSONDecodeError, ValueError):
         return "jsonparsefailure"
+
+
+# Direct translation of configs/logstash.conf's Category 0 zeek_stream grok:
+#   match => { "[log][file][path]" => "/(?<zeek_stream>[a-z0-9_]+)\.log$" }
+# #291 security-auditor review: this pattern's [a-z0-9_]+ character class
+# includes underscore, so it captures the ENTIRE filename stem before
+# ".log" — for scripts/setup/zeek_run_pcap.sh's OLD "${base}_${pcap_name}.log"
+# naming (e.g. "conn_http.log"), that meant event.dataset became
+# "zeek.conn_http", not "zeek.conn". Harmless before #291 (no Sigma rule
+# checked event.dataset at all); with #291's new event.dataset:zeek.<service>
+# scoping condition, that would have silently blinded every zeek-sourced
+# rule against offline PCAP-replay data. Fixed by moving PCAP-replay logs
+# into a per-pcap subdirectory with bare filenames instead of a suffixed
+# flat filename — this pattern itself needed no change, since it already
+# resolves correctly against ANY path ending in bare "<stream>.log",
+# subdirectory or not (grok matches the rightmost segment before the
+# anchored "\.log$", regardless of how many "/" precede it).
+ZEEK_STREAM_PATTERN = re.compile(r"/(?P<zeek_stream>[a-z0-9_]+)\.log$")
+
+
+def zeek_stream_from_path(log_path: str):
+    """Mirrors the pipeline's zeek_stream grok extraction. Returns the
+    captured stream name, or None if the path doesn't match at all
+    (configs/logstash.conf tags _zeek_path_nomatch in that case)."""
+    m = ZEEK_STREAM_PATTERN.search(log_path)
+    return m.group("zeek_stream") if m else None
 
 
 class SshdGrokTests(unittest.TestCase):
@@ -163,6 +195,61 @@ class ZeekJsonTests(unittest.TestCase):
     def test_non_json_garbage_line(self):
         line = "this is not json at all {{{"
         self.assertEqual(zeek_json_parse(line), "jsonparsefailure")
+
+
+class ZeekStreamGrokTests(unittest.TestCase):
+    def test_live_capture_flat_path_resolves_bare_stream(self):
+        # zeek-host-capture.service / stream_capture.sh write flat files
+        # directly into zeek_logs/ — the pre-existing, still-correct shape.
+        self.assertEqual(zeek_stream_from_path("/storage/PCAP/zeek_logs/conn.log"), "conn")
+
+    def test_pcap_replay_subdirectory_path_resolves_bare_stream(self):
+        # #291: the FIXED zeek_run_pcap.sh shape — bare filename inside a
+        # per-pcap subdirectory. Must resolve to "conn", not "http_pcap01"
+        # or "http_pcap01/conn" — this is the live regression test for the
+        # fix, not just a description of the old bug.
+        self.assertEqual(
+            zeek_stream_from_path("/storage/PCAP/zeek_logs/http_pcap01/conn.log"), "conn")
+
+    def test_pre_fix_suffixed_flat_path_was_the_bug(self):
+        # Documents the OLD zeek_run_pcap.sh shape this fix moved away
+        # from: "${base}_${pcap_name}.log" captures the underscore-joined
+        # stem whole, not just the stream — event.dataset became
+        # "zeek.conn_http" instead of "zeek.conn", which #291's new
+        # event.dataset:zeek.<service> scoping condition would never match.
+        # Not asserting a "fix" here (the grok pattern itself is unchanged
+        # and correctly resolves whatever path it's given) — asserting the
+        # OLD PATH SHAPE really did produce the wrong value, confirming the
+        # bug was real and the script change (not this pattern) is what
+        # closed it.
+        self.assertEqual(
+            zeek_stream_from_path("/storage/PCAP/zeek_logs/conn_http_pcap01.log"),
+            "conn_http_pcap01")
+
+    def test_uppercase_or_hyphenated_filename_tags_nomatch(self):
+        self.assertIsNone(zeek_stream_from_path("/storage/PCAP/zeek_logs/Conn-Weird.log"))
+
+
+class FilebeatZeekPathGlobsTests(unittest.TestCase):
+    """security-auditor follow-up (#291): the grok half of the PCAP-replay
+    fix (ZeekStreamGrokTests above) had a test; the shipper half
+    (configs/network/filebeat.yml actually WATCHING the per-pcap
+    subdirectory scripts/setup/zeek_run_pcap.sh now writes into) did not.
+    Dropping filebeat.yml's second glob in a future config cleanup would
+    restore the exact #291 blindness against replay data with
+    ZeekStreamGrokTests still fully green, since that class never touches
+    this file."""
+
+    def test_both_zeek_log_path_globs_present(self):
+        fb = yaml.safe_load(FILEBEAT_YML_PATH.read_text(encoding="utf-8"))
+        paths = fb["filebeat.inputs"][0]["paths"]
+        self.assertIn("/storage/PCAP/zeek_logs/*.log", paths,
+                     "live-capture flat-file glob missing (zeek-host-capture.service / "
+                     "stream_capture.sh write directly into zeek_logs/)")
+        self.assertIn("/storage/PCAP/zeek_logs/*/*.log", paths,
+                     "PCAP-replay per-pcap-subdirectory glob missing — "
+                     "scripts/setup/zeek_run_pcap.sh writes into zeek_logs/<pcap_name>/, "
+                     "and without this glob Filebeat never ships those logs at all")
 
 
 if __name__ == "__main__":

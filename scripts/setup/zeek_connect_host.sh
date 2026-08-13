@@ -6,9 +6,33 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${LOG_DIR:-/storage/PCAP/zeek_logs}"
 
+# security-auditor review (2nd pass): directory-level symlink check, same
+# reasoning as zeek_run_pcap.sh's identical check — must run before mkdir
+# -p, which silently follows a directory symlink instead of failing on one.
+if [ -L /storage/PCAP/intel ] || [ -L /storage/PCAP/zeek_logs ]; then
+  echo "[FATAL] /storage/PCAP/intel or zeek_logs is a symlink, refusing to follow it" >&2
+  exit 1
+fi
+
 # Sync Intel configurations to the host volume
 sudo mkdir -p /storage/PCAP/intel
-sudo cp -r "${SCRIPT_DIR}/../../configs/intel/"* /storage/PCAP/intel/ 2>/dev/null || true
+# security-auditor review: --remove-destination + a symlink guard, same
+# reasoning as zeek_run_pcap.sh's identical check.
+if [ -L /storage/PCAP/intel/config.zeek ]; then
+  echo "[FATAL] /storage/PCAP/intel/config.zeek is a symlink, refusing to follow it" >&2
+  exit 1
+fi
+sudo cp -r --remove-destination "${SCRIPT_DIR}/../../configs/intel/"* /storage/PCAP/intel/ 2>/dev/null || true
+
+# #288: verify the copy above actually landed a current config.zeek before
+# monitoring any traffic — same reasoning as zeek_run_pcap.sh's identical
+# check. sudo (not a suppressed, unprivileged grep) so a real permission
+# problem surfaces distinctly from "file is genuinely stale" (security-
+# auditor review).
+if ! sudo grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek; then
+  echo "[FATAL] /storage/PCAP/intel/config.zeek is missing an expected @load -- the intel config copy above may have failed silently. Refusing to monitor against a config that might not match the repo." >&2
+  exit 1
+fi
 
 sudo mkdir -p "$LOG_DIR"
 

@@ -464,6 +464,121 @@ class MetricFunctionTests(unittest.TestCase):
         self.assertIn("logstash-security-*", index)
         self.assertIn({"term": {"pipeline.byte_clamped": "true"}}, query["bool"]["filter"])
 
+    # --- #288: capture-loss max percent -----------------------------------
+    def test_capture_loss_percent_raises_on_non_200(self):
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(500)):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_capture_loss_percent()
+
+    def test_capture_loss_percent_raises_on_es_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_capture_loss_percent()
+
+    def test_capture_loss_percent_returns_none_on_empty_aggregation(self):
+        # No capture_loss.log docs in the window yet (sensor hasn't hit a
+        # watch_interval, or the @load hasn't rolled out to a running
+        # capture) — a real "no data yet" case, not a measurement error.
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"aggregations": {"max_loss": {}}})):
+            self.assertIsNone(slo_metrics.metric_capture_loss_percent())
+
+    def test_capture_loss_percent_returns_value_on_success(self):
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(
+                200, {"aggregations": {"max_loss": {"value": 2.5}}})):
+            self.assertEqual(slo_metrics.metric_capture_loss_percent(), 2.5)
+
+    def test_capture_loss_percent_queries_capture_loss_dataset_and_field(self):
+        captured = {}
+
+        def fake_es(method, path, body=None):
+            captured["path"] = path
+            captured["body"] = body
+            # A real aggregation value, not an empty {} — the {} case exercises
+            # the zeek-liveness fallback path (a SECOND es() call, see the
+            # tests below), which would overwrite `captured` before this
+            # test gets to inspect the query it actually cares about.
+            return _FakeResponse(200, {"aggregations": {"max_loss": {"value": 1.0}}})
+
+        with mock.patch.object(slo_metrics, "es", side_effect=fake_es):
+            slo_metrics.metric_capture_loss_percent()
+        self.assertEqual(captured["path"], "/logstash-security-*/_search")
+        self.assertIn({"term": {"event.dataset": "zeek.capture_loss"}},
+                      captured["body"]["query"]["bool"]["filter"])
+        self.assertEqual(captured["body"]["aggs"]["max_loss"]["max"]["field"], "percent_lost")
+
+    def test_capture_loss_percent_uses_own_window_not_shared_window(self):
+        # security-auditor review: this metric must NOT inherit the shared
+        # module-level WINDOW (default now-7d) — a max aggregation over a
+        # long window combined with a 15-min poll would pin a single
+        # transient spike in breach for hundreds of consecutive runs. Must
+        # default to something short, and be independently overridable.
+        # code-reviewer follow-up: assert the DECOUPLING from WINDOW, not
+        # the literal default value — hardcoding "now-1h" here would break
+        # for anyone who actually uses the documented SLO_CAPTURE_LOSS_
+        # WINDOW override this test exists to protect.
+        captured = {}
+
+        def fake_es(method, path, body=None):
+            captured["body"] = body
+            return _FakeResponse(200, {"aggregations": {"max_loss": {"value": 1.0}}})
+
+        with mock.patch.object(slo_metrics, "es", side_effect=fake_es), \
+             mock.patch.object(slo_metrics, "WINDOW", "now-7d"), \
+             mock.patch.dict(os.environ, {"SLO_CAPTURE_LOSS_WINDOW": "now-45m"}):
+            slo_metrics.metric_capture_loss_percent()
+        gte = captured["body"]["query"]["bool"]["filter"][0]["range"]["@timestamp"]["gte"]
+        self.assertNotEqual(gte, "now-7d")
+        self.assertEqual(gte, "now-45m")
+
+    def test_capture_loss_percent_returns_none_when_no_zeek_data_at_all(self):
+        # Genuinely benign: nothing Zeek-sourced in the window yet (fresh
+        # deployment, sensor hasn't hit a watch_interval) — not an error.
+        def fake_es(method, path, body=None):
+            if path.endswith("/_count"):
+                return _FakeResponse(200, {"count": 0})
+            return _FakeResponse(200, {"aggregations": {"max_loss": {}}})
+
+        with mock.patch.object(slo_metrics, "es", side_effect=fake_es):
+            self.assertIsNone(slo_metrics.metric_capture_loss_percent())
+
+    def test_capture_loss_percent_raises_when_zeek_flows_but_no_capture_loss_docs(self):
+        # security-auditor review: distinguishes "no Zeek data at all"
+        # (benign) from "Zeek is flowing but capture-loss reporting itself
+        # died" (a real failure metric_ingest_lag_seconds cannot see, since
+        # other Zeek/endpoint telemetry keeps ingest lag looking healthy).
+        def fake_es(method, path, body=None):
+            if path.endswith("/_count"):
+                return _FakeResponse(200, {"count": 42})
+            return _FakeResponse(200, {"aggregations": {"max_loss": {}}})
+
+        with mock.patch.object(slo_metrics, "es", side_effect=fake_es):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_capture_loss_percent()
+
+    def test_capture_loss_percent_liveness_check_requires_stale_zeek_data(self):
+        # security-auditor follow-up (MEDIUM): an unqualified "any Zeek doc
+        # in the window" liveness check false-triggers on offline PCAP
+        # replay, a short manual stream_capture.sh session, and the first
+        # run after a fresh deploy — none run long enough to reach even one
+        # CaptureLoss::watch_interval. The fallback _count query must
+        # require the Zeek data to predate now-30m before treating its
+        # absence as suspicious, not just filter on event.module:zeek alone.
+        captured = {}
+
+        def fake_es(method, path, body=None):
+            if path.endswith("/_count"):
+                captured["count_body"] = body
+                return _FakeResponse(200, {"count": 1})
+            return _FakeResponse(200, {"aggregations": {"max_loss": {}}})
+
+        with mock.patch.object(slo_metrics, "es", side_effect=fake_es):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_capture_loss_percent()
+        filters = captured["count_body"]["query"]["bool"]["filter"]
+        self.assertIn({"term": {"event.module": "zeek"}}, filters)
+        self.assertIn({"range": {"@timestamp": {"lte": "now-30m"}}}, filters)
+
 
 class EsKbWrapperTests(unittest.TestCase):
     """Cover the real es()/kb() request wrappers — every test above mocks them
@@ -531,7 +646,8 @@ class MainExitCodeTests(unittest.TestCase):
     def _mock_all_metrics(self, mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                            ingest_lag=10.0, parse_err=0.0, audit_write_failures=0.0,
                            orphaned_claims=0.0, raw_alert_volume=None,
-                           field_truncation_count=0, field_byte_clamp_count=0):
+                           field_truncation_count=0, field_byte_clamp_count=0,
+                           capture_loss_max_pct=0.0):
         if raw_alert_volume is None:
             raw_alert_volume = {"zeek_notices": 0, "rule_hits": 0, "value": 0}
         return [
@@ -551,6 +667,8 @@ class MainExitCodeTests(unittest.TestCase):
                                return_value=field_truncation_count),
             mock.patch.object(slo_metrics, "metric_field_byte_clamp_count",
                                return_value=field_byte_clamp_count),
+            mock.patch.object(slo_metrics, "metric_capture_loss_percent",
+                               return_value=capture_loss_max_pct),
             mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(200, {})),
         ]
 
@@ -605,6 +723,32 @@ class MainExitCodeTests(unittest.TestCase):
             code = self._run_main_capturing_exit()
         self.assertEqual(code, 2)
         self.assertIn("audit_write_failures", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_capture_loss_below_threshold_does_not_breach(self):
+        # coverage pinned to the real env's SLO_COVERAGE_MIN, same
+        # pre-existing reason as test_audit_write_failures_below_threshold_
+        # does_not_breach above.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
+            for p in self._mock_all_metrics(capture_loss_max_pct=4.9, coverage=105.0):
+                stack.enter_context(p)
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 0)
+
+    def test_capture_loss_over_threshold_breaches(self):
+        # Regression guard for #288: metric_capture_loss_percent must
+        # actually be wired into main()'s metric_fns dict, not just
+        # defined — same bug shape #216/#247/#257 already guard other
+        # metrics against.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in self._mock_all_metrics(capture_loss_max_pct=12.0):
+                stack.enter_context(p)
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        ntfy_post.assert_called_once()
+        self.assertIn("capture_loss_max_pct", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_raw_alert_volume_never_breaches_regardless_of_value(self):
         # #216: NO_TARGET means this is measured but never checked against a

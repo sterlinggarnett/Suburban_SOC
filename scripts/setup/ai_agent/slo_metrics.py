@@ -30,6 +30,13 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
                                                   multi-byte content had to be defensively
                                                   clamped to avoid a Lucene immense-term
                                                   whole-document rejection
+  Capture-loss max %               <= 5   %    — max Zeek capture_loss.log percent_lost
+                                                  over its own SLO_CAPTURE_LOSS_WINDOW (#288,
+                                                  default now-1h — NOT the shared WINDOW
+                                                  below, so one spike self-clears instead of
+                                                  breaching for a full 7-day window) — a
+                                                  resource-pressure/packet-drop guard for the
+                                                  real capture path, which has no load shedding
 
 Pure stdlib (requests). Env (auto-loaded from scripts/setup/.env):
   ES_URL, ES_USER, ES_PASS/ELASTIC_PASSWORD, KIBANA_URL, NTFY_TOPIC.
@@ -85,13 +92,18 @@ TARGETS = {
     # before the real alert intake ever runs, so a legitimate /approve 409s
     # "already claimed" and containment silently never happens) — target 0.
     "orphaned_claims": float(os.environ.get("SLO_ORPHANED_CLAIM_MAX", "0")),
+    # #288: no target was calibrated against real traffic in this environment
+    # (same caveat as field_truncation_count/field_byte_clamp_count below) —
+    # 5% is a conservative, overridable starting point, not an
+    # empirically-derived number.
+    "capture_loss_max_pct": float(os.environ.get("SLO_CAPTURE_LOSS_MAX_PCT", "5")),
 }
 # Comparator per metric: True = lower is better (value <= target).
 LOWER_BETTER = {
     "mttd_minutes": True, "mttr_minutes": True, "coverage_techniques": False,
     "false_positive_pct": True, "ingest_lag_seconds": True, "parse_error_pct": True,
     "audit_write_failures": True, "stuck_approval_claims": True,
-    "orphaned_claims": True,
+    "orphaned_claims": True, "capture_loss_max_pct": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
 # not a benign "n/a". A dead/unreachable pipeline produces no fresh docs, so
@@ -529,6 +541,117 @@ def metric_field_byte_clamp_count():
                   {"bool": {"filter": [win, {"term": {"pipeline.byte_clamped": "true"}}]}})
 
 
+def metric_capture_loss_percent():
+    """Max Zeek capture_loss.log percent_lost in the window (#288).
+
+    #228's policy/protocols/ssl/validate-certs adds real per-connection
+    OpenSSL cert-chain verification with no aggregate resource guard — a
+    burst of connections presenting unique/large certificate chains could
+    show up as sustained CPU pressure, and the real capture path
+    (configs/systemd/zeek-host-capture.service: tcpdump | docker run zeek
+    -r -) has no load shedding, so that pressure surfaces as PACKET DROPS,
+    a blind spot across every protocol, not just TLS. Zeek's own
+    policy/misc/capture-loss (now @load-ed in configs/intel/config.zeek
+    right after validate-certs) already computes this as percent_lost, on a
+    0-100 scale (confirmed against the real policy/misc/capture-loss.zeek
+    source: `100 * gaps / acks` — not the unrelated 0-1-scaled
+    CaptureLoss::too_much_loss OPTION, a different, internal-only value),
+    per watch_interval (default 15m); this metric turns that into a
+    measured, alertable SLO instead of a log nobody reads. Live-confirmed
+    end to end against a real `zeek/zeek` container + PCAP: the log file is
+    genuinely named capture_loss.log (matching this metric's
+    event.dataset:zeek.capture_loss filter) and percent_lost lands as a
+    JSON float.
+
+    Deliberately NOT the shared module-level WINDOW (security-auditor
+    review): every other windowed metric here is self-averaging (mttd/mttr)
+    or a ratio (parse_error_pct), so a long WINDOW just widens the sample.
+    percent_lost is a per-watch_interval HIGH-WATER MARK — combined with
+    WINDOW's 7-day default and this metric's own 15-min poll cadence
+    (configs/systemd/slo-metrics.timer), one transient spike would pin this
+    metric in breach for ~672 consecutive runs (a week of repeated ntfy
+    alerts sharing the same topic as genuinely urgent metrics like
+    ingest_lag_seconds, drowning them out). A short, separately-overridable
+    window keeps `max` doing its job (catching a real spike at all) while
+    letting the metric self-clear once the spike ages out of a 1-hour
+    lookback instead of a 7-day one.
+
+    Not NO_TARGET like field_truncation_count/field_byte_clamp_count: those
+    have no calibrated threshold because there's no real Windows/process
+    telemetry in this environment to set one against, but packet-loss
+    percentage is a well-understood operational concept independent of this
+    pipeline's own schema — 5% (TARGETS above) is a conservative,
+    overridable starting point, not an empirically-derived number.
+
+    Not in BREACH_IF_NA (security-auditor review: the original reasoning
+    here was incomplete, not wrong) — a blanket BREACH_IF_NA would falsely
+    alarm on every fresh deployment before the first watch_interval, the
+    exact "permanent, unactionable alert noise" metric_audit_write_
+    failures' own docstring already rejects for the same shape. But
+    metric_ingest_lag_seconds does NOT actually cover "capture-loss
+    monitoring itself silently stopped" the way the original version of
+    this docstring claimed: ingest_lag only catches TOTAL pipeline death,
+    and endpoint (Winlogbeat/Filebeat-non-Zeek) telemetry alone keeps it
+    green while the Zeek sensor itself is dead or a restart raced past the
+    ExecStartPre check without this @load ever taking effect. So the
+    no-aggregation-value case below distinguishes the two: no Zeek data at
+    all in the window is benign (None, "n/a"); Zeek data flowing but zero
+    capture_loss docs among it is now itself an error, not silence — but
+    only once that Zeek data is itself over 30 minutes old (2x the default
+    watch_interval), so a short offline PCAP replay (scripts/setup/
+    zeek_run_pcap.sh), a brief manual stream_capture.sh session, or the
+    first run after a fresh deploy don't false-trigger it (security-auditor
+    follow-up: an unqualified check did exactly that on all 3).
+
+    NOT hardened against active forgery: configs/logstash.conf's Category 0
+    gates purely on event content (log.file.path matching *_logs/*.log),
+    not on which input produced it, so event.dataset is spoofable via the
+    unauthenticated :5514 HTTP input — tracked as a pre-existing, separate
+    pipeline-boundary gap (private security advisory, not a public issue —
+    this repo is public and the gap is live/unpatched), not fixed here.
+    """
+    win = {"range": {"@timestamp": {"gte": os.environ.get("SLO_CAPTURE_LOSS_WINDOW", "now-1h")}}}
+    body = {"size": 0, "query": {"bool": {"filter": [
+        win, {"term": {"event.dataset": "zeek.capture_loss"}}]}},
+        "aggs": {"max_loss": {"max": {"field": "percent_lost"}}}}
+    try:
+        r = es("POST", "/logstash-security-*/_search", body)
+        if r.status_code != 200:
+            raise MetricUnavailable(f"capture-loss search returned HTTP {r.status_code}")
+        v = r.json().get("aggregations", {}).get("max_loss", {}).get("value")
+    except MetricUnavailable:
+        raise
+    except Exception as e:
+        raise MetricUnavailable(f"capture-loss search failed: {e}") from e
+    if v is not None:
+        return round(v, 3)
+    # No capture_loss docs in the window — distinguish "no Zeek data yet"
+    # (benign) from "Zeek is flowing but capture-loss reporting itself is
+    # dead" (a real, previously-silent failure).
+    #
+    # security-auditor follow-up review: an unqualified "any Zeek doc in the
+    # window" check false-triggers on 3 real workflows this exact host
+    # documents — offline PCAP replay (scripts/setup/zeek_run_pcap.sh,
+    # SOP-001), a short manual stream_capture.sh session, and the first run
+    # after a fresh deploy — none of which run long enough to reach even one
+    # CaptureLoss::watch_interval (default 15m), so "Zeek docs exist, no
+    # capture_loss docs yet" is the NORMAL case for all three, not a
+    # failure. Requiring the Zeek data to predate 2x the default
+    # watch_interval before treating its absence as suspicious keeps the
+    # genuine failure case (capture alive for a sustained period, zero
+    # capture_loss docs the whole time) while no longer firing on any of
+    # the three short-lived cases above.
+    stale_zeek_filter = {"bool": {"filter": [
+        win, {"term": {"event.module": "zeek"}},
+        {"range": {"@timestamp": {"lte": "now-30m"}}}]}}
+    zeek_flowing = _count("logstash-security-*", stale_zeek_filter)
+    if zeek_flowing:
+        raise MetricUnavailable(
+            "zeek data has been flowing for over 30 minutes in the window but no "
+            "capture_loss docs were seen — capture-loss monitoring itself may not be running")
+    return None
+
+
 def main():
     if not ES_PASS:
         print("ERROR: ES_PASS / ELASTIC_PASSWORD required", file=sys.stderr)
@@ -547,6 +670,7 @@ def main():
         "raw_alert_volume": metric_raw_alert_volume,
         "field_truncation_count": metric_field_truncation_count,
         "field_byte_clamp_count": metric_field_byte_clamp_count,
+        "capture_loss_max_pct": metric_capture_loss_percent,
     }
     values, errors = {}, {}
     for name, fn in metric_fns.items():

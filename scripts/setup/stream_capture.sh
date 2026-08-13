@@ -21,12 +21,37 @@ MODE="${1:?Usage: $0 <bat0|br-lan|raw>}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${LOG_DIR:-/storage/PCAP/zeek_logs}"
 
+# security-auditor review (2nd pass): directory-level symlink check, same
+# reasoning as zeek_run_pcap.sh's identical check — must run before mkdir
+# -p, which silently follows a directory symlink instead of failing on one.
+if [ -L /storage/PCAP/intel ] || [ -L /storage/PCAP/zeek_logs ]; then
+  echo "[FATAL] /storage/PCAP/intel or zeek_logs is a symlink, refusing to follow it" >&2
+  exit 1
+fi
+
 # Sync Intel configurations so threat intel rules are applied to live captures.
 # The two mkdirs are deliberately NOT best-effort (unlike the intel cp below) —
 # under set -e a failure here hard-exits before any capture starts, rather than
 # silently limping on without a writable log/intel destination.
 sudo mkdir -p /storage/PCAP/intel
-sudo cp -r "${SCRIPT_DIR}/../../configs/intel/"* /storage/PCAP/intel/ 2>/dev/null || true
+# security-auditor review: --remove-destination + a symlink guard, same
+# reasoning as zeek_run_pcap.sh's identical check.
+if [ -L /storage/PCAP/intel/config.zeek ]; then
+  echo "[FATAL] /storage/PCAP/intel/config.zeek is a symlink, refusing to follow it" >&2
+  exit 1
+fi
+sudo cp -r --remove-destination "${SCRIPT_DIR}/../../configs/intel/"* /storage/PCAP/intel/ 2>/dev/null || true
+
+# #288: verify the copy above actually landed a current config.zeek before
+# streaming any traffic — same reasoning as zeek_run_pcap.sh's identical
+# check. set -e alone does not catch this, since the cp is `|| true`. sudo
+# (not a suppressed, unprivileged grep) so a real permission problem
+# surfaces distinctly from "file is genuinely stale" (security-auditor review).
+if ! sudo grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek; then
+  echo "[FATAL] /storage/PCAP/intel/config.zeek is missing an expected @load -- the intel config copy above may have failed silently. Refusing to stream against a config that might not match the repo." >&2
+  exit 1
+fi
+
 sudo mkdir -p "$LOG_DIR"
 
 # Pipes a tcpdump byte stream (stdin) into the Zeek container for live analysis.

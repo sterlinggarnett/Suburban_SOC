@@ -8,6 +8,18 @@
 # Needed for net_zeek_ssl_self_signed_c2 / net_zeek_ssl_expired_cert_connection.
 @load policy/protocols/ssl/validate-certs
 
+# #288: capture-loss is a policy script too, same situation as validate-
+# certs above — not in Zeek's default auto-load set, so capture_loss.log
+# does not exist without this. validate-certs adds real per-connection
+# OpenSSL cert-chain verification with no aggregate resource guard; a burst
+# of unique/large chains could show up as CPU pressure, and the real
+# capture path (zeek-host-capture.service: tcpdump | docker run zeek -r -)
+# has no load shedding, so that pressure surfaces as packet drops — a blind
+# spot across every protocol, not just TLS. This makes percent_lost a
+# measurable, alertable signal (scripts/setup/ai_agent/slo_metrics.py's
+# capture_loss_max_pct) instead of a log nobody reads.
+@load policy/misc/capture-loss
+
 # base/protocols/smtp is part of Zeek's default (non-bare) auto-load set
 # (base/init-default.zeek) - confirmed empirically (`print SMTP::LOG`
 # succeeds without any explicit @load). No change needed for #240's SMTP

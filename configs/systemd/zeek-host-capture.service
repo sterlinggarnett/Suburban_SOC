@@ -123,7 +123,26 @@ ExecStartPre=/bin/mkdir -p /storage/PCAP/zeek_logs /storage/PCAP/intel
 # the destination path first so a symlink planted in that window is deleted,
 # not written through, and root owns this directory so the unlink succeeds
 # regardless of who owns the (removed) symlink (security-auditor re-review).
-ExecStartPre=/bin/bash -c 'cp -r --remove-destination /home/tjlam/projects/Suburban-SOC/configs/intel/* /storage/PCAP/intel/ 2>/dev/null || true; [ -s /storage/PCAP/intel/intel.dat ] || cp /home/tjlam/projects/Suburban-SOC/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat'
+# #288: the intel.dat check above only guards intel.dat specifically —
+# config.zeek itself had no equivalent verification, so a silently-failed
+# cp left Zeek running whatever stale config.zeek was already on disk (with
+# none of the repo's own @load list, e.g. this same fix's new capture-loss
+# line) with ExecStart still reporting a normal, successful start. Checking
+# for the newest @load line (capture-loss) rather than an older one like
+# validate-certs, which could already exist in a stale copy from before
+# this fix. A failure here fails ExecStartPre, which blocks ExecStart —
+# the loud failure this finding asked for, not a silent stale-config start.
+# security-auditor review: appending this check made it the LAST command in
+# the bash -c string, and bash -c reports only the last commands own exit
+# status — the intel.dat fallback cp just above (also best-effort until
+# this point) could now fail its own way and be silently swallowed instead
+# of blocking ExecStart the way #222 originally guaranteed. set -e at the
+# front restores that: the fallback cp is still allowed to fail when
+# intel.dat already exists (the [ -s ... ] check short-circuits it, an
+# already-successful || chain set -e does not touch), but a REAL fallback
+# failure (intel.dat absent AND the seed cp itself fails) now aborts here
+# too, same as before this fix.
+ExecStartPre=/bin/bash -c 'set -e; cp -r --remove-destination /home/tjlam/projects/Suburban-SOC/configs/intel/* /storage/PCAP/intel/ 2>/dev/null || true; [ -s /storage/PCAP/intel/intel.dat ] || cp /home/tjlam/projects/Suburban-SOC/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat; grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek || { echo "FATAL: deployed config.zeek is missing an expected at-load line - stale copy" >&2; exit 1; }'
 # intel-refresh.service (configs/systemd/intel-refresh.service) runs as the
 # unprivileged repo-owner user and needs to WRITE intel.dat into this same
 # directory on every scheduled refresh, not just at Zeek's own startup — but

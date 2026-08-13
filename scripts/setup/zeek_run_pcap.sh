@@ -8,9 +8,52 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${LOG_DIR:-/storage/PCAP/zeek_logs}"
 PCAP_FILE="${PCAP_FILE:-/storage/PCAP/http.pcap}"
 
+# security-auditor review (2nd pass): checking config.zeek alone (below)
+# is not enough — if /storage/PCAP/intel ITSELF is a symlink (e.g. to
+# /etc/sudoers.d), `sudo mkdir -p` and `cp -r` both follow it silently, and
+# config.zeek's own `-L` check then resolves THROUGH the directory symlink
+# to whatever sits at the real target, never seeing the swap. Same CWE-59
+# class configs/systemd/zeek-host-capture.service:72-84 already rates HIGH
+# for the identical vector; check the directory before creating/using it,
+# not after.
+if [ -L /storage/PCAP/intel ] || [ -L /storage/PCAP/zeek_logs ]; then
+  echo "[FATAL] /storage/PCAP/intel or zeek_logs is a symlink, refusing to follow it" >&2
+  exit 1
+fi
+
 # Sync Intel configurations to the host volume
 sudo mkdir -p /storage/PCAP/intel
-sudo cp -r "${SCRIPT_DIR}/../../configs/intel/"* /storage/PCAP/intel/ 2>/dev/null || true
+# security-auditor review: --remove-destination + a symlink guard, same
+# reasoning as configs/systemd/zeek-host-capture.service's own
+# ExecStartPre steps. --remove-destination is the one that actually
+# prevents cp from writing THROUGH an existing symlink at this path
+# instead of replacing it (verified directly: cp -r --remove-destination
+# alone already unlinks a symlinked destination before writing); the
+# explicit guard here is defense-in-depth matching the systemd unit's own
+# belt-and-suspenders design (a symlink sweep alongside its own
+# --remove-destination), not load-bearing on its own (code-reviewer
+# follow-up).
+if [ -L /storage/PCAP/intel/config.zeek ]; then
+  echo "[FATAL] /storage/PCAP/intel/config.zeek is a symlink, refusing to follow it" >&2
+  exit 1
+fi
+sudo cp -r --remove-destination "${SCRIPT_DIR}/../../configs/intel/"* /storage/PCAP/intel/ 2>/dev/null || true
+
+# #288: the cp above is deliberately best-effort (a transient permissions/
+# stale-mount failure should not block analysis outright when the deployed
+# config might already be current from a prior run), but a SILENT failure
+# left every real capture invocation running whatever stale config.zeek was
+# already on disk with no verification the repo's own @load list actually
+# made it across. Check for the newest @load line (capture-loss, #288)
+# rather than an older one like validate-certs, which could already exist
+# in a stale copy from before this fix. sudo (not a suppressed, unprivileged
+# grep) so a real permission problem surfaces distinctly from "file is
+# genuinely stale" instead of both collapsing into the same FATAL message
+# (security-auditor review).
+if ! sudo grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek; then
+  echo "[FATAL] /storage/PCAP/intel/config.zeek is missing an expected @load -- the intel config copy above may have failed silently. Refusing to analyze against a config that might not match the repo." >&2
+  exit 1
+fi
 
 sudo mkdir -p "$LOG_DIR"
 

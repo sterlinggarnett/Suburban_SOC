@@ -76,12 +76,17 @@ process_pcap() {
   echo "[INFO] Processing $pcap..."
 
   sudo mkdir -p /storage/PCAP/temp_zeek
+  # #293: the Zeek image below is pinned to a specific version, not :latest — see
+  # configs/systemd/zeek-host-capture.service's header comment for why (an
+  # unpinned image already broke a Sigma rule's string match once, #228) and
+  # the bump process. tests/pipeline/test_zeek_image_pin.py enforces this
+  # stays in lockstep with the other 3 real capture paths.
   docker run --rm \
     -v /storage/PCAP:/data \
     -v /storage/PCAP/intel:/data/intel \
     -v "$pcap":/input.pcap:ro \
     -w /data/temp_zeek \
-    zeek/zeek \
+    zeek/zeek:8.1.1@sha256:f3d539d68e2a68897b02bfa302df9c7f8bcb89f338399625686fca9cc30c85f3 \
     zeek -C -r /input.pcap LogAscii::use_json=T /data/intel/config.zeek
 
   # Move logs into a per-pcap subdirectory under the main zeek_logs directory

@@ -21,9 +21,14 @@ Once the `.pcap` files were staged, we used the official Zeek Docker container t
 docker run --rm \
   -v /storage/PCAP:/data \
   -w /data/zeek_logs \
-  zeek/zeek \
+  zeek/zeek:8.1.1 \
   zeek -r /data/http.pcap LogAscii::use_json=T
 ```
+
+> [!NOTE]
+> The real capture paths this repo runs in production pin a specific
+> tag+digest, not just a version tag — see #293 and
+> `configs/systemd/zeek-host-capture.service`'s header comment for why.
 
 > [!NOTE]
 > **Why `.log` extensions?** Even though we used the `use_json=T` flag, Zeek is hardcoded to output its files with a `.log` extension (e.g., `conn.log`). We verified that the internal contents were perfectly formatted JSON text.

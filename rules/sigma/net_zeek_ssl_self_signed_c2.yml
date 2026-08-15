@@ -16,10 +16,13 @@ description: |
     `openssl verify` run that the real string is now hyphenated,
     "self-signed certificate" — the space-only match would have been a
     second, value-level silent no-op on any current OpenSSL 3.x build,
-    caught by security-auditor round 2 before it shipped). The zeek/zeek
-    Docker image every real capture path pulls is unpinned and untagged, so
-    this can drift again on any upstream rebuild — a real dependency for a
-    value-matching rule like this one, not just an implementation detail.
+    caught by security-auditor round 2 before it shipped). This is exactly
+    why #293 pinned every real capture path's Zeek image to a specific,
+    non-"latest" version instead of leaving it to drift on any upstream
+    rebuild — a real dependency for a value-matching rule like this one,
+    not just an implementation detail. See
+    tests/pipeline/test_zeek_image_pin.py, which enforces the pin stays in
+    place and in lockstep across all 4 real capture paths.
 references:
     - https://attack.mitre.org/techniques/T1573/002/
 author: Suburban-SOC

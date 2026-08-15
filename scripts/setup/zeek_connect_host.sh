@@ -39,6 +39,11 @@ sudo mkdir -p "$LOG_DIR"
 echo "[INFO] Starting interactive Zeek on eth0 -> ${LOG_DIR}"
 echo "[INFO] Press Ctrl+C to stop."
 
+# #293: the Zeek image below is pinned to a specific version, not :latest — see
+# configs/systemd/zeek-host-capture.service's header comment for why (an
+# unpinned image already broke a Sigma rule's string match once, #228) and
+# the bump process. tests/pipeline/test_zeek_image_pin.py enforces this
+# stays in lockstep with the other 3 real capture paths.
 sudo docker run --rm \
   --network host \
   --cap-add=NET_ADMIN \
@@ -46,5 +51,5 @@ sudo docker run --rm \
   -v "${LOG_DIR}:/data/zeek_logs" \
   -v /storage/PCAP/intel:/data/intel \
   -w /data/zeek_logs \
-  zeek/zeek \
+  zeek/zeek:8.1.1@sha256:f3d539d68e2a68897b02bfa302df9c7f8bcb89f338399625686fca9cc30c85f3 \
   zeek -C -i eth0 LogAscii::use_json=T /data/intel/config.zeek

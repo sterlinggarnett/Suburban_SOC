@@ -439,20 +439,65 @@ now. All P2/P3, no P1 remaining.
 
 M15 is otherwise exhausted of unblocked work. A new milestone,
 [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20),
-has appeared with 4 open P3 issues, none blocked on unavailable
-infrastructure: #293 (pin the `zeek/zeek` Docker image across all 4 real
-capture paths — an OpenSSL/Zeek string-value drift already broke a rule
-once, per #228's review), #271 (`threat-intel-indicators` in ES never
-retracts removed indicators), #270 (`intel-refresh.service`: data/code
-co-location + unpinned CA trust-on-every-use, mirrors `slo-metrics.service`),
-#265 (mint client certs for Winlogbeat/endpoint-Filebeat before #219's
-mTLS enforcement breaks a real endpoint's first connection).
+has appeared with 4 open P3 issues.
 
-Next unstarted item: #293 — smallest fully-scoped pick (pin one image
-reference + document a bump process), doesn't depend on hardware this
-environment lacks. Recommended over #265 (larger surface: docker-compose
-cert-minting + 2 config files + distribution script + 2 docs) and #270
-(needs synchronized changes across 2 systemd units). #283 stays blocked.
+- [x] **#293 (P3, supply-chain) — COMPLETE, MERGED** — all 4 real Zeek
+  capture invocations pulled `zeek/zeek` with no tag (implicitly `:latest`)
+  — an unpinned image lets an upstream rebuild silently change an
+  OpenSSL/Zeek-generated string a Sigma rule depends on, already happened
+  once live during #228's review (OpenSSL's `"self signed certificate"`
+  wording changed to `"self-signed certificate"` between builds).
+  [PR #356](https://github.com/voltron-1/Suburban_SOC/pull/356) merged
+  2026-08-15 (squash, `5ebbe1f`), auto-closing #293, 13/13 CI green.
+  Pinned all 4 (`zeek-host-capture.service`, `stream_capture.sh`,
+  `zeek_connect_host.sh`, `zeek_run_pcap.sh`) to
+  `zeek/zeek:8.1.1@sha256:f3d539d68e2a68897b02bfa302df9c7f8bcb89f338399625686fca9cc30c85f3`
+  — tag+digest, not tag alone: a Docker Hub tag is a mutable pointer the
+  publisher can re-push, and separately anyone with local Docker socket
+  access can `docker tag <anything> zeek/zeek:8.1.1`; only the
+  content-addressed digest closes both (security-auditor finding). New
+  regression test `tests/pipeline/test_zeek_image_pin.py` (13 tests)
+  enforces all 4 stay pinned to the exact reviewed tag+digest and in
+  lockstep — regex anchored both sides so a registry-prefixed or
+  typosquatted lookalike (`evil.example.com/zeek/zeek`, `notzeek/zeek`,
+  `zeek/zeek-dev`) can't be misread as the real reference, and comment-only
+  mentions are excluded so neither a swapped real invocation can hide
+  behind a stale comment nor an explanatory comment can register as a
+  second, unpinned "invocation" — both directions caught live while
+  authoring the file, now locked in as self-tests. security-auditor +
+  code-reviewer + tester-debugger ran in parallel; tester-debugger
+  live-verified both the offline-PCAP-replay and streaming `docker run`
+  patterns end to end against real production PCAP data through the pinned
+  image, not just `--version`. Also fixed a real downstream break the pin
+  itself creates: SOP-147's evidence-validation commands filtered
+  `docker ps` on `ancestor=zeek/zeek` (bare, implicitly `:latest`) —
+  empirically confirmed (removed the local `:latest` tag, retested) this
+  stops matching the instant `:latest` and the pinned tag diverge, i.e. the
+  first time the documented bump process is exercised; fixed to filter on
+  the pinned tag, added to the bump checklist. Fixed a now-stale comment in
+  `net_zeek_ssl_self_signed_c2.yml` asserting the image was still unpinned,
+  and pinned the tutorial doc's example in `Zeek_ELK_Pipeline.md` for
+  consistency. Follow-up filed:
+  [#355](https://github.com/voltron-1/Suburban_SOC/issues/355) (the now-
+  frozen image sits outside the repo's Trivy scanning coverage — real
+  coverage gap, not a known live vulnerability, needs its own CI workflow
+  change, deliberately out of scope for "pin the image").
+
+3 issues remain in the M16 backlog, none blocked on unavailable
+infrastructure: #271 (`threat-intel-indicators` in ES never retracts
+removed indicators), #270 (`intel-refresh.service`: data/code co-location +
+unpinned CA trust-on-every-use, mirrors `slo-metrics.service`), #265 (mint
+client certs for Winlogbeat/endpoint-Filebeat before #219's mTLS
+enforcement breaks a real endpoint's first connection), plus the new
+[#355](https://github.com/voltron-1/Suburban_SOC/issues/355) follow-up
+above (also tagged to M16).
+
+Next unstarted item: #271 — smallest remaining, self-contained (one
+script's ES indexing logic + a retraction mechanism), no cross-service
+synchronization needed. Recommended over #270 (needs synchronized changes
+across 2 systemd units, `intel-refresh.service` + `slo-metrics.service`)
+and #265 (largest surface: docker-compose cert-minting + 2 config files +
+distribution script + 2 docs). #283 (M15) stays blocked.
 
 ---
 
@@ -1644,6 +1689,24 @@ are implemented in code; checked off with that one caveat noted inline.
   Session also confirmed nothing was unpushed: the working branch
   (`fix/288-capture-loss-resource-guard`) was already up to date with its
   merged remote counterpart, no push needed.
+
+- **#293 closed — all 4 real Zeek capture invocations now pin
+  `zeek/zeek` to a specific tag+digest, not `:latest`.** Full detail in
+  NEXT UP above. [PR #356](https://github.com/voltron-1/Suburban_SOC/pull/356)
+  merged 2026-08-15 (squash, `5ebbe1f`), 13/13 CI green. security-auditor +
+  code-reviewer + tester-debugger ran in parallel; two review rounds
+  hardened the new regression test itself (regex anchoring against
+  registry/typosquat lookalikes, comment-exclusion so a stale comment
+  can't mask a swapped real invocation) and caught that the pin's own
+  existence breaks SOP-147's evidence-validation `docker ps` filter the
+  moment `:latest` and the pinned tag diverge — confirmed empirically
+  (removed the local `:latest` tag, retested) before fixing it, not just
+  reasoned about. Follow-up filed:
+  [#355](https://github.com/voltron-1/Suburban_SOC/issues/355) (the now-
+  frozen image has no Trivy scanning coverage — a real gap, not a known
+  live vulnerability, tagged to M16). M16 down to 3 open P3s (#271, #270,
+  #265) plus #355; recommending #271 next — smallest remaining, no
+  cross-service synchronization needed unlike #270.
 
 ## LAST SESSION — 2026-08-13
 

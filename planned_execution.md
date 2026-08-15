@@ -394,16 +394,65 @@ now. All P2/P3, no P1 remaining.
   [#345](https://github.com/voltron-1/Suburban_SOC/issues/345) (this fix
   is also blocked on that same rollover-automation gap operationally).
 
-2 issues remain in the M15 backlog, both P3:
+- [x] **#288 (P3, resource guard) — COMPLETE, MERGED** — #228's
+  per-connection OpenSSL cert-chain verification had no aggregate resource
+  guard; the real capture path (`tcpdump | docker run zeek -r -`) has no
+  load shedding, so CPU pressure surfaces as packet drops with nothing
+  reading Zeek's own `capture_loss.log` to notice.
+  [PR #354](https://github.com/voltron-1/Suburban_SOC/pull/354) merged
+  2026-08-13 (squash, `892b399`), auto-closing #288. Added
+  `@load policy/misc/capture-loss` to `configs/intel/config.zeek`
+  (live-verified against the real `zeek/zeek` image: fails "unknown
+  identifier" without the `@load`, a real PCAP run produces a genuine
+  `capture_loss.log` entry with `percent_lost` landing as a JSON float);
+  a new `metric_capture_loss_percent()` in `slo_metrics.py` using its own
+  short window rather than the shared 7-day `WINDOW` (a `max` over 7 days
+  polled every 15 min would pin one transient spike in breach for ~672
+  consecutive runs), with a staleness-qualified fallback distinguishing
+  "no Zeek data yet" from "Zeek is flowing but capture-loss reporting
+  itself died"; explicit `percent_lost`/`gaps`/`acks`/`ts_delta` mapping
+  properties in `logstash-security-template.json` (closes a #275-class
+  false-healthy risk under `ignore_malformed:true`). Also fixed the
+  issue's own bundled finding: all 4 real Zeek capture invocations
+  swallowed a failed `configs/intel/*` copy with `|| true` with nothing
+  verifying the deployed `config.zeek` matched the repo — added post-copy
+  verification plus symlink guards + `--remove-destination` (previously
+  only on the systemd unit) to the 3 shell scripts.
+  Three rounds of parallel security-auditor + code-reviewer review closed
+  6 real findings, including a regression where the new systemd
+  `ExecStartPre` check silently swallowed a pre-existing (#222) `intel.dat`
+  fallback failure (fixed with `set -e;`) and a liveness check that would
+  have false-triggered on this repo's own offline-PCAP-replay/short-manual-
+  stream workflows (fixed with a 30-min staleness qualifier). One finding
+  — the pre-existing unauthenticated `:5514` HTTP input can forge a
+  `capture_loss.log` event to suppress the new liveness check — was routed
+  into the existing private Security Advisory (`GHSA-qq8v-48c2-j5xx`,
+  filed during #292 for the same root gap) rather than a public fix.
+  112 pipeline tests (was 106), 87 slo_metrics tests (was 83);
+  ruff/shellcheck/systemd-analyze all clean.
 
-- #288 (validate-certs SSL cert-chain validation has no capture-loss/
-  resource guard), #283 (T1562.004 firewall-rule-added detection could
-  use Security 4946 — explicitly blocked on real Windows telemetry
-  verification this environment can't provide).
+1 issue remains in the M15 backlog:
 
-Next unstarted item: #288 — the only remaining unblocked pick; #283 stays
-blocked on real-telemetry verification unavailable in this environment.
-Check the issue tracker for a new milestone once these 2 close.
+- #283 (P3 — T1562.004 firewall-rule-added detection could use Security
+  4946 — explicitly blocked on real Windows telemetry verification this
+  environment can't provide).
+
+M15 is otherwise exhausted of unblocked work. A new milestone,
+[M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20),
+has appeared with 4 open P3 issues, none blocked on unavailable
+infrastructure: #293 (pin the `zeek/zeek` Docker image across all 4 real
+capture paths — an OpenSSL/Zeek string-value drift already broke a rule
+once, per #228's review), #271 (`threat-intel-indicators` in ES never
+retracts removed indicators), #270 (`intel-refresh.service`: data/code
+co-location + unpinned CA trust-on-every-use, mirrors `slo-metrics.service`),
+#265 (mint client certs for Winlogbeat/endpoint-Filebeat before #219's
+mTLS enforcement breaks a real endpoint's first connection).
+
+Next unstarted item: #293 — smallest fully-scoped pick (pin one image
+reference + document a bump process), doesn't depend on hardware this
+environment lacks. Recommended over #265 (larger surface: docker-compose
+cert-minting + 2 config files + distribution script + 2 docs) and #270
+(needs synchronized changes across 2 systemd units). #283 stays blocked.
 
 ---
 
@@ -1578,6 +1627,23 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-08-15
+
+- **#288 closed — capture-loss/resource guard now live on the real
+  capture path.** Full detail in NEXT UP above.
+  [PR #354](https://github.com/voltron-1/Suburban_SOC/pull/354) merged
+  2026-08-13 (squash, `892b399`), 3 review rounds, 6 real findings closed
+  — not yet reflected in this doc before now. M15 down to its 1
+  already-known-blocked P3 (#283). A new milestone,
+  [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20),
+  has appeared on the tracker with 4 open P3 issues (#293, #271, #270,
+  #265) — none individually triaged into this doc before now. Recommending
+  #293 (pin `zeek/zeek`) as the next pick: smallest fully-scoped, no
+  dependency on hardware this environment lacks.
+  Session also confirmed nothing was unpushed: the working branch
+  (`fix/288-capture-loss-resource-guard`) was already up to date with its
+  merged remote counterpart, no push needed.
 
 ## LAST SESSION — 2026-08-13
 

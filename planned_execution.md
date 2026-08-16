@@ -524,23 +524,53 @@ has appeared with 4 open P3 issues.
   doesn't cancel a running server-side delete), [#359](https://github.com/voltron-1/Suburban_SOC/issues/359)
   (Elasticsearch `:9200` bound to all host interfaces, not just localhost).
 
-2 issues remain from the original M16 backlog: #270 (`intel-refresh.service`:
+- [x] **#357 (P2, bug) — COMPLETE, MERGED** — `checkpoints-compact.service`
+  (#256) had the identical broken `Environment=${VAR}` pattern #259
+  already fixed once and #271 fixed twice more this session
+  (`intel-refresh.service`, `threat-intel-compact.service`) — the fourth
+  occurrence of the same bug class.
+  [PR #362](https://github.com/voltron-1/Suburban_SOC/pull/362) merged
+  2026-08-16 (squash, `aa73b63`), auto-closing #357, 13/13 CI green.
+  Fixed with the same proven pattern; live-verified end to end, including
+  provisioning `agent_checkpoints_compactor` for the first time on this
+  host and a real delete against a synthetic aged-out checkpoint doc.
+  security-auditor + code-reviewer review found two further real gaps:
+  `EnvironmentFile=` is empirically last-wins on a duplicate `.env` key
+  (confirmed live via `systemd-run --user`), so a botched password
+  rotation leaving two `PASSWORD=` lines could let a valid first line
+  mask a bad one that's what actually gets exported — fixed with
+  `| tail -n 1` in all 3 affected units, live-verified the guard now
+  correctly fails on that case. Also found each unit's own regression
+  test pinned the broken line's absence but never asserted the
+  `ExecStartPre` that actually produces the secret exists at all —
+  deleting it would silently 401 every scheduled run forever with the
+  full suite green; added content+ordering pins to both affected test
+  files (mutation-tested) and a new repo-wide test
+  (`tests/setup/test_systemd_environment_no_expansion.py`) scanning every
+  `configs/systemd/*.service` file for the bug *shape*, not one string
+  per unit — closes the gap that let this recur 4 times with no
+  generalized guard. Follow-up filed:
+  [#361](https://github.com/voltron-1/Suburban_SOC/issues/361)
+  (activating this credential for the first time here has no detection
+  coverage — its own SLO metrics get greener, not worse, if a `CLAIMED`
+  doc is maliciously deleted).
+
+3 issues remain from the original M16 backlog: #270 (`intel-refresh.service`:
 data/code co-location + unpinned CA trust-on-every-use, mirrors
 `slo-metrics.service`), #265 (mint client certs for Winlogbeat/endpoint-
 Filebeat before #219's mTLS enforcement breaks a real endpoint's first
-connection) — plus 4 follow-ups filed across the last two sessions:
+connection) — plus 4 accumulated follow-ups:
 [#355](https://github.com/voltron-1/Suburban_SOC/issues/355) (Trivy scan
-coverage for the pinned `zeek/zeek` image), #357, #358, #359 above.
+coverage for the pinned `zeek/zeek` image), #358 (threat-intel detection
+gaps), #359 (ES port binding), #361 above.
 
-Next unstarted item: #357 — smallest and most mechanical remaining pick.
-The exact fix pattern (extract one secret into a per-service scratch
-`EnvironmentFile=`, proven live twice this session for `intel-refresh.service`
-and `threat-intel-compact.service`) is already known-correct; this is
-applying it a third time to `checkpoints-compact.service`. Recommended over
-#270 (needs synchronized changes across 2 units, plus its own investigation),
-#265 (largest surface), #358/#359 (need their own design decisions — #359
-in particular needs confirming nothing legitimately depends on non-localhost
-ES access before changing it). #283 (M15) stays blocked.
+Next unstarted item: #355 — well-specified and self-contained (one CI
+workflow matrix entry + a path filter + a SOP-008 checklist line), no
+design judgment call needed. Recommended over #270 (needs synchronized
+changes across 2 systemd units), #265 (largest surface), #358/#361 (both
+need new SLO-metric design work), and #359 (needs confirming nothing
+legitimately depends on non-localhost ES access before changing it — a
+judgment call, not a mechanical fix). #283 (M15) stays blocked.
 
 ---
 
@@ -1782,6 +1812,28 @@ are implemented in code; checked off with that one caveat noted inline.
   follow-ups (#355, #357, #358, #359); recommending #357 next — the fix
   pattern is now proven twice, applying it a third time is the smallest,
   most mechanical remaining pick.
+
+- **#357 closed — checkpoints-compact.service's identical `Environment=${VAR}`
+  bug fixed (the fourth occurrence of this class), plus a repo-wide guard
+  added so it can't recur a fifth time undetected.** Full detail in NEXT
+  UP above. [PR #362](https://github.com/voltron-1/Suburban_SOC/pull/362)
+  merged 2026-08-16 (squash, `aa73b63`), 13/13 CI green. security-auditor +
+  code-reviewer found two gaps beyond the third mechanical fix
+  application: `EnvironmentFile=` is empirically last-wins on a duplicate
+  `.env` key (confirmed live via `systemd-run --user`), closed with
+  `| tail -n 1` across all 3 affected units; and each unit's own
+  regression test pinned the broken line's absence but never asserted the
+  `ExecStartPre` that produces the secret exists — closed with
+  content+ordering pins (mutation-tested) plus a new repo-wide test
+  scanning every `configs/systemd/*.service` file for the bug shape
+  itself, not one string per unit. Follow-up filed:
+  [#361](https://github.com/voltron-1/Suburban_SOC/issues/361)
+  (activating the `agent_checkpoints_compactor` credential for the first
+  time here has no detection coverage — its own SLO metrics get greener,
+  not worse, if abused). M16 backlog: #270, #265 (original) plus #355,
+  #358, #359, #361 (accumulated follow-ups); recommending #355 next —
+  well-specified, self-contained, no design judgment call needed unlike
+  #358/#359/#361.
 
 ## LAST SESSION — 2026-08-13
 

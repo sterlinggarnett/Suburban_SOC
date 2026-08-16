@@ -47,7 +47,14 @@ User=tjlam
 # `test -s`): a typo'd/rotated-away INTEL_WRITER_PASSWORD key, or a blank
 # value, must fail this step loudly rather than silently write an empty/
 # near-empty scratch file.
-ExecStartPre=/bin/sh -c 'grep "^INTEL_WRITER_PASSWORD=" /home/tjlam/projects/Suburban-SOC/scripts/setup/.env | sed -E "s/^INTEL_WRITER_PASSWORD=/ES_PASS=/; s/[ \t]+#.*//" > /run/suburban-soc-intel/intel_writer_password.env; grep -Eq "^ES_PASS=.{8,}" /run/suburban-soc-intel/intel_writer_password.env'
+# `| tail -n 1` (#357 security-auditor round 2): if .env ever has TWO
+# INTEL_WRITER_PASSWORD= lines (a botched rotation), the grep above
+# matches both — EnvironmentFile= is last-wins (empirically confirmed
+# live via `systemd-run --user`), but the `grep -Eq` guard without this
+# would only need ONE of the two lines to pass, so a valid first line
+# could mask a bad/blank second one that's actually what gets exported.
+# tail -n 1 makes the guard validate the exact line that wins.
+ExecStartPre=/bin/sh -c 'grep "^INTEL_WRITER_PASSWORD=" /home/tjlam/projects/Suburban-SOC/scripts/setup/.env | sed -E "s/^INTEL_WRITER_PASSWORD=/ES_PASS=/; s/[ \t]+#.*//" | tail -n 1 > /run/suburban-soc-intel/intel_writer_password.env; grep -Eq "^ES_PASS=.{8,}" /run/suburban-soc-intel/intel_writer_password.env'
 # "-" prefix REQUIRED (security-auditor precedent, slo-metrics.service):
 # every Exec* command in this unit, including the ExecStartPre above that
 # CREATES this file, has EnvironmentFile= applied before it execs — without

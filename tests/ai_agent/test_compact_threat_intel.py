@@ -12,6 +12,7 @@ for why).
 """
 import io
 import json
+import re
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -513,7 +514,6 @@ class CompactorCredentialProvisioningTests(unittest.TestCase):
         # one proves no var can silently join the club that
         # AGENT_CHECKPOINTS_COMPACTOR_PASSWORD/LOGSTASH_ENRICH_PASSWORD/
         # THREAT_INTEL_COMPACTOR_PASSWORD were found in.
-        import re
         placeholder_vars = set(re.findall(r"^([A-Z_]+)=changeme", ENV_EXAMPLE, re.MULTILINE))
         # ELASTIC_PASSWORD/KIBANA_PASSWORD/LOGSTASH_PASSWORD are gated via a
         # single-$ Compose-time reference (docker-compose.yml's own comment
@@ -544,9 +544,38 @@ class CompactorCredentialProvisioningTests(unittest.TestCase):
         active_lines = [line for line in SERVICE_FILE.splitlines() if not line.strip().startswith("#")]
         for line in active_lines:
             self.assertNotIn("Environment=THREAT_INTEL_COMPACTOR_ES_PASS=${THREAT_INTEL_COMPACTOR_PASSWORD}", line)
-        self.assertIn("THREAT_INTEL_COMPACTOR_ES_PASS=", SERVICE_FILE)
+        # security-auditor round 2 (#357): the assertion below previously
+        # scanned the WHOLE file, including the explanatory comment above
+        # (which quotes "THREAT_INTEL_COMPACTOR_ES_PASS=" verbatim as part
+        # of documenting the broken pattern) — it would have passed even if
+        # every functional reference were deleted. Scan active_lines only.
+        self.assertTrue(any("THREAT_INTEL_COMPACTOR_ES_PASS=" in line for line in active_lines))
         self.assertIn("EnvironmentFile=-/run/suburban-soc-threat-intel-compact/"
                       "threat_intel_compactor_password.env", SERVICE_FILE)
+
+    def test_systemd_execstartpre_actually_extracts_the_secret_before_execstart(self):
+        # security-auditor round 2 MEDIUM (#357): the tests above pin that
+        # the broken line is gone and the EnvironmentFile= consumer is
+        # present, but neither ever asserted the ExecStartPre that actually
+        # PRODUCES the scratch file exists at all — deleting that one line
+        # leaves EnvironmentFile=- silently tolerating a missing file (by
+        # design, for the separate "blank .env is fine" case), so every ES
+        # call would 401 daily with the full test suite still green. Pin
+        # its content and its position ahead of ExecStart directly,
+        # mirroring tests/pipeline/test_capture_loss_monitoring.py's
+        # test_systemd_check_runs_in_execstartpre_not_execstart precedent.
+        execstartpre_match = re.search(
+            r"ExecStartPre=/bin/sh -c 'grep \"\^THREAT_INTEL_COMPACTOR_PASSWORD=\".*"
+            r"THREAT_INTEL_COMPACTOR_ES_PASS=.*"
+            r"/run/suburban-soc-threat-intel-compact/threat_intel_compactor_password\.env.*"
+            r"grep -Eq \"\^THREAT_INTEL_COMPACTOR_ES_PASS=\.\{8,\}\"",
+            SERVICE_FILE)
+        self.assertIsNotNone(
+            execstartpre_match,
+            "expected an ExecStartPre extracting THREAT_INTEL_COMPACTOR_PASSWORD into the "
+            "scratch file EnvironmentFile= reads, with a non-empty-value guard")
+        execstart_pos = SERVICE_FILE.index("\nExecStart=/usr/bin/python3")
+        self.assertLess(execstartpre_match.start(), execstart_pos)
 
 
 if __name__ == "__main__":

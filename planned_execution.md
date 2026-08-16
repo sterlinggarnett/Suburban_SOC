@@ -25,7 +25,7 @@ matching the M12/M13/M14 pattern.
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | 3 | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 8 | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 2/11 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 3/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
@@ -113,6 +113,35 @@ unit, no unattended multi-issue runs.
   real `json.loads` plus a key-order-independence regression test.
   Wired into CI as a new `tests/dashboards` directory-glob step in
   `detections.yml`, mirroring the existing `tests/pipeline` step.
+- [x] **#342 (P3, bug) — COMPLETE, MERGED** — the Windows Security-channel
+  block only ever stamped `event.outcome`; it never mapped
+  `winlog.event_data.IpAddress`/`TargetUserName` to ECS
+  (`source.ip`/`user.target.name`), so a Windows-side auth failure had no
+  source attribution on any ECS-field-based dashboard/hunt.
+  [PR #371](https://github.com/voltron-1/Suburban_SOC/pull/371) merged
+  2026-08-16 (squash), auto-closing #342. M18 now 3/13 closed.
+  Deliberately `copy`, not `rename` (unlike the Sysmon block above it):
+  3 deployed `level:high` Elastic threshold rules bucket/cardinality-count
+  directly on the raw field names outside the pySigma pipeline — a
+  `rename` would've silently broken all of them, confirmed by reading the
+  actual rule files. security-auditor review found the geoip guard let
+  `0.0.0.0`/`::` (both valid ES `ip` values) index as meaningless buckets,
+  and missed `::ffff:`-mapped Kerberos Client Addresses from domain
+  controllers — both fixed and live-verified in a real `logstash:9.3.2`
+  container (7 synthetic events). A follow-up review then found the new
+  regression test only checked field *presence*, not copy *direction* —
+  the exact flat-field footgun this repo already hit as #328/#161 —
+  fixed, plus a `remove_field` regex that could never match this file's
+  own bracket-notation fields. All 6 new/changed assertions
+  mutation-tested. CodeQL then flagged the `remove_field` fix itself as a
+  HIGH-severity ReDoS (nested quantifiers that can all match empty) —
+  replaced with a plain linear quote-tracking scan, confirmed on the
+  exact adversarial input CodeQL cited (150k chars in ~5ms). Folded into
+  `tests/pipeline/test_framework_enrichment.py` (already covers this same
+  block for #297) rather than a new file, per code-reviewer feedback.
+  Filed [#370](https://github.com/voltron-1/Suburban_SOC/issues/370)
+  (out of scope: a threshold rule still buckets on the raw, unsanitized
+  field) as a new M18 Backlog item.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -1924,6 +1953,17 @@ are implemented in code; checked off with that one caveat noted inline.
   a 4-field fix into a repo-wide sweep (22 total fields fixed across 8
   dashboard files) plus a new CI-enforced regression test
   (`tests/dashboards/test_dashboard_field_mapping.py`).
+- **#342 closed — Windows Security-channel events get ECS source
+  attribution.** Full detail in NEXT UP's "M18 progress" above.
+  [PR #371](https://github.com/voltron-1/Suburban_SOC/pull/371) merged
+  2026-08-16 (squash), auto-closing #342. M18 now 3/13 closed. Two
+  security-auditor review rounds plus a code-reviewer pass hardened the
+  fix well beyond its original scope (sentinel/`::ffff:` guards,
+  copy-direction test coverage); CI's CodeQL gate then caught a
+  ReDoS in the review's own remove_field-detection regex, fixed with a
+  linear scan before merge. Filed
+  [#370](https://github.com/voltron-1/Suburban_SOC/issues/370) (raw-field
+  threshold-rule sentinel gap) as a new M18 Backlog item.
 
 ---
 

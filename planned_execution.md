@@ -25,7 +25,7 @@ matching the M12/M13/M14 pattern.
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | 3 | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 8 | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 11 | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 1/11 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
@@ -43,6 +43,43 @@ about, so a natural continuation) and M19 has the most security-labeled
 issues, but which to start is an open call, not yet a recommendation.
 Multi-phase execution gating still applies: each issue is its own gated
 unit, no unattended multi-issue runs.
+
+**M18 progress:**
+
+- [x] **#344 (P2, security, bug) — COMPLETE, MERGED** — `winlog.event_data.
+  CommandLine` (Windows Security-channel, Winlogbeat's raw un-renamed
+  shape) matches the `long_command_fields` dynamic_template's `*CommandLine`
+  glob at `ignore_above:32766` but had no entry in `configs/logstash.conf`'s
+  `long_fields` byte-clamp hash — same #263/#290 whole-document Lucene
+  immense-term rejection risk, undiscovered because `CeilingConsistencyTests`
+  only walks the template's *explicit* properties, not dynamic_template
+  glob matches. Fixed per the issue's own suggested option 1 (add the one
+  concretely-identified field), not option 2 (rewrite the filter to sweep
+  by glob generically — scoped out, see below).
+  [PR #368](https://github.com/voltron-1/Suburban_SOC/pull/368) merged
+  2026-08-16 (squash), auto-closing #344 — no GitHub-side human review,
+  same review-bypass basis as every prior session fix (17/17 CI green,
+  parallel security-auditor + code-reviewer sub-agent review only).
+  security-auditor follow-up found a **second live instance** of the same
+  gap already in the repo — `network_parsed.uri` (Zeek `http.log`'s uri
+  field, reachable today via the unauthenticated `:5514` HTTP input, same
+  attacker-controlled-URI shape as #290's `url.path`) — added in the same
+  fix. Also found a MEDIUM gap in the CI gate itself: nothing asserted the
+  ruby `long_fields` hash and its Python `LONG_FIELDS` test mirror agreed
+  with *each other*, only that each agreed with the template separately —
+  deleting either new entry left the whole suite green. Closed with a
+  direct bidirectional equality assertion, verified by mutation test
+  (deleting an entry now fails it). Both new clamp entries live-verified
+  against the real ruby filter logic (not just the Python mirror) in a
+  throwaway `ruby:3-alpine` container, `--network none`, fed a fake
+  Logstash `event` object — 40000-char tagging, byte-ceiling clamping for
+  multi-byte content, and no regression on the pre-existing `ImagePath`
+  entry, individually and with all 7 clamped fields in one event.
+  Filed [#367](https://github.com/voltron-1/Suburban_SOC/issues/367) to
+  track the deferred structural fix (union of a glob sweep with the
+  explicit list) — scoped out because it needs a per-event recursive
+  field walk on a pipeline with its own ingest-lag SLO, not because of a
+  correctness concern with the 2-field fix that shipped.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -1818,6 +1855,35 @@ are implemented in code; checked off with that one caveat noted inline.
   Resolved Architecture Decisions:
   - Alert ID sourcing: uses a Semantic Deduplication Key (hash of tenant+IP+severity+5m_bucket)
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
+
+---
+
+## LAST SESSION — 2026-08-16
+
+- **Backlog restructured into 6 new milestones (M17–M22), M13/M14/M15
+  closed.** 37 open issues had accumulated, 33 with no milestone at all —
+  real review follow-ups filed across M12–M16 and never triaged. Sorted
+  by theme into M17 (detection-rule correctness), M18 (ECS
+  pipeline/field-mapping integrity), M19 (platform credential hygiene),
+  M20 (SOAR response-path hardening), M21 (Zeek sensor resilience), M22
+  (compliance/docs accuracy). M13 (25/25), M14 (8/8), M15 (11/11) closed
+  outright — M15's one open item (#283) moved to M17, its true thematic
+  home. Full detail above in NEXT UP.
+- **README, wiki, and project board synced to the restructuring.**
+  README's Project Status table and Recent Enhancements updated
+  ([commit `ff56977`](https://github.com/voltron-1/Suburban_SOC/commit/ff56977)),
+  also fixing a stale "docker compose is broken" note (#303 closed
+  2026-08-09, not reflected in prose until now). Wiki `Home.md` mirrored
+  the same table (pushed to the separate `Suburban_SOC.wiki` repo). GitHub
+  Projects v2 board verified structurally accurate: all 37 open issues
+  present as Backlog with Milestone auto-synced to the new split (M16=3,
+  M17=8, M18=11, M19=6, M20=3, M21=3, M22=3), all closed issues as Done.
+- **#344 closed — long_command_fields dynamic_template byte-clamp gap.**
+  Full detail in NEXT UP's "M18 progress" above.
+  [PR #368](https://github.com/voltron-1/Suburban_SOC/pull/368) merged
+  2026-08-16 (squash), auto-closing #344. M18 now 1/11 closed. Filed
+  [#367](https://github.com/voltron-1/Suburban_SOC/issues/367) (deferred
+  structural fix) as a new M18 Backlog item.
 
 ---
 

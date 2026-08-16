@@ -33,6 +33,12 @@ Trivy and pip-audit failures will block PRs with a red CI status. The weekly sch
 To verify vulnerability management controls:
 1. Inspect `scripts/setup/ai_agent/requirements.txt` to ensure exact version pins (`==`).
 2. Verify the `Security Scan` workflow runs Trivy with `severity: CRITICAL, exit-code: 1`.
+3. Verify the third-party `zeek/zeek` image (#293's tag+digest pin — the one
+   image this SOC depends on that isn't built from this repo's own
+   Dockerfiles) is covered by the same gate: the `zeek-image` job resolves
+   its scan target directly from `tests/pipeline/test_zeek_image_pin.py`'s
+   `EXPECTED_TAG`/`EXPECTED_DIGEST`, so it can never silently scan a stale
+   reference (#355).
 
 ## Recommended Response Action(s)
 
@@ -61,3 +67,7 @@ To remediate dependencies:
 - `.github/workflows/security-scan.yml`
 - `scripts/setup/ai_agent/requirements.txt`
 - `scripts/hive-mind-broker/requirements.txt`
+- `tests/pipeline/test_zeek_image_pin.py` — authoritative source for the
+  `zeek/zeek` image reference the `zeek-image` Trivy job scans; bumping
+  the pin (see `configs/systemd/zeek-host-capture.service`'s own header
+  comment for the full process) automatically changes what this job scans

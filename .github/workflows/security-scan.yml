@@ -10,6 +10,9 @@ on:
       - "scripts/hive-mind-broker/**"
       - "scripts/setup/docker-compose*.yml"   # audit P2-15: scan the compose IaC too
       - "configs/elasticsearch/**"
+      - "configs/systemd/**"                  # #355: covers the zeek/zeek pin (#293)
+      - "scripts/setup/*.sh"                  # #355: covers the zeek/zeek pin (#293)
+      - "tests/pipeline/test_zeek_image_pin.py" # #355: the zeek-image job's own pin source
       - ".github/workflows/security-scan.yml"
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC — weekly patch cadence
@@ -52,6 +55,38 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: suburban-soc/${{ matrix.name }}:scan
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+
+  zeek-image:
+    # #355: the zeek/zeek image #293 pinned to a specific tag+digest sits
+    # outside `images`' matrix above (no local Dockerfile to build — it's a
+    # remote, pre-published image, scanned by reference instead) and is now
+    # frozen indefinitely by that pin, with no automatic path back to a
+    # patched build except a human bumping it. Reads EXPECTED_TAG/
+    # EXPECTED_DIGEST directly from tests/pipeline/test_zeek_image_pin.py
+    # (the same constants that test enforces the 4 real capture paths match)
+    # rather than duplicating the value here, so this job can never scan a
+    # stale reference that's already drifted from what the repo actually pins.
+    name: Container image scan (Trivy) (zeek/zeek)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Resolve the pinned zeek/zeek reference
+        id: zeek-ref
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import sys
+          sys.path.insert(0, "tests/pipeline")
+          import test_zeek_image_pin as t
+          print(f"image=zeek/zeek:{t.EXPECTED_TAG}@{t.EXPECTED_DIGEST}")
+          PY
+      - name: Trivy — fail on CRITICAL (fixed) vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.zeek-ref.outputs.image }}
           severity: CRITICAL
           exit-code: "1"
           ignore-unfixed: true

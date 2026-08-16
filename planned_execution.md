@@ -9,7 +9,45 @@ Status: `[ ]` todo · `[~]` in-progress · `[x]` done · `[!]` blocked
 
 ## NEXT UP
 
-**Current milestone: [M15 — Detection Correctness & Pipeline Fidelity](https://github.com/voltron-1/Suburban_SOC/milestone/19).**
+**Restructured 2026-08-16, per direct request:** the backlog had grown to
+37 open issues, 33 of them with no milestone at all (filed as review
+follow-ups across M12–M16 and never triaged), plus 4 more crammed into
+M16 despite sharing no real theme with its actual "endpoint onboarding /
+threat-intel" scope. M15 closed outright (its last open item, #283, moved
+to its true thematic home below — #283 was never "M15 work," it just
+hadn't been re-sorted). Every open issue now has exactly one
+properly-scoped milestone; M15's full history moved to `<details>` below,
+matching the M12/M13/M14 pattern.
+
+**7 open milestones** (issue counts as of the restructure):
+
+| Milestone | Issues | Theme |
+|---|---|---|
+| [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | 3 | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 8 | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 11 | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
+| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
+| [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
+| [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 3 | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
+
+**Full per-issue detail lives in each milestone's own GitHub issue list**
+(the issue tracker is the source of truth per this doc's own header) —
+this doc doesn't duplicate 37 issue bodies inline the way it narrates
+*completed* work. As each issue is picked up, gate and record it here the
+same way every prior milestone's issues were recorded below.
+
+No cross-milestone priority order is set yet — M17/M18 are the largest
+(detection- and pipeline-correctness debt, the same theme M15 was just
+about, so a natural continuation) and M19 has the most security-labeled
+issues, but which to start is an open call, not yet a recommendation.
+Multi-phase execution gating still applies: each issue is its own gated
+unit, no unattended multi-issue runs.
+
+<details>
+<summary>M15 history (complete) — click to expand</summary>
+
+**Milestone: [M15 — Detection Correctness & Pipeline Fidelity](https://github.com/voltron-1/Suburban_SOC/milestone/19).**
 Started 2026-08-09, immediately after M14 closed (8/8 issues, plus #252).
 Whether the *existing* rule corpus behaves as written, as distinct from
 M13's rule-count goal. M12/M13/M14 sections below are retained as history,
@@ -604,13 +642,10 @@ has appeared with 4 open P3 issues.
   pre-existing, bump-unrelated shell-script `mime_type` detection gap
   found during verification).
 
-The M16/M14 catch-all follow-up pile has grown large and scattered across
-several ad-hoc "M16" tags that don't share a real theme — #270, #265,
-#358, #359, #361, #365 plus M15's still-blocked #283. Restructuring this
-into properly-scoped milestones next, per the repo owner's direct request,
-rather than continuing to recommend "next unstarted item" from an
-unsorted pile.
-it. #283 (M15) stays blocked.
+M15 is COMPLETE — see the 2026-08-16 restructure note in NEXT UP above for
+where its last item (#283) and every other scattered follow-up landed.
+
+</details>
 
 ---
 
@@ -1908,6 +1943,26 @@ are implemented in code; checked off with that one caveat noted inline.
   issue and restructure the scattered M16-catch-all pile into properly-
   scoped milestones, rather than continuing ad-hoc "next unstarted item"
   picks from an unsorted backlog.
+
+- **Backlog restructured — 37 open issues, 33 of them previously
+  unmilestoned, sorted into 6 new thematic milestones (M17–M22); M15
+  closed outright.** Full milestone-by-milestone breakdown in NEXT UP
+  above. Read all 37 open issues' bodies (not just titles/labels) before
+  grouping, to avoid mis-categorizing on a misleading title alone.
+  Themes: M17 detection-rule logic correctness (8), M18 ECS pipeline/
+  field-mapping integrity (11 — the largest single theme, and a direct
+  continuation of what M15 itself was about), M19 platform credential/
+  secret hygiene (6), M20 SOAR response-path hardening (3), M21 Zeek
+  sensor operational resilience (3), M22 compliance/documentation
+  accuracy (3). M16 narrowed back to its original 3 (endpoint onboarding
+  + threat-intel), stripped of the 4 unrelated issues that had
+  accumulated in it this session purely because it was the only open
+  milestone to file follow-ups against. #283 (M15's last open item, still
+  blocked on unavailable real-Windows-telemetry) moved to M17, its actual
+  thematic home — this let M15 close for real (11/11 done) rather than
+  staying open for one item that was never really "M15 work." No new
+  code changes this pass — pure GitHub milestone/issue metadata (`gh api
+  repos/.../milestones`, `gh issue edit --milestone`) plus this doc.
 
 ## LAST SESSION — 2026-08-13
 

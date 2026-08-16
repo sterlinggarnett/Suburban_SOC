@@ -25,7 +25,7 @@ matching the M12/M13/M14 pattern.
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | 3 | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 8 | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 3/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 4/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
@@ -142,6 +142,31 @@ unit, no unattended multi-issue runs.
   Filed [#370](https://github.com/voltron-1/Suburban_SOC/issues/370)
   (out of scope: a threshold rule still buckets on the raw, unsanitized
   field) as a new M18 Backlog item.
+- [x] **#337 (P2, bug) — COMPLETE, MERGED** — `user.name` was mapped
+  `keyword` with NO `ignore_above` at all (Elasticsearch's own unbounded
+  default, 2147483647) — a long value reached Lucene directly with no
+  char-ceiling backstop, the same whole-document immense-term rejection
+  risk `#263`/`#290`/`#344` fixed elsewhere. Separately, `#328` correctly
+  nested 9 Sysmon-derived fields but the truncation filter only ever
+  tracked 4 of them under one global 32766 ceiling; restructured to
+  per-field ceilings so the other 6 (at their own real 8191/1024
+  ceilings) get truncation-visibility tagging for the first time.
+  [PR #372](https://github.com/voltron-1/Suburban_SOC/pull/372) merged
+  2026-08-16 (squash), auto-closing #337. M18 now 4/13 closed.
+  Two security-auditor review rounds found: `related.user` wrongly
+  raised to 32766 despite being an ECS array field the byte-clamp can't
+  handle (backed off to 8191, matching `related.hosts`); a PII-redaction
+  gsub that grows matched substrings running *after* the byte-clamp
+  (reordered); Ruby counting Unicode code points where Elasticsearch
+  counts UTF-16 code units, silently undercounting astral characters —
+  e.g. emoji — for the 6 newly-tracked fields (fixed in both the ruby
+  filter and its Python mirror, live-verified the exact 4095-vs-4096-
+  emoji boundary against a real `logstash:9.3.2` container); and an
+  exact-match byte-clamp guard that would've silently skipped any future
+  tier between 8192 and 32765 (generalized). A follow-up pass then found
+  3 more minor gaps (a comment citing a nonexistent test, a hardcoded
+  tier regex blind to a future third tier, stale guard-formula comments)
+  — all fixed. 8 mutation-test scenarios total, every one caught.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -1964,6 +1989,13 @@ are implemented in code; checked off with that one caveat noted inline.
   linear scan before merge. Filed
   [#370](https://github.com/voltron-1/Suburban_SOC/issues/370) (raw-field
   threshold-rule sentinel gap) as a new M18 Backlog item.
+- **#337 closed — user.name had no ignore_above; truncation filter
+  restructured to per-field ceilings.** Full detail in NEXT UP's "M18
+  progress" above. [PR #372](https://github.com/voltron-1/Suburban_SOC/pull/372)
+  merged 2026-08-16 (squash), auto-closing #337. M18 now 4/13 closed.
+  Two security-auditor rounds (related.user array-clamp trap, gsub
+  ordering, Ruby-vs-Java UTF-16 counting, guard generality, plus 3 more
+  minor follow-up gaps) — all fixed and mutation-tested.
 
 ---
 

@@ -555,22 +555,47 @@ has appeared with 4 open P3 issues.
   coverage — its own SLO metrics get greener, not worse, if a `CLAIMED`
   doc is maliciously deleted).
 
-3 issues remain from the original M16 backlog: #270 (`intel-refresh.service`:
+- [x] **#355 (P3, supply-chain) — COMPLETE, MERGED** — the `zeek/zeek`
+  image #293 pinned sat entirely outside `security-scan.yml`'s Trivy
+  coverage (that matrix only scanned the 2 self-built images), so pinning
+  it also meant freezing it indefinitely with no automated path back to a
+  patched build. [PR #363](https://github.com/voltron-1/Suburban_SOC/pull/363)
+  merged 2026-08-16 (squash, `6f0bb1e`), auto-closing #355. Added a
+  `zeek-image` Trivy job that resolves its scan target by importing
+  `tests/pipeline/test_zeek_image_pin.py`'s `EXPECTED_TAG`/`EXPECTED_DIGEST`
+  directly rather than duplicating the value, so it can never scan a stale
+  reference. Live-verified with a real Trivy install against the actual
+  pinned reference (not just YAML syntax) — found **7 real, fixed CRITICAL
+  CVEs** on the currently-pinned `8.1.1` (libgnutls30t68, libssl3t64/
+  openssl, libnode115/nodejs). Confirmed with the repo owner before
+  landing: the new job ships as a hard failure on the current pin, by
+  design, rather than starting green — makes the exposure impossible to
+  ignore. Confirmed via `gh api .../branches/main/protection` that none of
+  the 3 Trivy image-scan jobs (including the 2 pre-existing ones) are
+  actually required branch-protection checks, so this is visible-but-
+  non-blocking, consistent with its siblings rather than a harder gate
+  than precedent. Also confirmed a clean fix path exists
+  (`zeek/zeek:latest` has moved to `8.2.1`, 0 CRITICAL CVEs) — tracked
+  separately as [#364](https://github.com/voltron-1/Suburban_SOC/issues/364)
+  since a version bump needs its own live-fire verification pass per
+  #293's own documented process, not bundled into a scanning-coverage
+  change.
+
+4 issues remain from the original M16 backlog: #270 (`intel-refresh.service`:
 data/code co-location + unpinned CA trust-on-every-use, mirrors
 `slo-metrics.service`), #265 (mint client certs for Winlogbeat/endpoint-
 Filebeat before #219's mTLS enforcement breaks a real endpoint's first
-connection) — plus 4 accumulated follow-ups:
-[#355](https://github.com/voltron-1/Suburban_SOC/issues/355) (Trivy scan
-coverage for the pinned `zeek/zeek` image), #358 (threat-intel detection
-gaps), #359 (ES port binding), #361 above.
+connection) — plus 4 accumulated follow-ups: #358 (threat-intel detection
+gaps), #359 (ES port binding), #361 (agent-checkpoints detection gap), and
+the new [#364](https://github.com/voltron-1/Suburban_SOC/issues/364)
+(zeek/zeek CVE bump).
 
-Next unstarted item: #355 — well-specified and self-contained (one CI
-workflow matrix entry + a path filter + a SOP-008 checklist line), no
-design judgment call needed. Recommended over #270 (needs synchronized
-changes across 2 systemd units), #265 (largest surface), #358/#361 (both
-need new SLO-metric design work), and #359 (needs confirming nothing
-legitimately depends on non-localhost ES access before changing it — a
-judgment call, not a mechanical fix). #283 (M15) stays blocked.
+Next unstarted item: #364 — supersedes the rest of the queue. It's the
+only `priority:critical` item open anywhere in the repo right now (a
+live, unpatched CRITICAL exposure on the network sensor, CI-red since
+#355 landed), and #293's own header comment already documents the exact
+bump process to follow. #270/#265/#358/#359/#361 all stay queued behind
+it. #283 (M15) stays blocked.
 
 ---
 
@@ -1834,6 +1859,20 @@ are implemented in code; checked off with that one caveat noted inline.
   #358, #359, #361 (accumulated follow-ups); recommending #355 next —
   well-specified, self-contained, no design judgment call needed unlike
   #358/#359/#361.
+
+- **#355 closed — Trivy scanning now covers the pinned `zeek/zeek` image.**
+  Full detail in NEXT UP above. [PR #363](https://github.com/voltron-1/Suburban_SOC/pull/363)
+  merged 2026-08-16 (squash, `6f0bb1e`). Live-verifying the new job (not
+  just its YAML) against the real pinned reference surfaced a genuine,
+  currently-live finding: 7 real CRITICAL CVEs on `zeek/zeek:8.1.1`. Asked
+  the repo owner how the new gate should handle that before implementing —
+  confirmed: ship it as a hard failure on the current pin rather than
+  starting green, so the exposure can't be silently absorbed. Confirmed a
+  clean fix exists (`:latest` has moved to 8.2.1, 0 CRITICAL) and filed it
+  as [#364](https://github.com/voltron-1/Suburban_SOC/issues/364)
+  (`priority:critical`) rather than bundling a version bump into a
+  scanning-coverage PR. #364 now supersedes the rest of the M16 queue —
+  it's the only critical-severity item open anywhere in the repo.
 
 ## LAST SESSION — 2026-08-13
 

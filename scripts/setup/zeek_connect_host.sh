@@ -51,5 +51,5 @@ sudo docker run --rm \
   -v "${LOG_DIR}:/data/zeek_logs" \
   -v /storage/PCAP/intel:/data/intel \
   -w /data/zeek_logs \
-  zeek/zeek:8.1.1@sha256:f3d539d68e2a68897b02bfa302df9c7f8bcb89f338399625686fca9cc30c85f3 \
+  zeek/zeek:8.2.1@sha256:eca2b3915d3e067cbb4a904f23f4c4f461ea2b60613ab30f7ee77bbc707c87c7 \
   zeek -C -i eth0 LogAscii::use_json=T /data/intel/config.zeek

@@ -86,7 +86,7 @@ process_pcap() {
     -v /storage/PCAP/intel:/data/intel \
     -v "$pcap":/input.pcap:ro \
     -w /data/temp_zeek \
-    zeek/zeek:8.1.1@sha256:f3d539d68e2a68897b02bfa302df9c7f8bcb89f338399625686fca9cc30c85f3 \
+    zeek/zeek:8.2.1@sha256:eca2b3915d3e067cbb4a904f23f4c4f461ea2b60613ab30f7ee77bbc707c87c7 \
     zeek -C -r /input.pcap LogAscii::use_json=T /data/intel/config.zeek
 
   # Move logs into a per-pcap subdirectory under the main zeek_logs directory

@@ -44,6 +44,11 @@ jobs:
         # automatically.
         run: python -m pytest tests/pipeline -q
 
+      - name: Dashboard field-mapping tests (#341 — no .keyword on a bare-keyword field)
+        # Directory glob, same reasoning as the tests/pipeline step above —
+        # a future tests/dashboards/*.py addition is covered automatically.
+        run: python -m pytest tests/dashboards -q
+
       - name: Detection fixture tests (WS2.1 — TP fires, TN regression, promotion gate)
         run: python -m pytest tests/detections/test_sigma_detections.py -q
 

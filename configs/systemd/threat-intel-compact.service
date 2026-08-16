@@ -50,7 +50,14 @@ User=tjlam
 # step loudly rather than silently write an empty/near-empty scratch file
 # — "-" prefix on EnvironmentFile= below is what makes a missing file (not
 # a missing VALUE) the fails-closed, silent case instead.
-ExecStartPre=/bin/sh -c 'grep "^THREAT_INTEL_COMPACTOR_PASSWORD=" /home/tjlam/projects/Suburban-SOC/scripts/setup/.env | sed -E "s/^THREAT_INTEL_COMPACTOR_PASSWORD=/THREAT_INTEL_COMPACTOR_ES_PASS=/; s/[ \t]+#.*//" > /run/suburban-soc-threat-intel-compact/threat_intel_compactor_password.env; grep -Eq "^THREAT_INTEL_COMPACTOR_ES_PASS=.{8,}" /run/suburban-soc-threat-intel-compact/threat_intel_compactor_password.env'
+# `| tail -n 1` (#357 security-auditor round 2): if .env ever has TWO
+# THREAT_INTEL_COMPACTOR_PASSWORD= lines (a botched rotation), the grep
+# above matches both — EnvironmentFile= is last-wins (empirically
+# confirmed live via `systemd-run --user`), but the `grep -Eq` guard
+# without this would only need ONE of the two lines to pass, so a valid
+# first line could mask a bad/blank second one that's actually what gets
+# exported. tail -n 1 makes the guard validate the exact line that wins.
+ExecStartPre=/bin/sh -c 'grep "^THREAT_INTEL_COMPACTOR_PASSWORD=" /home/tjlam/projects/Suburban-SOC/scripts/setup/.env | sed -E "s/^THREAT_INTEL_COMPACTOR_PASSWORD=/THREAT_INTEL_COMPACTOR_ES_PASS=/; s/[ \t]+#.*//" | tail -n 1 > /run/suburban-soc-threat-intel-compact/threat_intel_compactor_password.env; grep -Eq "^THREAT_INTEL_COMPACTOR_ES_PASS=.{8,}" /run/suburban-soc-threat-intel-compact/threat_intel_compactor_password.env'
 # "-" prefix REQUIRED (security-auditor precedent, slo-metrics.service):
 # every Exec* command in this unit, including the ExecStartPre above that
 # CREATES this file, has EnvironmentFile= applied before it execs — without

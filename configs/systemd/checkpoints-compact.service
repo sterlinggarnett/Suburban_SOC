@@ -28,19 +28,58 @@ User=tjlam
 # purpose is holding no delete privilege, so a compromised live agent/CLI
 # credential can never erase a claim doc and reopen the at-most-once
 # execution gate (#214/#247). agent_checkpoints_compactor holds read+delete
-# on agent-checkpoints-* ONLY, used by nothing else. "-" prefix: do not
-# fail the unit if .env is missing — a blank AGENT_CHECKPOINTS_COMPACTOR_PASSWORD
-# just makes the script 401 and delete nothing (fails closed into "keeps
-# growing", never into an unintended delete).
-EnvironmentFile=-/home/tjlam/projects/Suburban-SOC/scripts/setup/.env
+# on agent-checkpoints-* ONLY, used by nothing else.
+#
+# #357 (security-auditor review, #271; empirically re-confirmed live via
+# `systemd-run --user` against a throwaway unit on this exact host):
+# systemd's Environment= directive does NOT perform ${VAR} expansion — per
+# systemd.exec(5), "$" has no special meaning there. The prior line here,
+# `Environment=AGENT_CHECKPOINTS_COMPACTOR_ES_PASS=${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD}`,
+# resolved to the LITERAL string "${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD}",
+# not the real password — every ES call this unit made would 401. This is
+# the exact bug class #259 already found and fixed once for
+# slo-metrics.service (see that unit's own long comment on this); it was
+# independently reintroduced in intel-refresh.service (fixed in #271,
+# since that unit was installed and actively running on this host).
+# Fixed the same way #259 fixed it: extract ONLY the one secret this unit
+# needs, comment-stripped the same way scripts/setup/lib/env_loader.py
+# strips them, into a scratch file under RuntimeDirectory=, renamed to the
+# key the script actually reads — EnvironmentFile=- then supplies it
+# directly, no expansion needed. `grep -Eq "^...ES_PASS=.{8,}"` (not
+# `test -s`): a typo'd/rotated-away AGENT_CHECKPOINTS_COMPACTOR_PASSWORD
+# key, or a blank value, must fail this step loudly rather than silently
+# write an empty/near-empty scratch file — "-" prefix on EnvironmentFile=
+# below is what makes a missing FILE (not a missing VALUE) the
+# fails-closed, silent case instead (matches the pre-existing "blank =
+# fails closed into keeps growing, never an unintended delete" posture).
+# `| tail -n 1` (security-auditor round 2): if .env ever has TWO
+# AGENT_CHECKPOINTS_COMPACTOR_PASSWORD= lines (a botched rotation), the
+# grep above matches both — EnvironmentFile= is last-wins (empirically
+# confirmed live via `systemd-run --user`), but the `grep -Eq` guard
+# without this would only need ONE of the two lines to pass, so a valid
+# first line could mask a bad/blank second one that's actually what gets
+# exported. tail -n 1 makes the guard validate the exact line that wins.
+ExecStartPre=/bin/sh -c 'grep "^AGENT_CHECKPOINTS_COMPACTOR_PASSWORD=" /home/tjlam/projects/Suburban-SOC/scripts/setup/.env | sed -E "s/^AGENT_CHECKPOINTS_COMPACTOR_PASSWORD=/AGENT_CHECKPOINTS_COMPACTOR_ES_PASS=/; s/[ \t]+#.*//" | tail -n 1 > /run/suburban-soc-checkpoints-compact/agent_checkpoints_compactor_password.env; grep -Eq "^AGENT_CHECKPOINTS_COMPACTOR_ES_PASS=.{8,}" /run/suburban-soc-checkpoints-compact/agent_checkpoints_compactor_password.env'
+# "-" prefix REQUIRED (security-auditor precedent, slo-metrics.service):
+# every Exec* command in this unit, including the ExecStartPre above that
+# CREATES this file, has EnvironmentFile= applied before it execs — without
+# "-", a missing file would deadlock the unit's very first command on every
+# single run (RuntimeDirectory= is torn down between runs, Type=oneshot).
+EnvironmentFile=-/run/suburban-soc-checkpoints-compact/agent_checkpoints_compactor_password.env
 Environment=ES_HOST=https://localhost:9200
 Environment=AGENT_CHECKPOINTS_COMPACTOR_ES_USER=agent_checkpoints_compactor
-Environment=AGENT_CHECKPOINTS_COMPACTOR_ES_PASS=${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD}
 Environment=ES_CA=/run/suburban-soc-checkpoints-compact/ca.crt
 # /run/suburban-soc-checkpoints-compact, owned by the service user; auto-removed
-# when the unit stops. The stack CA lives only in a docker volume (no stable
-# host path under Docker Desktop/WSL), so pull it from the ES container each
-# run, matching slo-metrics.service/intel-refresh.service's own approach.
+# when the unit stops. Mode 0700 (not the 0755 default): the password
+# scratch file's 0600 permissions would otherwise rest entirely on
+# UMask=0077 below applying to whatever the ExecStartPre writes it as — a
+# non-traversable directory makes the guarantee structural, not incidental
+# (same reasoning as slo-metrics.service's identical directive). The stack
+# CA lives only in a docker volume (no stable host path under Docker
+# Desktop/WSL on this host's current setup), so pull it from the ES
+# container each run, matching slo-metrics.service/intel-refresh.service's
+# own approach.
+RuntimeDirectoryMode=0700
 RuntimeDirectory=suburban-soc-checkpoints-compact
 ExecStartPre=-/usr/bin/docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt /run/suburban-soc-checkpoints-compact/ca.crt
 ExecStart=/usr/bin/python3 /home/tjlam/projects/Suburban-SOC/scripts/setup/ai_agent/compact_agent_checkpoints.py

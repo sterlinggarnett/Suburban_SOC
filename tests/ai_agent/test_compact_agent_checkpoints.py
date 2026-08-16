@@ -7,6 +7,7 @@ the latter from #276's PR #311, unmerged as of this writing).
 """
 import io
 import json
+import re
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -340,6 +341,56 @@ class CompactorCredentialProvisioningTests(unittest.TestCase):
         # missing the _compactor suffix) is actually caught.
         self.assertIn("AGENT_CHECKPOINTS_COMPACTOR_ES_USER=agent_checkpoints_compactor", SERVICE_FILE)
         self.assertIn("compact_agent_checkpoints.py", SERVICE_FILE)
+
+    def test_systemd_service_does_not_use_the_broken_environment_expansion_pattern(self):
+        # #357 (security-auditor finding from #271's review, empirically
+        # confirmed live via `systemd-run --user` against a throwaway unit):
+        # systemd's Environment= directive does NOT expand ${VAR}
+        # references — per systemd.exec(5), "$" has no special meaning
+        # there. This unit originally shipped
+        # `Environment=AGENT_CHECKPOINTS_COMPACTOR_ES_PASS=${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD}`,
+        # which resolved to that literal string, not the real password —
+        # the same bug class #259 already fixed once for
+        # slo-metrics.service. Scans only non-comment lines — the unit's
+        # own explanatory comment quotes the broken pattern verbatim as
+        # documentation of what NOT to do, which a blanket substring
+        # search would misread as a live regression.
+        active_lines = [line for line in SERVICE_FILE.splitlines() if not line.strip().startswith("#")]
+        for line in active_lines:
+            self.assertNotIn(
+                "Environment=AGENT_CHECKPOINTS_COMPACTOR_ES_PASS=${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD}", line)
+        # security-auditor round 2: the assertion below previously scanned
+        # the WHOLE file, including the explanatory comment above (which
+        # quotes "AGENT_CHECKPOINTS_COMPACTOR_ES_PASS=" verbatim as part of
+        # documenting the broken pattern) — it would have passed even if
+        # every functional reference were deleted. Scan active_lines only.
+        self.assertTrue(any("AGENT_CHECKPOINTS_COMPACTOR_ES_PASS=" in line for line in active_lines))
+        self.assertIn("EnvironmentFile=-/run/suburban-soc-checkpoints-compact/"
+                      "agent_checkpoints_compactor_password.env", SERVICE_FILE)
+
+    def test_systemd_execstartpre_actually_extracts_the_secret_before_execstart(self):
+        # security-auditor round 2 MEDIUM: the two tests above pin that the
+        # broken line is gone and the EnvironmentFile= consumer is present,
+        # but neither ever asserted the ExecStartPre that actually PRODUCES
+        # the scratch file exists at all — deleting that one line leaves
+        # EnvironmentFile=- silently tolerating a missing file (by design,
+        # for the separate "blank .env is fine" case), so every ES call
+        # would 401 daily with the full test suite still green. Pin its
+        # content and its position ahead of ExecStart directly, mirroring
+        # tests/pipeline/test_capture_loss_monitoring.py's
+        # test_systemd_check_runs_in_execstartpre_not_execstart precedent.
+        execstartpre_match = re.search(
+            r"ExecStartPre=/bin/sh -c 'grep \"\^AGENT_CHECKPOINTS_COMPACTOR_PASSWORD=\".*"
+            r"AGENT_CHECKPOINTS_COMPACTOR_ES_PASS=.*"
+            r"/run/suburban-soc-checkpoints-compact/agent_checkpoints_compactor_password\.env.*"
+            r"grep -Eq \"\^AGENT_CHECKPOINTS_COMPACTOR_ES_PASS=\.\{8,\}\"",
+            SERVICE_FILE)
+        self.assertIsNotNone(
+            execstartpre_match,
+            "expected an ExecStartPre extracting AGENT_CHECKPOINTS_COMPACTOR_PASSWORD into the "
+            "scratch file EnvironmentFile= reads, with a non-empty-value guard")
+        execstart_pos = SERVICE_FILE.index("\nExecStart=/usr/bin/python3")
+        self.assertLess(execstartpre_match.start(), execstart_pos)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
   "name": "<suburban-soc-snap-{now/d}>",
   "repository": "suburban-soc-snapshots",
   "config": {
-    "indices": ["logstash-security-*", "soar-actions-*", "soc-audit-*", "soc-controls", "soc-deploys", "agent-checkpoints-*"],
+    "indices": ["logstash-security-*", "soar-actions-*", "soc-audit-*", "soc-controls", "soc-deploys", "agent-checkpoints-*", "threat-intel-indicators", "threat-intel-meta"],
     "include_global_state": false,
     "metadata": {
       "description": "Suburban-SOC daily snapshot (WS0.5) — gates the ILM delete phase's wait_for_snapshot. Single-node fs repo for the MVP; WS9.1 promotes to object storage with restore tests.",

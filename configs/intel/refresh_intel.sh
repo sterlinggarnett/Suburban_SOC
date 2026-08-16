@@ -182,6 +182,15 @@ if [[ -n "$ES_PASS" ]]; then
   source "$HERE/../../scripts/setup/lib/es_common.sh"
   # 3a. Upsert each indicator (_id = indicator) into threat-intel-indicators so
   #     re-runs don't duplicate; ECS threat.indicator.* + threat.feed.name.
+  # #271: threat.indicator.last_seen (standard ECS threat-intel field) is
+  # stamped to $now on EVERY run for EVERY indicator this bulk touches — the
+  # "index" action type below fully replaces an existing _id, not a partial
+  # update, so an indicator's last_seen genuinely reflects "still present in
+  # the merged feed as of this run", not just "first indexed at". This is
+  # what makes it safe to use as a retraction cutoff: an indicator a feed has
+  # since dropped stops getting its last_seen refreshed and ages out on its
+  # own, with no separate "is this still live" bookkeeping needed. See
+  # scripts/setup/ai_agent/compact_threat_intel.py (#271).
   bulk="$(mktemp)"
   now="$(ts)"
   # No python/jq dependency: indicators are validated IPv4/domains and the type/feed
@@ -190,8 +199,8 @@ if [[ -n "$ES_PASS" ]]; then
     [[ -z "$ind" ]] && continue
     if [[ "$itype" == "Intel::ADDR" ]]; then field="ip"; else field="domain"; fi
     printf '{"index":{"_index":"threat-intel-indicators","_id":"%s"}}\n' "$ind"
-    printf '{"@timestamp":"%s","threat":{"indicator":{"%s":"%s","type":"%s"},"feed":{"name":"%s"}}}\n' \
-      "$now" "$field" "$ind" "$itype" "$isrc"
+    printf '{"@timestamp":"%s","threat":{"indicator":{"%s":"%s","type":"%s","last_seen":"%s"},"feed":{"name":"%s"}}}\n' \
+      "$now" "$field" "$ind" "$itype" "$now" "$isrc"
   done > "$bulk"
   if [[ -s "$bulk" ]]; then
     # security-auditor review: the previous version discarded the response

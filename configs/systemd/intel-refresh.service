@@ -25,11 +25,41 @@ Type=oneshot
 # configs/intel/intel.dat, and use the user's Docker context for the CA
 # extraction below — same posture as slo-metrics.service.
 User=tjlam
-# "-" prefix: do not fail the unit if .env is missing. refresh_intel.sh
-# already degrades gracefully with no ES creds at all (security-auditor
-# review) — this unit sets ES_USER/ES_PASS explicitly below regardless, so
-# .env is only needed here for INTEL_WRITER_PASSWORD's expansion.
-EnvironmentFile=-/home/tjlam/projects/Suburban-SOC/scripts/setup/.env
+# security-auditor review (#271; empirically re-confirmed live via
+# `systemd-run --user` against a throwaway unit on this exact host):
+# systemd's Environment= directive does NOT perform ${VAR} expansion — per
+# systemd.exec(5), "$" has no special meaning there. The prior line here,
+# `Environment=ES_PASS=${INTEL_WRITER_PASSWORD}`, resolved to the LITERAL
+# 24-ish-character string "${INTEL_WRITER_PASSWORD}", not the real
+# password — every scheduled (timer-triggered) run of this unit has been
+# authenticating to ES with that literal string and 401ing on both the
+# bulk index and the heartbeat write, silently (refresh_intel.sh sets
+# status="stale" and logs a WARN, but nothing ships configs/network/
+# filebeat.yml's Zeek-log-only scope to the SIEM). This is the exact bug
+# class #259 already found and fixed once for slo-metrics.service (see
+# that unit's own long comment on this) — reintroduced here and in
+# checkpoints-compact.service (tracked separately, out of scope here;
+# that one isn't installed on this host). Fixed the same way #259 fixed
+# it: extract ONLY the one secret this unit needs, comment-stripped the
+# same way scripts/setup/lib/env_loader.py strips them, into a scratch
+# file under RuntimeDirectory= — EnvironmentFile=- then supplies ES_PASS
+# directly, no expansion needed. `grep -Eq "^ES_PASS=.{8,}"` (not
+# `test -s`): a typo'd/rotated-away INTEL_WRITER_PASSWORD key, or a blank
+# value, must fail this step loudly rather than silently write an empty/
+# near-empty scratch file.
+ExecStartPre=/bin/sh -c 'grep "^INTEL_WRITER_PASSWORD=" /home/tjlam/projects/Suburban-SOC/scripts/setup/.env | sed -E "s/^INTEL_WRITER_PASSWORD=/ES_PASS=/; s/[ \t]+#.*//" > /run/suburban-soc-intel/intel_writer_password.env; grep -Eq "^ES_PASS=.{8,}" /run/suburban-soc-intel/intel_writer_password.env'
+# "-" prefix REQUIRED (security-auditor precedent, slo-metrics.service):
+# every Exec* command in this unit, including the ExecStartPre above that
+# CREATES this file, has EnvironmentFile= applied before it execs — without
+# "-", a missing file would deadlock the unit's very first command on every
+# single run (RuntimeDirectory= is torn down between runs, Type=oneshot).
+# refresh_intel.sh already degrades gracefully with no ES creds at all
+# (security-auditor review, #222) — a missing/empty scratch file here just
+# makes ES_PASS empty, which refresh_intel.sh's own
+# ES_PASS="${ES_PASS:-${ELASTIC_PASSWORD:-}}" fallback then leaves empty
+# too (no ELASTIC_PASSWORD is set in this unit's environment), so indexing
+# is skipped rather than attempted with a wrong credential.
+EnvironmentFile=-/run/suburban-soc-intel/intel_writer_password.env
 Environment=ES_URL=https://localhost:9200
 # #222 (security-auditor review): dedicated least-privilege identity, NOT
 # the elastic superuser — refresh_intel.sh's own ES_USER default (elastic)
@@ -41,15 +71,21 @@ Environment=ES_URL=https://localhost:9200
 # create_index/index on threat-intel-indicators + threat-intel-meta - no
 # read, no delete, nothing else.
 Environment=ES_USER=intel_writer
-Environment=ES_PASS=${INTEL_WRITER_PASSWORD}
 Environment=ES_CA=/run/suburban-soc-intel/ca.crt
 # /run/suburban-soc-intel, owned by the service user; auto-removed when the
-# unit stops. The stack CA lives only in a docker volume (no stable host path
-# under Docker Desktop/WSL), so pull it from the ES container each run,
-# matching slo-metrics.service's approach. Idempotent; a failed extract still
-# lets refresh_intel.sh run (it only needs ES_CA for the optional indexing
-# step, gated on ES_PASS being set — a missing/unreadable CA there fails
-# closed via es_common.sh's own check, not silently).
+# unit stops. Mode 0700 (not the 0755 default): the password scratch
+# file's 0600 permissions would otherwise rest entirely on UMask=0077
+# below applying to whatever the ExecStartPre writes it as — a
+# non-traversable directory makes the guarantee structural, not incidental
+# (same reasoning as slo-metrics.service's identical directive). The stack
+# CA lives only in a docker volume (no stable host path under Docker
+# Desktop/WSL on this host's current setup), so pull it from the ES
+# container each run, matching slo-metrics.service's approach. Idempotent;
+# a failed extract still lets refresh_intel.sh run (it only needs ES_CA
+# for the optional indexing step, gated on ES_PASS being set — a missing/
+# unreadable CA there fails closed via es_common.sh's own check, not
+# silently).
+RuntimeDirectoryMode=0700
 RuntimeDirectory=suburban-soc-intel
 ExecStartPre=-/usr/bin/docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt /run/suburban-soc-intel/ca.crt
 # Invoked via `bash <path>`, not the script's own execute bit: this repo's

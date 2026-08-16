@@ -581,20 +581,35 @@ has appeared with 4 open P3 issues.
   #293's own documented process, not bundled into a scanning-coverage
   change.
 
-4 issues remain from the original M16 backlog: #270 (`intel-refresh.service`:
-data/code co-location + unpinned CA trust-on-every-use, mirrors
-`slo-metrics.service`), #265 (mint client certs for Winlogbeat/endpoint-
-Filebeat before #219's mTLS enforcement breaks a real endpoint's first
-connection) — plus 4 accumulated follow-ups: #358 (threat-intel detection
-gaps), #359 (ES port binding), #361 (agent-checkpoints detection gap), and
-the new [#364](https://github.com/voltron-1/Suburban_SOC/issues/364)
-(zeek/zeek CVE bump).
+- [x] **#364 (P0→resolved, security) — COMPLETE, MERGED** — #355's new
+  Trivy job found 7 real CRITICAL CVEs on the `zeek/zeek:8.1.1` pin
+  (libgnutls30t64, libssl3t64/openssl, libnode115/nodejs).
+  [PR #366](https://github.com/voltron-1/Suburban_SOC/pull/366) merged
+  2026-08-16 (squash, `67ff28b`), auto-closing #364, 18/18 CI green
+  including the previously-red `zeek-image` Trivy job, now clean. Bumped
+  to `zeek/zeek:8.2.1` (OpenSSL 3.5.6) following #293's documented
+  process. security-auditor review found the original verification's
+  "grep for validation_status" approach was too narrow (missed
+  SSH::Password_Guessing, Intel::ADDR/DOMAIN, files.log mime_type/source)
+  — all re-verified live against the new image (enum checks, real
+  HTTP-download fixtures for an ELF binary and a shell script, diffed
+  byte-identical against the old image). Also found and fixed a real,
+  currently-broken evidence-collection command: SOP-147's
+  `ancestor=zeek/zeek:<tag>` filter doesn't reliably match a container
+  started via `repo:tag@digest` (confirmed empirically) — switched to
+  `--filter name=zeek-` (added `--name zeek-stream` to
+  `stream_capture.sh`), permanently removing this filter from the bump
+  checklist. Follow-up filed:
+  [#365](https://github.com/voltron-1/Suburban_SOC/issues/365) (a
+  pre-existing, bump-unrelated shell-script `mime_type` detection gap
+  found during verification).
 
-Next unstarted item: #364 — supersedes the rest of the queue. It's the
-only `priority:critical` item open anywhere in the repo right now (a
-live, unpatched CRITICAL exposure on the network sensor, CI-red since
-#355 landed), and #293's own header comment already documents the exact
-bump process to follow. #270/#265/#358/#359/#361 all stay queued behind
+The M16/M14 catch-all follow-up pile has grown large and scattered across
+several ad-hoc "M16" tags that don't share a real theme — #270, #265,
+#358, #359, #361, #365 plus M15's still-blocked #283. Restructuring this
+into properly-scoped milestones next, per the repo owner's direct request,
+rather than continuing to recommend "next unstarted item" from an
+unsorted pile.
 it. #283 (M15) stays blocked.
 
 ---
@@ -1873,6 +1888,26 @@ are implemented in code; checked off with that one caveat noted inline.
   (`priority:critical`) rather than bundling a version bump into a
   scanning-coverage PR. #364 now supersedes the rest of the M16 queue —
   it's the only critical-severity item open anywhere in the repo.
+
+- **#364 closed — zeek/zeek bumped to 8.2.1, closing all 7 CRITICAL CVEs.**
+  Full detail in NEXT UP above. [PR #366](https://github.com/voltron-1/Suburban_SOC/pull/366)
+  merged 2026-08-16 (squash, `67ff28b`), 18/18 CI green including the
+  previously-red `zeek-image` Trivy job. security-auditor review found
+  the original bump verification's search key (grep for
+  `validation_status`) was too narrow to answer "did anything version-
+  dependent break" — expanded live to cover Zeek notice enums, Intel
+  types, and files.log mime_type/source via real synthetic-but-genuine
+  HTTP-download fixtures, diffed byte-identical against the old image.
+  Also found and fixed a real, live bug the pin's own existence exposes:
+  SOP-147's evidence-collection filter doesn't reliably match a
+  `repo:tag@digest`-started container, switched to name-based filtering
+  that never needs updating again. Follow-up filed:
+  [#365](https://github.com/voltron-1/Suburban_SOC/issues/365) (unrelated
+  pre-existing mime_type gap found during verification).
+  Per the repo owner's direct request, next: read every remaining open
+  issue and restructure the scattered M16-catch-all pile into properly-
+  scoped milestones, rather than continuing ad-hoc "next unstarted item"
+  picks from an unsorted backlog.
 
 ## LAST SESSION — 2026-08-13
 

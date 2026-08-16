@@ -94,14 +94,38 @@ _SECURITY_CHANNEL_BLOCK_RE = re.compile(
     r'if \[winlog\]\[channel\] == "Security" \{(.*?)\n    \}', re.DOTALL
 )
 _COPY_BLOCK_RE = re.compile(r"copy\s*=>\s*\{([^{}]*)\}", re.DOTALL)
-# `[^\]]*` (a naive "stop at the first ]") is WRONG here: this file's own
-# remove_field arrays hold bracket-notation field names that contain `]`
-# themselves (e.g. ["[user_agent]", "[host][ip]"], configs/logstash.conf
-# ~line 449) — a first-`]`-wins capture would stop mid-array and never see
-# the fields that matter. Bounded by the quote characters instead, so
-# `]`/`[` inside a quoted field name can't terminate the match early.
-_REMOVE_FIELD_ARRAY_RE = re.compile(r'remove_field\s*=>\s*\[((?:\s*"[^"]*"\s*,?)*)\]')
+_REMOVE_FIELD_START_RE = re.compile(r"remove_field\s*=>\s*\[")
 _QUOTED_STRING_RE = re.compile(r'"([^"]*)"')
+
+
+def _remove_field_array_bodies(text):
+    """Every `remove_field => [...]` array body in `text` (the text
+    BETWEEN the brackets, quotes and commas untouched). `[^\\]]*` (a naive
+    "stop at the first ]") is WRONG here: this file's own remove_field
+    arrays hold bracket-notation field names that contain `]` themselves
+    (e.g. ["[user_agent]", "[host][ip]"], configs/logstash.conf ~line
+    449) — a first-`]`-wins capture would stop mid-array. A single regex
+    that instead skips over quoted strings to find the TRUE closing `]`
+    needs nested/overlapping quantifiers (`(?:\\s*"[^"]*"\\s*,?)*`) that
+    CodeQL correctly flagged as a catastrophic-backtracking risk (HIGH
+    severity) — that shape lets whitespace be distributed across
+    repetitions in exponentially many equivalent ways on malformed input.
+    A plain linear scan that tracks quote state has no such ambiguity: a
+    `]` only closes the array when it is not inside a quoted string."""
+    bodies = []
+    for start_match in _REMOVE_FIELD_START_RE.finditer(text):
+        i = start_match.end()
+        body_start = i
+        in_quotes = False
+        while i < len(text):
+            ch = text[i]
+            if ch == '"':
+                in_quotes = not in_quotes
+            elif ch == "]" and not in_quotes:
+                bodies.append(text[body_start:i])
+                break
+            i += 1
+    return bodies
 
 # #342 security-auditor review: 3 hand-authored native Elastic threshold
 # rules (outside the pySigma pipeline, so no Sigma fixture test covers
@@ -409,7 +433,7 @@ class DetectionAsCodeTests(unittest.TestCase):
             for pair in _RENAME_PAIR_RE.findall(rename_body)
         ]
         removed_fields = [
-            f for remove_body in _REMOVE_FIELD_ARRAY_RE.findall(block)
+            f for remove_body in _remove_field_array_bodies(block)
             for f in _QUOTED_STRING_RE.findall(remove_body)
         ]
         copy_pairs = [

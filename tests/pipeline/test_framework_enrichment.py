@@ -24,6 +24,7 @@ Pure stdlib (no pyyaml / no running stack) so it runs in any CI.
 Run:  python tests/pipeline/test_framework_enrichment.py     (or: pytest tests/pipeline)
 """
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -31,6 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONF = (ROOT / "configs" / "logstash.conf").read_text(encoding="utf-8")
 SIGMA_DIR = ROOT / "rules" / "sigma"
+THRESHOLD_DIR = ROOT / "rules" / "elastic" / "threshold"
 PIPELINE = (ROOT / "configs" / "detections" / "suburban-soc-ecs.yml").read_text(encoding="utf-8")
 
 # Network detections that must stay classified in the pipeline (non-Sigma source).
@@ -80,6 +82,71 @@ _RUBY_MULTILINE_CODE_RE = re.compile(r"code\s*=>\s*'\n(.*?)\n\s*'\n", re.DOTALL)
 # literal written on the LEFT (e.g. "4625 == [winlog][event_id]" — not used
 # anywhere in this file today).
 _EVENT_ID_COMPARISON_RE = re.compile(r"\[winlog\]\[event_id\]\s*(?:==|!=|in)\s*([^\s{)]+)")
+
+# #342: isolates just the Windows Security-channel if-block, not the whole
+# file — the Sysmon block immediately above it legitimately `rename`s a
+# same-shaped field NAME (TargetUserName) under a DIFFERENT channel, so a
+# whole-file scan for "is TargetUserName ever renamed" would conflate the
+# two and false-positive on the Sysmon block's own correct behavior.
+# Non-greedy up to the first 4-space-indented closing brace, matching this
+# block's own indentation in configs/logstash.conf.
+_SECURITY_CHANNEL_BLOCK_RE = re.compile(
+    r'if \[winlog\]\[channel\] == "Security" \{(.*?)\n    \}', re.DOTALL
+)
+_COPY_BLOCK_RE = re.compile(r"copy\s*=>\s*\{([^{}]*)\}", re.DOTALL)
+# `[^\]]*` (a naive "stop at the first ]") is WRONG here: this file's own
+# remove_field arrays hold bracket-notation field names that contain `]`
+# themselves (e.g. ["[user_agent]", "[host][ip]"], configs/logstash.conf
+# ~line 449) — a first-`]`-wins capture would stop mid-array and never see
+# the fields that matter. Bounded by the quote characters instead, so
+# `]`/`[` inside a quoted field name can't terminate the match early.
+_REMOVE_FIELD_ARRAY_RE = re.compile(r'remove_field\s*=>\s*\[((?:\s*"[^"]*"\s*,?)*)\]')
+_QUOTED_STRING_RE = re.compile(r'"([^"]*)"')
+
+# #342 security-auditor review: 3 hand-authored native Elastic threshold
+# rules (outside the pySigma pipeline, so no Sigma fixture test covers
+# them) bucket/cardinality-count directly on these raw winlog.event_data.*
+# field names by literal string. A `rename` in the Security-channel block
+# above would silently break all of them.
+SECURITY_CHANNEL_RAW_FIELDS = {
+    "[winlog][event_data][IpAddress]": ("source.ip", "[source][ip]"),
+    "[winlog][event_data][TargetUserName]": ("user.target.name", "[user][target][name]"),
+}
+
+
+def _dotted(bracket_path):
+    """"[winlog][event_data][IpAddress]" -> "winlog.event_data.IpAddress"."""
+    return ".".join(re.findall(r"\[([^\]]*)\]", bracket_path))
+
+
+def _threshold_rule_dependents(dotted_field):
+    """Rule basenames whose threshold.field or threshold.cardinality[].field
+    — the actual bucket/cardinality configuration, not just prose — names
+    the given raw dotted field. JSON-parsed, not a substring scan, so a
+    rule that only MENTIONS the field in its description (but doesn't
+    actually bucket on it) is correctly excluded."""
+    dependents = []
+    for path in sorted(THRESHOLD_DIR.glob("*.ndjson")):
+        # One JSON object per non-blank line, not one object per file — an
+        # Elastic UI export can append a trailing summary line, and a
+        # single-object file (every current one) is just the N=1 case of
+        # this same shape. Lines without a "threshold" key (e.g. such a
+        # summary line) are skipped rather than treated as a parse error.
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            rule = json.loads(line)
+            if "threshold" not in rule:
+                continue
+            threshold = rule["threshold"]
+            field = threshold.get("field", [])
+            configured_fields = field if isinstance(field, list) else [field]
+            configured_fields += [c.get("field") for c in threshold.get("cardinality", [])]
+            if dotted_field in configured_fields:
+                dependents.append(path.name)
+    return dependents
+
 
 def rule_technique(text: str):
     m = _TECH_RE.search(text)
@@ -304,6 +371,134 @@ class DetectionAsCodeTests(unittest.TestCase):
             following = CONF[idx:idx + 200]
             self.assertIn(f'"[event][outcome]" => "{outcome}"', following,
                           f"{event_id} does not map to [event][outcome] = {outcome!r}")
+
+    def test_security_channel_threshold_dependents_actually_exist(self):
+        # #342: sanity check on this test class's own premise. If these
+        # threshold rules are ever rewritten to bucket on something else,
+        # the copy-not-rename requirement below no longer has teeth for
+        # that field — better to fail loudly here than silently test
+        # nothing.
+        for raw_bracket in SECURITY_CHANNEL_RAW_FIELDS:
+            raw_dotted = _dotted(raw_bracket)
+            dependents = _threshold_rule_dependents(raw_dotted)
+            self.assertGreater(
+                len(dependents), 0,
+                f"expected at least one rules/elastic/threshold/*.ndjson rule's "
+                f"threshold.field/cardinality to configure {raw_dotted!r} — if none do "
+                f"anymore, the copy-not-rename requirement for {raw_bracket} may be "
+                f"stale; verify and update"
+            )
+
+    def test_security_channel_copies_not_renames_or_removes_raw_fields(self):
+        # #342: winlog.event_data.IpAddress/TargetUserName are never
+        # ECS-renamed by this channel (documented in configs/detections/
+        # suburban-soc-ecs.yml's field-mapping-windows-security transform,
+        # confirmed by test_ecs_yml_still_documents_the_raw_shape below) —
+        # every deployed Security-channel Sigma rule AND the 3 threshold
+        # rules confirmed by the test above query the RAW field by name.
+        # A `rename` (which REMOVES the source) or `remove_field` on
+        # either raw field would silently break all of them; this repo has
+        # hit the "silent break, nothing catches it" shape of bug multiple
+        # times (#217, #233) so it's checked directly rather than trusted.
+        match = _SECURITY_CHANNEL_BLOCK_RE.search(CONF)
+        self.assertIsNotNone(match, 'could not find the Security-channel if-block in configs/logstash.conf')
+        block = match.group(1)
+
+        rename_pairs = [
+            pair for rename_body in _RENAME_BLOCK_RE.findall(block)
+            for pair in _RENAME_PAIR_RE.findall(rename_body)
+        ]
+        removed_fields = [
+            f for remove_body in _REMOVE_FIELD_ARRAY_RE.findall(block)
+            for f in _QUOTED_STRING_RE.findall(remove_body)
+        ]
+        copy_pairs = [
+            pair for copy_body in _COPY_BLOCK_RE.findall(block)
+            for pair in _RENAME_PAIR_RE.findall(copy_body)
+        ]
+
+        for raw_bracket, (_ecs_dotted, expected_ecs_bracket) in SECURITY_CHANNEL_RAW_FIELDS.items():
+            renamed_away = [p for p in rename_pairs if p[0] == raw_bracket]
+            self.assertEqual(
+                [], renamed_away,
+                f"{raw_bracket} must not be `rename`d in the Security-channel block — "
+                f"that REMOVES the raw field, which "
+                f"{_threshold_rule_dependents(_dotted(raw_bracket))} depend on directly. "
+                f"Use mutate `copy` instead: {renamed_away}"
+            )
+            self.assertNotIn(
+                raw_bracket, removed_fields,
+                f"{raw_bracket} must not be `remove_field`d in the Security-channel block "
+                f"— same reason a `rename` is disallowed above"
+            )
+            self.assertIn(
+                (raw_bracket, expected_ecs_bracket), copy_pairs,
+                f"expected a `copy` from {raw_bracket} to {expected_ecs_bracket} in the "
+                f"Security-channel block — #342 enrichment missing, reverted, or pointed "
+                f"at the wrong target (found copy pairs: {copy_pairs})"
+            )
+
+    def test_security_channel_ip_copy_gated_and_geoip_handles_v4_mapped_v6(self):
+        # #342 security-auditor follow-up: two guards were added after
+        # live-fire testing found real gaps, neither of which the copy-
+        # direction test above exercises. Pins both as literal-string
+        # checks (same style as test_mac_correlation.py's guard-predicate
+        # pin) so a future "simplify this" edit can't silently drop either
+        # one with CI still green — this repo has no other test coverage
+        # for these two guards at all.
+        match = _SECURITY_CHANNEL_BLOCK_RE.search(CONF)
+        self.assertIsNotNone(match, 'could not find the Security-channel if-block in configs/logstash.conf')
+        block = match.group(1)
+
+        # Gap 1: "0.0.0.0"/"::" are BOTH valid values for the ES `ip` field
+        # type (unlike "-"), so an ungated copy would silently populate
+        # source.ip with a legitimate-looking but meaningless bucket value
+        # instead of failing loudly — live-confirmed via a real
+        # logstash:9.3.2 container that source.ip stays unset for both.
+        self.assertIn(
+            'not in ["-", "0.0.0.0", "::", ""]', block,
+            "the IpAddress copy's sentinel guard is missing or changed — "
+            "0.0.0.0/::/empty-string would silently populate source.ip with "
+            "a meaningless value instead of being excluded"
+        )
+
+        # Gap 2: domain controllers commonly log the Kerberos Client
+        # Address (4768/4769, both collected per
+        # configs/endpoint/winlogbeat.yml) in "::ffff:x.x.x.x" form, which
+        # the plain RFC1918 alternation doesn't match — live-confirmed
+        # that without this, internal DC-to-DC Kerberos traffic silently
+        # attempted (and failed) a geoip lookup.
+        v4_mapped_guards = [m.start() for m in re.finditer(r"\(::ffff:\)\?", block)]
+        self.assertGreaterEqual(
+            len(v4_mapped_guards), 1,
+            "the Security-channel geoip guard no longer handles IPv4-mapped "
+            "IPv6 (::ffff:x.x.x.x) — internal DC Kerberos traffic would "
+            "silently attempt a doomed geoip lookup again"
+        )
+
+    def test_ecs_yml_still_documents_the_raw_shape(self):
+        # If suburban-soc-ecs.yml is ever changed to map these fields to an
+        # ECS name instead (matching the Sysmon transformation's style),
+        # the copy-vs-rename distinction stops mattering for Sigma-
+        # compiled rules specifically — but the threshold rules (native
+        # Lucene, not pySigma-compiled) would still need the raw field to
+        # survive. Documents that dependency explicitly so a future editor
+        # of ecs.yml sees this test fail with the reason, not a cryptic
+        # mismatch.
+        self.assertIn(
+            "IpAddress: winlog.event_data.IpAddress", PIPELINE,
+            "suburban-soc-ecs.yml no longer maps Sigma's IpAddress field to the raw "
+            "winlog.event_data.IpAddress shape — if this changed intentionally, "
+            "re-verify rules/elastic/threshold/*.ndjson's dependency on the raw field "
+            "name still holds before touching the copy-not-rename logic in "
+            "configs/logstash.conf's Security-channel block"
+        )
+        self.assertIn(
+            "TargetUserName: winlog.event_data.TargetUserName", PIPELINE,
+            "suburban-soc-ecs.yml no longer maps Sigma's TargetUserName field to the raw "
+            "winlog.event_data.TargetUserName shape — same re-verification as the "
+            "IpAddress case above"
+        )
 
 
 if __name__ == "__main__":

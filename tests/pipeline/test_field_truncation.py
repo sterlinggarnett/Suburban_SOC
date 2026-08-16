@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Field-truncation tagging fixture tests (#252, extended #263).
+Field-truncation tagging fixture tests (#252, extended #263, #290, #344).
 
 SCOPE (same documented scope as tests/pipeline/test_grok_parse_failures.py):
 a Python re-implementation of configs/logstash.conf's field-truncation ruby
@@ -11,10 +11,15 @@ hand with the ruby block at configs/logstash.conf (Component 4 area, "#252"
 comment).
 
 process.args/process.parent.args/winlog.event_data.ScriptBlockText/
-winlog.event_data.ImagePath are mapped ignore_above:32766 (#249/#250 raised
-it to 8191; #263 raised it again to 32766 and added ImagePath, after 8191
-turned out to still be below real PowerShell 4104 chunk sizes). A value
-longer than CEILING (32766 chars) is silently dropped from the ES index
+winlog.event_data.ImagePath/url.path/winlog.event_data.CommandLine/
+network_parsed.uri are mapped ignore_above:32766 (#249/#250 raised it to
+8191; #263 raised it again to 32766 and added ImagePath, after 8191
+turned out to still be below real PowerShell 4104 chunk sizes; #290 added
+url.path; #344 added the 2 fields only reachable via the template's
+long_command_fields dynamic_template rather than an explicit property —
+see CeilingConsistencyTests for why the template-derived tests above
+can't discover those on their own). A value longer than CEILING (32766
+chars) is silently dropped from the ES index
 while remaining in _source — ignore_above's own char-based check handles
 this server-side, safely, before Lucene ever sees the term. This filter
 tags pipeline.truncated="true" + pipeline.truncated_fields instead of
@@ -66,6 +71,8 @@ LONG_FIELDS = {
     "winlog.event_data.ScriptBlockText": ["winlog", "event_data", "ScriptBlockText"],
     "winlog.event_data.ImagePath": ["winlog", "event_data", "ImagePath"],
     "url.path": ["url", "path"],
+    "winlog.event_data.CommandLine": ["winlog", "event_data", "CommandLine"],
+    "network_parsed.uri": ["network_parsed", "uri"],
 }
 
 
@@ -185,6 +192,34 @@ class FieldTruncationTaggingTests(unittest.TestCase):
         event = {"winlog": {"event_data": {"ImagePath": "A" * 40000}}}
         self.assertEqual(tag_truncation(event), (["winlog.event_data.ImagePath"], []))
 
+    def test_security_channel_commandline_over_ceiling_tagged(self):
+        # #344: winlog.event_data.CommandLine (Windows Security-channel
+        # EventID 4688, Winlogbeat's raw un-renamed shape - unlike the
+        # Sysmon channel, which renames its CommandLine to process.args,
+        # already covered above) matches the long_command_fields dynamic_
+        # template's *CommandLine glob at ignore_above:32766 in the real ES
+        # template, but was missing from configs/logstash.conf's long_fields
+        # clamp hash - same whole-document Lucene immense-term rejection
+        # risk #263/#290 fixed for their own fields, just undiscovered
+        # because CeilingConsistencyTests' template walk only sees explicit
+        # properties, not dynamic_template matches.
+        event = {"winlog": {"event_data": {"CommandLine": "A" * 40000}}}
+        self.assertEqual(tag_truncation(event), (["winlog.event_data.CommandLine"], []))
+
+    def test_network_parsed_uri_over_ceiling_tagged(self):
+        # #344 security-auditor follow-up: the one OTHER concrete instance
+        # of this bug class found in the repo. network_parsed.uri (Zeek
+        # http.log's uri field, deliberately left unrenamed per Category
+        # 1's own rename-block comment - net_zeek_http_cobalt_strike_
+        # beacon.yml selects on it directly) matches the long_command_
+        # fields dynamic_template's *uri glob at ignore_above:32766, same
+        # as CommandLine above - but unlike CommandLine, this one is
+        # live-reachable today via the unauthenticated :5514 HTTP input,
+        # same fully attacker-controlled shape as #290's url.path (an HTTP
+        # request URI).
+        event = {"network_parsed": {"uri": "A" * 40000}}
+        self.assertEqual(tag_truncation(event), (["network_parsed.uri"], []))
+
     def test_flat_dotted_key_no_longer_matched(self):
         # #328 fixed the Sysmon rename block to bracket notation, so nothing
         # in the pipeline produces a flat "process.args"-shaped key anymore
@@ -235,6 +270,17 @@ class ByteClampTaggingTests(unittest.TestCase):
         # happens to contain multi-byte content.
         event = {"winlog": {"event_data": {"ScriptBlockText": "\U0001F600" * 5000}}}
         self.assertEqual(tag_truncation(event), ([], []))
+
+    def test_security_channel_commandline_multibyte_byte_clamped(self):
+        # #344 security-auditor follow-up: the new CommandLine test in
+        # FieldTruncationTaggingTests only exercises the char_hit branch
+        # (pure ASCII, safe - ES's own ignore_above drops it server-side,
+        # document survives). The actually dangerous branch #344 is about
+        # is byte_hit: an unclamped multi-byte value here is exactly what
+        # crashes the WHOLE document (HTTP 400 immense term), not just
+        # this field.
+        event = {"winlog": {"event_data": {"CommandLine": "\U0001F600" * 9000}}}
+        self.assertEqual(tag_truncation(event), ([], ["winlog.event_data.CommandLine"]))
 
     def test_clamp_helper_produces_valid_utf8_under_byte_ceiling(self):
         val = "\U0001F600" * 9000
@@ -340,11 +386,26 @@ class CeilingConsistencyTests(unittest.TestCase):
         # skip this check the same way. Narrower than it may sound
         # (security-auditor follow-up review): does NOT see fields created
         # through the long_command_fields dynamic_template (also at
-        # ignore_above:32766, e.g. winlog.event_data.CommandLine on the
-        # Security channel, which keeps Winlogbeat's raw un-renamed shape)
-        # — those are unclamped too, pre-existing since #263 raised that
-        # dynamic_template's ceiling, not introduced here. Deliberately not
-        # expanded to cover it in this fix; tracked as a follow-up issue.
+        # ignore_above:32766) — those never appear as named properties, so
+        # they're invisible to this walk no matter how many are added to
+        # long_fields/LONG_FIELDS by hand. #344 fixed the 2 concretely-
+        # identified instances this way (winlog.event_data.CommandLine and
+        # network_parsed.uri — see test_security_channel_commandline_over_
+        # ceiling_tagged / test_network_parsed_uri_over_ceiling_tagged
+        # above), rather than rewriting the ruby filter to walk the
+        # dynamic_template's glob patterns generically. A pure glob-only
+        # sweep (matching ONLY the 6 path_match patterns) would regress
+        # ImagePath/url.path, neither of which matches any of them despite
+        # needing the same clamp — so a correct structural fix would need
+        # to UNION the glob sweep with the existing explicit list, not
+        # replace it. That union is the real deferred work, and the real
+        # cost security-auditor review identified is NOT correctness but
+        # performance: it requires a recursive walk of every event's full
+        # field tree on every single event, on a pipeline with its own
+        # ingest-lag SLO (scripts/setup/ai_agent/slo_metrics.py) — a cost
+        # this fix deliberately did not take on for 2 concretely-verified
+        # fields when a 1-line hash entry does the same job. Tracked as
+        # #367 (close the class permanently rather than field-by-field).
         template_paths = self._template_ceiling_paths()
 
         logstash_text = LOGSTASH_CONF_PATH.read_text(encoding="utf-8")
@@ -366,6 +427,23 @@ class CeilingConsistencyTests(unittest.TestCase):
                          f"module's own LONG_FIELDS mirror — tag_truncation() won't tag them even "
                          f"though the real ruby filter clamps them, giving this test suite false "
                          f"confidence: {missing_from_python_mirror}")
+
+        # #344 security-auditor MEDIUM: everything above derives expectations
+        # FROM the template, so a hand-added entry that exists ONLY in one of
+        # the two hand-maintained lists (e.g. a dynamic-template-only field
+        # like CommandLine/network_parsed.uri, invisible to template_paths by
+        # construction) was never checked against the other at all — deleting
+        # the new logstash.conf entry left every other assertion in this test
+        # green. This closes that gap directly: the two hand-maintained lists
+        # must agree with EACH OTHER, independent of what the template walk
+        # can see, covering every current and future dynamic-template-only
+        # entry the walk-based checks above structurally cannot.
+        self.assertEqual(set(LONG_FIELDS.keys()), logstash_labels,
+                         "configs/logstash.conf's long_fields hash and this module's LONG_FIELDS "
+                         "mirror have drifted apart — every clamped field must be listed in both, "
+                         "or either the ruby filter or the Python test mirror silently stops "
+                         f"matching reality. logstash-only: {logstash_labels - set(LONG_FIELDS.keys())}, "
+                         f"python-only: {set(LONG_FIELDS.keys()) - logstash_labels}")
 
 
 if __name__ == "__main__":

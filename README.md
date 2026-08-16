@@ -55,6 +55,11 @@ post-remediation integrity + detection-tuning pass filed after M11 shipped.
 M14–M16 were opened 2026-08-05 to triage the follow-up issues that M11/M12's
 security reviews filed — work that was real but deliberately out of scope for
 the issue being fixed at the time, and which had accumulated untracked.
+**Restructured 2026-08-16:** the same pattern recurred — by mid-August the
+backlog had grown to 37 open issues, 33 with no milestone at all. M15
+closed outright (its last item, #283, moved to its true thematic home);
+every open issue was re-sorted into 6 new milestones, M17–M22, and M16
+was narrowed back to its original scope.
 
 | Milestone | Title | Status |
 |---|---|---|
@@ -70,10 +75,16 @@ the issue being fixed at the time, and which had accumulated untracked.
 | M10 | SOC 2 Type II Technical Control Readiness (Phase 3) | ✅ Complete — 7/7 (WS3.1–3.7) |
 | M11 | Agent Orchestration & Compliance (Phase 4) | ✅ Complete (merged 2026-07-20) |
 | M12 | Approval Gate Integrity & Detection Engineering Tuning | ✅ Complete (14/14 issues, closed 2026-08-05) — restored the atomic approval claim dropped by `2bb3d8f`, then hardened it three more times via #245/#246/#247/#273 |
-| M13 | Detection Expansion: 35 → 105 Sigma Rules (Campus SOC) | 🚧 In progress ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/17), 7 rule-batch user stories, 20 issues open) — `process.args` mapping fix merged 2026-08-02 (#249/#250, all 45 pre-existing rules affected); US1 (10 Windows LOLBin rules) merged 2026-08-03. **Next: US2 (#232)** |
-| M14 | SOAR Approval-Plane Operability & Hardening | 📋 Planned ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/18), 7 issues) — the operational tail of M12: two P0 defects in already-shipped work (#275, #277) plus the missing operator tooling for claims that cannot auto-recover |
-| M15 | Detection Correctness & Pipeline Fidelity | 📋 Planned ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/19), 3 issues) — whether the *existing* corpus behaves as written, as opposed to M13's rule count. #263 compounds as M13 grows |
-| M16 | Endpoint Onboarding & Threat-Intel Integrity | 📋 Planned ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/20), 3 issues) — client certs for endpoint shippers (gated on a real endpoint being deployed) plus two threat-intel integrity gaps |
+| M13 | Detection Expansion: 35 → 105 Sigma Rules (Campus SOC) | ✅ Complete (25/25 issues, [milestone](https://github.com/voltron-1/Suburban_SOC/milestone/17)) — all 7 rule-batch user stories merged; corpus grew 35 → 105 rules |
+| M14 | SOAR Approval-Plane Operability & Hardening | ✅ Complete (8/8 issues, [milestone](https://github.com/voltron-1/Suburban_SOC/milestone/18), closed 2026-08-09) — both P0 defects (#275, #277) plus operator tooling for stuck claims |
+| M15 | Detection Correctness & Pipeline Fidelity | ✅ Complete (11/11 issues, [milestone](https://github.com/voltron-1/Suburban_SOC/milestone/19)) — whether the *existing* corpus behaves as written, as opposed to M13's rule count. Closed 2026-08-16; its one blocked item (#283) moved to M17, its true thematic home |
+| M16 | Endpoint Onboarding & Threat-Intel Integrity | 🚧 In progress ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/20), 5/8 issues closed) — threat-intel retraction (#271) and the zeek/zeek image pin+CVE bump (#293, #364) shipped; client certs for endpoint shippers (#265, gated on a real endpoint being deployed) and 2 detection-gap follow-ups (#358, #361) remain |
+| M17 | Detection Rule Coverage & Correctness | 📋 Planned ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/22), 8 issues) — Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| M18 | ECS Pipeline & Field-Mapping Integrity | 📋 Planned ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/23), 11 issues) — Logstash rename/copy drift vs. what suburban-soc-ecs.yml claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| M19 | SOC Platform Credential & Secret Hygiene | 📋 Planned ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/24), 6 issues) — cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
+| M20 | SOAR Response-Path Hardening | 📋 Planned ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/25), 3 issues) — residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
+| M21 | Zeek Sensor Operational Resilience | 📋 Planned ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/26), 3 issues) — no liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
+| M22 | Compliance & Documentation Accuracy | 📋 Planned ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/27), 3 issues) — docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
 > **What "✅ Complete" means here (scope note, audit P1-12/P1-13).** A milestone is
 > marked complete when its tracked issues/workstreams were implemented and merged —
@@ -115,6 +126,31 @@ IP-block dispatched to the broker, tenant-scoped, instead of a direct `isolate.s
 Individual improvements merged across the milestones above — these are work items
 within a milestone, not milestone completions in their own right:
 
+- **zeek/zeek image pinned, then patched for 7 CRITICAL CVEs (M16, #293/#355/#364).**
+  The network sensor's Docker image (parses fully attacker-controlled traffic) was
+  running unpinned (`:latest`), a supply-chain drift risk that had already silently
+  broken a Sigma rule once (an OpenSSL wording change between builds). #293 pinned
+  it to a specific tag+digest; #355 added Trivy CI coverage for that exact
+  reference (self-built images were already scanned, this third-party one wasn't);
+  live-scanning it immediately surfaced 7 real, fixed CRITICAL CVEs on the pin
+  (libgnutls30t64, libssl3t64/openssl, libnode115/nodejs). #364 bumped to 8.2.1,
+  closing all 7 — re-verifying every Zeek/OpenSSL-version-dependent surface the
+  bump could plausibly break (not just the one field the original incident
+  touched): Sigma rules matching exact OpenSSL error strings, SSH/Intel enum
+  names, and `files.log` MIME-type detection, each checked against real traffic
+  through both the old and new image and diffed byte-identical. Also found and
+  fixed a real, live bug the pin itself exposed: the evidence-validation runbook's
+  `docker ps --filter ancestor=<tag>` command doesn't reliably match a container
+  started via `repo:tag@digest`, switched to name-based filtering that survives
+  future bumps without further edits.
+- **Backlog restructured into properly-scoped milestones (2026-08-16).** 37 open
+  issues had accumulated, 33 with no milestone at all — real review follow-ups
+  filed across M12–M16 and never triaged, invisible to any milestone-based view.
+  Sorted by theme into 6 new milestones (M17 detection-rule correctness, M18 ECS
+  pipeline/field-mapping integrity, M19 platform credential hygiene, M20 SOAR
+  response-path hardening, M21 Zeek sensor resilience, M22 compliance/docs
+  accuracy); M15 closed outright once its one open item moved to its real
+  thematic home in M17.
 - **Agent orchestration refactor + approval-gate integrity (M11 → M12).** M11
   restructured the SOC AI agent into an explicit Perceive→Think→Act→Check `Agent`
   class with ES-backed checkpoints (`scripts/setup/ai_agent/agent.py`), merged
@@ -453,7 +489,7 @@ This project is licensed under the MIT License. (Make sure you include a `LICENS
 * **Detection tests mostly validate logic, not live firing (audit P2-21).** `tests/detections/test_sigma_detections.py` replays fixtures through a Sigma evaluator and CI converts every rule to Lucene — this proves rule *logic*, not that the compiled query fires against a live index. `tests/detections/test_live_fire.py` ([#221](https://github.com/voltron-1/Suburban_SOC/issues/221)) closes that gap for one rule per category (process_creation, network, threshold) against a real Elasticsearch in CI; the remaining rules are still logic-only. End-to-end firing across the whole rule set is exercised by `tests/anomaly_simulation/` (manual).
 * **A few Sigma rules are coarse (tracked: [#217](https://github.com/voltron-1/Suburban_SOC/issues/217)).** e.g. `proc_creation_win_powershell_encoded` and `system_win_service_installed` lack structured `filter` false-positive exclusions. (`mshta_remote` was previously miscited here as an example — it actually requires `mshta.exe` *and* an `http`/`javascript`/`vbscript` substring, not a bare `http` match; corrected 2026-08-01.) Tuning is iterative.
 * The default ntfy topic (`subsoc-alerts`) is guessable; ntfy topics are unauthenticated, so set a unique `NTFY_TOPIC` in `.env` (P3). Some docs still reference a fixed lab router IP — parameterize per environment.
-* **`docker compose` is currently broken for this repo ([#303](https://github.com/voltron-1/Suburban_SOC/issues/303), P0).** Root cause corrected 2026-08-08 — this was previously misattributed to `$$` password escaping (that pattern is correct and intentional). The real cause: `provision`'s `command:` is a plain string, which Compose shell-word-splits before exec; a POSIX single-quoted string cannot contain a literal apostrophe, and the script's own review-comment prose has several (`stack's`, `it's`, etc.), so the command never tokenizes correctly. Since `roles` (which applies the actual `configs/elasticsearch/roles/*.json` files) depends on `provision` completing successfully, **no role or service user gets provisioned via a fresh `docker compose up` today**; the running containers were reconstructed by hand via `docker run`. Fix this before anyone needs a clean bring-up.
+* **`docker compose` was broken for this repo ([#303](https://github.com/voltron-1/Suburban_SOC/issues/303), P0) — fixed 2026-08-09.** Root cause: `provision`'s `command:` is a plain string, which Compose shell-word-splits before exec; a POSIX single-quoted string cannot contain a literal apostrophe, and the script's own review-comment prose had several (`stack's`, `it's`, etc.), so the command never tokenized correctly — blocking every role/service-user provisioning via a fresh `docker compose up`. Verified live end-to-end post-fix: `docker compose up -d` now brings up every one-shot provisioning container to a clean exit and every long-running service healthy.
 * **The SLO metrics audit-write-failure job has been silently unreliable in production ([#275](https://github.com/voltron-1/Suburban_SOC/issues/275), P0) — fixed 2026-08-08.** `slo_metrics_reader` never granted `soc-agent-health-*`, which `metric_audit_write_failures()` (#184) queries every run. Live-verified the actual failure mode was NOT the loud exit-3 originally assumed — a wildcard query against zero authorized indices returns HTTP 200/count:0, identical to the genuinely-healthy "no failures ever" response, so this metric silently reported false-healthy on every run since #184 shipped, rather than erroring.
 * **3 pre-existing test failures on `main`, root-caused 2026-08-08 ([#302](https://github.com/voltron-1/Suburban_SOC/issues/302)).** `tests/ai_agent/test_slo_metrics.py::MainExitCodeTests` (3 cases) fail locally whenever `scripts/setup/.env` has a real `SLO_COVERAGE_MIN` override — `slo_metrics.py`'s own `.env` auto-load isn't isolated from in these tests the way `ES_PASS` already is, so a developer's real local threshold leaks into the mocked test run. CI's coverage job passes because it has no such `.env` file present.
 

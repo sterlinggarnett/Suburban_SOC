@@ -25,7 +25,7 @@ matching the M12/M13/M14 pattern.
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | 3 | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 8 | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 1/11 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 2/11 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
@@ -80,6 +80,39 @@ unit, no unattended multi-issue runs.
   explicit list) — scoped out because it needs a per-event recursive
   field walk on a pipeline with its own ingest-lag SLO, not because of a
   correctness concern with the 2-field fix that shipped.
+- [x] **#341 (P2, bug) — COMPLETE, MERGED** — Kibana panels bucketing on
+  a `.keyword` sub-field of an ECS field that's mapped bare `keyword` (or
+  `ip`) in the real templates match nothing and silently render empty —
+  same shape as the already-fixed Network dashboard bug (commit
+  `be95698`). #341 named 4 broken fields on the Endpoint dashboard; fixing
+  it found 3 more in the same file by hand, which is what prompted writing
+  a general regression test
+  (`tests/dashboards/test_dashboard_field_mapping.py`) instead of a
+  one-off fix. That test's first run found **15 more instances across 7
+  other dashboard files**. [PR #369](https://github.com/voltron-1/Suburban_SOC/pull/369)
+  merged 2026-08-16 (squash), auto-closing #341 — same review-bypass
+  basis as every prior session fix.
+  security-auditor follow-up on the new test found it was STILL
+  under-flagging: its "unmapped field → skip, don't guess" rule treated
+  every governed index the same way, but `logstash-security-template.json`'s
+  `strings_as_keyword` dynamic_template is an unrestricted catch-all (no
+  `path_match`), so an "unmapped" field there is still provably bare
+  keyword, not unknown. That hid 3 live, populated fields on the
+  Executive dashboard (`nist.function`, `threat.technique.id`/`name` —
+  set by `configs/logstash.conf`'s Zeek classification block) plus
+  `action.type` (checked against the separate `soar-actions-template.json`,
+  which has no dynamic_templates at all — genuinely NOT exhaustive the
+  same way, now modeled as per-pattern `GOVERNED_INDEX_PATTERNS`). Also
+  found 2 instances entirely outside the checker's original scan surface
+  (a Talos-lookup `fieldFormatMap` pivot on two dashboard-bundle files).
+  All 6 fixed; checker widened with its own synthetic tests proving the
+  exhaustive/non-exhaustive asymmetry. A self-review before merge then
+  caught that the `fieldFormatMap` scan's first draft (a regex keyed on
+  `"id"` being serialized first) would have silently broken the moment
+  Kibana re-exported the file with different key order — replaced with
+  real `json.loads` plus a key-order-independence regression test.
+  Wired into CI as a new `tests/dashboards` directory-glob step in
+  `detections.yml`, mirroring the existing `tests/pipeline` step.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -1884,6 +1917,13 @@ are implemented in code; checked off with that one caveat noted inline.
   2026-08-16 (squash), auto-closing #344. M18 now 1/11 closed. Filed
   [#367](https://github.com/voltron-1/Suburban_SOC/issues/367) (deferred
   structural fix) as a new M18 Backlog item.
+- **#341 closed — dashboard panels bucketing on nonexistent `.keyword`
+  fields.** Full detail in NEXT UP's "M18 progress" above.
+  [PR #369](https://github.com/voltron-1/Suburban_SOC/pull/369) merged
+  2026-08-16 (squash), auto-closing #341. M18 now 2/11 closed. Grew from
+  a 4-field fix into a repo-wide sweep (22 total fields fixed across 8
+  dashboard files) plus a new CI-enforced regression test
+  (`tests/dashboards/test_dashboard_field_mapping.py`).
 
 ---
 

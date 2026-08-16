@@ -1,0 +1,123 @@
+# Suburban-SOC — per-document TTL retention for threat-intel-indicators /
+# threat-intel-meta (#271). Triggered by threat-intel-compact.timer daily.
+# refresh_intel.sh upserts every indicator on every 6h run but never deletes
+# one the feeds have since dropped, and POSTs a brand-new threat-intel-meta
+# heartbeat doc on every run with no natural cap at all — this closes both
+# via a periodic per-document _delete_by_query, matching
+# compact_agent_checkpoints.py's (#256) established pattern for the exact
+# same class of problem.
+#
+# Install:
+#   sudo cp configs/systemd/threat-intel-compact.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now threat-intel-compact.timer
+# Run once now / check:  sudo systemctl start threat-intel-compact.service ; journalctl -u threat-intel-compact -n 30
+[Unit]
+Description=Suburban-SOC threat-intel-indicators/threat-intel-meta TTL retention (#271)
+Documentation=https://github.com/voltron-1/Suburban_SOC
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as the repo owner so it can read scripts/setup/.env and use the
+# user's Docker context for the CA extraction below — same posture as
+# slo-metrics.service/intel-refresh.service/checkpoints-compact.service.
+User=tjlam
+# A SEPARATE delete-capable identity, NOT intel_writer — that role's whole
+# point (#222 review) is holding no read/delete privilege at all, so a
+# compromised feed-refresh credential can never read back or erase
+# indicator history. threat_intel_compactor holds read+delete on
+# threat-intel-indicators/threat-intel-meta ONLY, used by nothing else.
+#
+# security-auditor review (empirically re-confirmed live via `systemd-run
+# --user` against a throwaway unit on this exact host): systemd's
+# Environment= directive does NOT perform ${VAR} expansion — per
+# systemd.exec(5), "$" has no special meaning there. A prior draft here
+# used `Environment=THREAT_INTEL_COMPACTOR_ES_PASS=${THREAT_INTEL_COMPACTOR_PASSWORD}`,
+# which resolves to the LITERAL string "${THREAT_INTEL_COMPACTOR_PASSWORD}",
+# not the real password — every ES call would 401. This is the exact bug
+# class #259 already found and fixed once for slo-metrics.service (see
+# that unit's own long comment on this); checkpoints-compact.service and
+# intel-refresh.service both still carry the broken pattern (tracked
+# separately, out of scope here). Fixed the same way #259 fixed it:
+# extract ONLY the one secret this unit needs, comment-stripped the same
+# way scripts/setup/lib/env_loader.py strips them, into a scratch file
+# under RuntimeDirectory=, renamed to the key the script actually reads —
+# EnvironmentFile=- then supplies it directly, no expansion needed.
+# `grep -Eq "^...ES_PASS=.{8,}"` (not `test -s`): a typo'd/rotated-away
+# THREAT_INTEL_COMPACTOR_PASSWORD key, or a blank value, must fail this
+# step loudly rather than silently write an empty/near-empty scratch file
+# — "-" prefix on EnvironmentFile= below is what makes a missing file (not
+# a missing VALUE) the fails-closed, silent case instead.
+ExecStartPre=/bin/sh -c 'grep "^THREAT_INTEL_COMPACTOR_PASSWORD=" /home/tjlam/projects/Suburban-SOC/scripts/setup/.env | sed -E "s/^THREAT_INTEL_COMPACTOR_PASSWORD=/THREAT_INTEL_COMPACTOR_ES_PASS=/; s/[ \t]+#.*//" > /run/suburban-soc-threat-intel-compact/threat_intel_compactor_password.env; grep -Eq "^THREAT_INTEL_COMPACTOR_ES_PASS=.{8,}" /run/suburban-soc-threat-intel-compact/threat_intel_compactor_password.env'
+# "-" prefix REQUIRED (security-auditor precedent, slo-metrics.service):
+# every Exec* command in this unit, including the ExecStartPre above that
+# CREATES this file, has EnvironmentFile= applied before it execs — without
+# "-", a missing file would deadlock the unit's very first command on every
+# single run (RuntimeDirectory= is torn down between runs, Type=oneshot).
+EnvironmentFile=-/run/suburban-soc-threat-intel-compact/threat_intel_compactor_password.env
+Environment=ES_HOST=https://localhost:9200
+Environment=THREAT_INTEL_COMPACTOR_ES_USER=threat_intel_compactor
+Environment=ES_CA=/run/suburban-soc-threat-intel-compact/ca.crt
+# /run/suburban-soc-threat-intel-compact, owned by the service user; auto-removed
+# when the unit stops. Mode 0700 (not the 0755 default): the password
+# scratch file's 0600 permissions would otherwise rest entirely on
+# UMask=0077 below applying to whatever the ExecStartPre writes it as — a
+# non-traversable directory makes the guarantee structural, not incidental
+# (same reasoning as slo-metrics.service's identical directive).
+RuntimeDirectoryMode=0700
+RuntimeDirectory=suburban-soc-threat-intel-compact
+# The stack CA lives only in a docker volume (no stable host path under
+# Docker Desktop/WSL on this host's current setup — a `docker cp` each run
+# matches slo-metrics.service/intel-refresh.service/checkpoints-compact.service).
+ExecStartPre=-/usr/bin/docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt /run/suburban-soc-threat-intel-compact/ca.crt
+ExecStart=/usr/bin/python3 /home/tjlam/projects/Suburban-SOC/scripts/setup/ai_agent/compact_threat_intel.py
+TimeoutStartSec=120
+
+# --- Sandboxing (audit #167 / NIST CM-7) ---------------------------------------
+# This unit only makes outbound HTTPS calls to Elasticsearch (requests) and
+# reads the repo/.env — no external feeds, no local file writes beyond the
+# CA cert under RuntimeDirectory above, so no special Linux capabilities,
+# kernel access, or namespace privileges are needed. Mirrors
+# checkpoints-compact.service, the closest existing analog (same shape:
+# Python + ES-only + .env, dedicated delete-capable compactor identity).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+# Deliberately NOT RemoveIPC=true — same reasoning intel-refresh.service /
+# checkpoints-compact.service already document: User=tjlam is the
+# interactive login account, and Type=oneshot means this unit stops after
+# every run; daily it would be eligible to tear down IPC objects belonging
+# to other tjlam-owned processes (desktop session, Docker Desktop helpers)
+# that have nothing to do with this service. This script uses no IPC.
+UMask=0077
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+# This unit holds delete privilege on threat-intel history — matches
+# checkpoints-compact.service's own reasoning for holding the same directives.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# AF_NETLINK is required, not optional: glibc's getaddrinfo() (used to
+# resolve the ES hostname) enumerates local addresses over netlink — omitting
+# it breaks DNS resolution outright (verified against this exact directive
+# set working for slo-metrics.service/intel-refresh.service/
+# checkpoints-compact.service in production).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+PrivateDevices=true
+ProtectProc=invisible
+ProcSubset=pid
+
+[Install]
+WantedBy=multi-user.target

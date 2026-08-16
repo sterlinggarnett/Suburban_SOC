@@ -87,8 +87,11 @@ services:
     # elsewhere in this service.
     environment:
       - AGENT_CHECKPOINTS_PASSWORD=${AGENT_CHECKPOINTS_PASSWORD:-}
+      - AGENT_CHECKPOINTS_COMPACTOR_PASSWORD=${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD:-}
       - BROKER_AUDIT_PASSWORD=${BROKER_AUDIT_PASSWORD:-}
       - INTEL_WRITER_PASSWORD=${INTEL_WRITER_PASSWORD:-}
+      - THREAT_INTEL_COMPACTOR_PASSWORD=${THREAT_INTEL_COMPACTOR_PASSWORD:-}
+      - LOGSTASH_ENRICH_PASSWORD=${LOGSTASH_ENRICH_PASSWORD:-}
       - SLO_METRICS_PASSWORD=${SLO_METRICS_PASSWORD:-}
       - SOC_AGENT_KIBANA_PASSWORD=${SOC_AGENT_KIBANA_PASSWORD:-}
       - SOC_AGENT_HMAC_SECRET=${SOC_AGENT_HMAC_SECRET:-}
@@ -133,8 +136,19 @@ services:
         case "${KIBANA_PASSWORD}" in changeme*) echo "ERROR: KIBANA_PASSWORD is still the placeholder value from .env.example — set a real password."; exit 1;; esac;
         case "${LOGSTASH_PASSWORD}" in changeme*) echo "ERROR: LOGSTASH_PASSWORD is still the placeholder value from .env.example — set a real password."; exit 1;; esac;
         case "$${AGENT_CHECKPOINTS_PASSWORD}" in changeme*) echo "ERROR: AGENT_CHECKPOINTS_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
+        # security-auditor review (#271): the three compactor/reader identities
+        # below (AGENT_CHECKPOINTS_COMPACTOR, THREAT_INTEL_COMPACTOR,
+        # LOGSTASH_ENRICH) were missing from this gate entirely — each is
+        # documented elsewhere as "blank = fails closed", but that reasoning
+        # only covers the BLANK case; a non-blank changeme_* placeholder is
+        # not blank, and would have provisioned a delete-capable (the two
+        # compactors) or read-capable (logstash_enrich) ES user with a
+        # password published in this public repo.
+        case "$${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD}" in changeme*) echo "ERROR: AGENT_CHECKPOINTS_COMPACTOR_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
         case "$${BROKER_AUDIT_PASSWORD}" in changeme*) echo "ERROR: BROKER_AUDIT_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
         case "$${INTEL_WRITER_PASSWORD}" in changeme*) echo "ERROR: INTEL_WRITER_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
+        case "$${THREAT_INTEL_COMPACTOR_PASSWORD}" in changeme*) echo "ERROR: THREAT_INTEL_COMPACTOR_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
+        case "$${LOGSTASH_ENRICH_PASSWORD}" in changeme*) echo "ERROR: LOGSTASH_ENRICH_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
         case "$${SLO_METRICS_PASSWORD}" in changeme*) echo "ERROR: SLO_METRICS_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
         case "$${SOC_AGENT_KIBANA_PASSWORD}" in changeme*) echo "ERROR: SOC_AGENT_KIBANA_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
         case "$${SOC_AGENT_HMAC_SECRET}" in changeme*) echo "ERROR: SOC_AGENT_HMAC_SECRET is still the placeholder value from .env.example — anyone who has read the public repo can forge /alert. Set a real secret (openssl rand -hex 32), or leave it fully blank to fail closed instead."; exit 1;; esac;
@@ -251,6 +265,7 @@ services:
       - AGENT_CHECKPOINTS_PASSWORD=${AGENT_CHECKPOINTS_PASSWORD:-}
       - AGENT_CHECKPOINTS_COMPACTOR_PASSWORD=${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD:-}
       - INTEL_WRITER_PASSWORD=${INTEL_WRITER_PASSWORD:-}
+      - THREAT_INTEL_COMPACTOR_PASSWORD=${THREAT_INTEL_COMPACTOR_PASSWORD:-}
       - LOGSTASH_ENRICH_PASSWORD=${LOGSTASH_ENRICH_PASSWORD:-}
     volumes:
       - certs:/usr/share/elasticsearch/config/certs
@@ -394,8 +409,11 @@ services:
           echo "Provisioning intel_writer role + user (#222 — dedicated identity, refresh_intel.sh no longer runs as the elastic superuser now that it is a persistent scheduled service, not an occasional manual run)";
           # Least privilege: create_index/index only, no read/delete - the
           # script never reads threat-intel-indicators/threat-intel-meta back
-          # (Kibana dashboards/Watchers read them via their own access), and
-          # nothing needs to delete an indicator or the freshness heartbeat.
+          # (Kibana dashboards/Watchers read them via their own access).
+          # #271: deletion (TTL retention) is now a real, separate need — it
+          # deliberately does NOT go here; see threat_intel_compactor below,
+          # a distinct identity, for the same reason agent_checkpoints_compactor
+          # (#256) is kept out of agent_checkpoints.
           # configs/elasticsearch/roles/intel_writer.json is authoritative
           # (re-applied by apply_roles.sh) - keep this inline copy in sync.
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/intel_writer -d "{\"indices\":[{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"auto_configure\",\"create_index\",\"index\"]}]}" > /dev/null;
@@ -403,6 +421,16 @@ services:
           # AGENT_CHECKPOINTS_PASSWORD above): avoids splicing the
           # cleartext password into the argv of this container.
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/intel_writer -d "{\"password\":\"$${INTEL_WRITER_PASSWORD}\",\"roles\":[\"intel_writer\"],\"full_name\":\"Threat-intel feed refresh (Suburban-SOC)\"}" > /dev/null;
+        fi;
+        if [ x$${THREAT_INTEL_COMPACTOR_PASSWORD} != x ]; then
+          echo "Provisioning threat_intel_compactor role + user (#271 — a SEPARATE delete-capable identity for the scheduled TTL-retention script, deliberately never merged into intel_writer above: the whole point of that role (#222) is holding no read/delete privilege, so a compromised feed-refresh credential can never read back or erase indicator history)";
+          # read+delete, same index pattern as intel_writer — nothing else.
+          # configs/elasticsearch/roles/threat_intel_compactor.json is
+          # authoritative (re-applied by apply_roles.sh) - keep this inline
+          # copy in sync.
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/threat_intel_compactor -d "{\"indices\":[{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"read\",\"delete\"]}]}" > /dev/null;
+          # $$ (not $), same reasoning as AGENT_CHECKPOINTS_PASSWORD above.
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/threat_intel_compactor -d "{\"password\":\"$${THREAT_INTEL_COMPACTOR_PASSWORD}\",\"roles\":[\"threat_intel_compactor\"],\"full_name\":\"SOC threat-intel-indicators/threat-intel-meta TTL retention (Suburban-SOC, #271)\"}" > /dev/null;
         fi;
         echo "Provisioning complete.";
       '

@@ -1,0 +1,23 @@
+# Fires threat-intel-compact.service daily — threat-intel-indicators/
+# threat-intel-meta are low-write-volume indices (one doc per indicator per
+# 6h refresh, one heartbeat per 6h refresh; not per-event telemetry), so
+# like checkpoints-compact.timer a daily run is more than enough to keep
+# pace with retention-eligible growth.
+[Unit]
+Description=Run Suburban-SOC threat-intel-indicators/threat-intel-meta TTL retention (#271) daily
+Documentation=https://github.com/voltron-1/Suburban_SOC
+
+[Timer]
+# OnCalendar= (not OnBootSec=/OnUnitActiveSec=), same reasoning
+# checkpoints-compact.timer documents: Persistent=true only actually works
+# for OnCalendar= timers, so a missed run (host down at 03:00) catches up
+# on next boot instead of silently waiting a full day. Scheduled 30min
+# after checkpoints-compact.timer's 02:30 (itself 1h after the 01:30 daily
+# ES snapshot, slm-policy.json) so the three daily jobs don't contend, and
+# so a bad delete here still has the same snapshot as its recovery path.
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

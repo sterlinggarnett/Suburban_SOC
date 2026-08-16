@@ -144,11 +144,14 @@ WINDOW_END="$(date -u +%FT%TZ)"
 >   ssh root@<router> 'T=<target>; pids=""; for p in $(seq 1 60); do nc $T $p </dev/null >/dev/null 2>&1 & pids="$pids $!"; done; sleep 3; kill $pids 2>/dev/null'
 >   ```
 > - Verify the notice (`src` = the scanning node's IP, current `ts`):
->   `docker exec "$(docker ps --filter ancestor=zeek/zeek:8.1.1 -q)" grep -i Scan::Port_Scan /data/zeek_logs/notice.log | tail -1`.
-  (#293: the image is now pinned — `ancestor=zeek/zeek` bare implicitly means `:latest`, which
-  stops matching the moment a deliberate bump makes `:latest` diverge from the pinned tag; use
-  the pinned tag here too, and update it alongside configs/systemd/zeek-host-capture.service's
-  #293 header comment whenever that tag is bumped.)
+>   `docker exec "$(docker ps --filter name=zeek- -q)" grep -i Scan::Port_Scan /data/zeek_logs/notice.log | tail -1`.
+  (#364, security-auditor: `--filter ancestor=zeek/zeek:<tag>` — the previous form here — is
+  live-confirmed unreliable: a container started from a `repo:tag@digest` reference doesn't
+  always get that tag applied to the local image store, so the tagged filter can silently
+  match nothing even with the exact right container running. `--filter name=zeek-` is
+  deterministic instead — matches both `--name zeek-host-capture` (zeek-host-capture.service)
+  and `--name zeek-stream` (stream_capture.sh, #364) regardless of which real capture path is
+  active or what tag it's pinned to, so it never needs updating on a future bump.)
 >
 > **File-download detection (`files.log` mime type) needs cleartext HTTP, not browsing.**
 > A client behind the peer AP gets its traffic onto `bat0`, but ordinary web traffic is HTTPS —
@@ -166,8 +169,8 @@ WINDOW_END="$(date -u +%FT%TZ)"
 >   ```
 > - The ZIP bytes cross `bat0` in cleartext → Zeek types them. The client logs with its own
 >   `10.18.81.x` IP (bridged L2 mesh — no NAT, unlike a SOC-host-driven sim). Verify:
->   `docker exec "$(docker ps --filter ancestor=zeek/zeek:8.1.1 -q)" grep -i application/zip /data/zeek_logs/files.log | tail -1`.
-  (Same #293 pinned-tag note as the port-scan verification command above.)
+>   `docker exec "$(docker ps --filter name=zeek- -q)" grep -i application/zip /data/zeek_logs/files.log | tail -1`.
+  (Same #364 name-filter note as the port-scan verification command above.)
 > - Quick path-only sanity check (cleartext, but `text/html` not zip):
 >   `curl http://testmynids.org/uid/index.html` from the client → appears in `http.log` on `bat0`.
 >

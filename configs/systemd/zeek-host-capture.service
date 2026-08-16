@@ -13,7 +13,7 @@
 # (this is exactly what scripts/setup/stream_capture.sh raw does).
 #
 # Install:
-#   sudo docker pull zeek/zeek:8.1.1@sha256:f3d539d68e2a68897b02bfa302df9c7f8bcb89f338399625686fca9cc30c85f3
+#   sudo docker pull zeek/zeek:8.2.1@sha256:eca2b3915d3e067cbb4a904f23f4c4f461ea2b60613ab30f7ee77bbc707c87c7
 #   sudo cp configs/systemd/zeek-host-capture.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now zeek-host-capture
@@ -29,26 +29,85 @@
 # alone doesn't close (security-auditor review): (1) an upstream rebuild can silently
 # change an OpenSSL/Zeek-generated string value a Sigma rule depends on — already
 # happened once, net_zeek_ssl_self_signed_c2.yml's first draft assumed OpenSSL's older
-# "self signed certificate" (space) wording, real OpenSSL 3.0.13 in the image emits
+# "self signed certificate" (space) wording, real OpenSSL 3.0.13 in the image emitted
 # "self-signed certificate" (hyphenated), caught only by #228's review, not by anything
 # that would have failed loudly; (2) a Docker Hub tag is a mutable pointer the publisher
 # can re-push, and separately anyone with local Docker socket access can retag an
-# arbitrary image as zeek/zeek:8.1.1 — only the content-addressed digest closes both.
+# arbitrary image as zeek/zeek:8.2.1 — only the content-addressed digest closes both.
 # tests/pipeline/test_zeek_image_pin.py enforces all 4 references stay identical and
 # match the exact reviewed tag+digest (EXPECTED_TAG/EXPECTED_DIGEST in that file).
-# To bump deliberately:
+# To bump deliberately (#364 security-auditor review — step 2/3 rewritten after that
+# review found the original wording named a check that doesn't actually cover the risk):
 #   1. Pull the new tag, confirm `zeek --version`, and record its digest
 #      (`docker inspect <tag> --format '{{index .RepoDigests 0}}'`).
-#   2. Re-check any rule whose logic depends on an exact Zeek/OpenSSL-generated string
-#      (grep the rule corpus for such matches).
-#   3. Re-run the full detection test suite — especially tests/detections/test_live_fire.py
-#      — against the new image.
+#   2. The failure class isn't limited to OpenSSL/validation_status — ANY value or
+#      schema element the image generates can move under an upstream rebuild (already
+#      happened twice: the OpenSSL wording change above, and #228's mime_type list
+#      needing application/x-pie-executable added for modern PIE binaries). Grepping
+#      for one field name (e.g. "validation_status") is not sufficient — it missed,
+#      among others, SSH::Password_Guessing (net_zeek_ssh_bruteforce.yml, upstream
+#      policy/protocols/ssh/detect-bruteforcing.zeek), Intel::ADDR/Intel::DOMAIN
+#      (configs/logstash.conf's SOAR-containment routing), and files.log mime_type/
+#      source (net_zeek_executable_download.yml, net_zeek_smtp_attachment_executable.yml).
+#      Verify with a golden-output diff instead: run the same fixture PCAP(s) through
+#      the old and new image with the real production @load chain
+#      (config.zeek + scan-detection.zeek + detect-bruteforcing), diff the resulting
+#      logs' key sets and the specific values rule logic depends on. `zeek -e 'print
+#      SSH::Password_Guessing; print Intel::ADDR'` (loading the relevant policy first)
+#      is a fast spot-check for enum-shaped dependencies specifically.
+#   3. tests/detections/test_live_fire.py does NOT invoke Zeek — it indexes repo-
+#      authored fixtures straight into Elasticsearch, so it passes identically
+#      regardless of which Zeek image (or none) is installed. It's still worth
+#      re-running (confirms the ES/Sigma half didn't regress), but it is not evidence
+#      about the image itself — only the golden-output diff in step 2 is.
 #   4. Update all 4 real capture paths together, plus EXPECTED_TAG/EXPECTED_DIGEST in
-#      tests/pipeline/test_zeek_image_pin.py, plus the `ancestor=zeek/zeek:...` filter in
-#      docs/SOP-147-evidence-validation-procedure.md (2 occurrences) — that filter matches
-#      by tag, and silently stops matching evidence-collection commands once it's left
-#      pointing at the old tag.
+#      tests/pipeline/test_zeek_image_pin.py, plus the example in
+#      docs/Zeek_ELK_Pipeline.md (not a real capture path, not covered by
+#      test_zeek_image_pin.py, but a tracked sync target since #293 — a prior bump
+#      missed it). docs/SOP-147-evidence-validation-procedure.md's evidence-collection
+#      commands filter on `--filter name=zeek-` (#364), not the image tag, so they no
+#      longer need touching on future bumps.
 #   5. Re-run test_zeek_image_pin.py.
+#
+# #364: bumped 8.1.1 -> 8.2.1 (OpenSSL 3.0.13 -> 3.5.6) to close 7 real CRITICAL CVEs
+# #355's new Trivy job found on 8.1.1 (libgnutls30t64, libssl3t64/openssl, libnode115/
+# nodejs) — 8.2.1 scans clean. Verification actually performed (per the rewritten
+# checklist above, not just the original narrower step 2/3 wording):
+#   - Both validation_status-dependent rules (net_zeek_ssl_self_signed_c2.yml,
+#     net_zeek_ssl_expired_cert_connection.yml) re-verified against the real new
+#     OpenSSL via `openssl verify` on freshly-generated self-signed/expired certs
+#     inside the new image — both exact strings ("self-signed certificate",
+#     "certificate has expired") are byte-identical to the old OpenSSL. Confirmed
+#     `zeek` itself dynamically links the SAME libssl.so.3/libcrypto.so.3 the CLI
+#     check used (`ldd $(command -v zeek)` inside the image), not just an assumed proxy.
+#   - SSH::Password_Guessing/SSH::Login_By_Password_Guesser and Intel::ADDR/
+#     Intel::DOMAIN confirmed to still exist under the new image via `zeek -e 'print'`.
+#   - files.log mime_type/source re-verified with real (not fixture-only) traffic: a
+#     synthetic-but-real HTTP download of an ELF binary and a shell script, each run
+#     through OLD and NEW images and diffed — byte-identical mime_type/source on both
+#     ("application/x-sharedlib"/"HTTP" for the ELF; "text/x-shellscript"/"HTTP" for
+#     the script — the latter is a PRE-EXISTING gap versus the rule's own expected
+#     list, unrelated to this bump, confirmed identical on both versions; tracked
+#     separately).
+#   - All repo-depended-on @load paths (policy/frameworks/intel/{seen,do_notice},
+#     policy/protocols/ssl/validate-certs, the #288 capture-loss monitoring policy,
+#     policy/protocols/conn/mac-logging, policy/protocols/ssh/detect-bruteforcing,
+#     base/frameworks/notice) syntax-checked clean against the new image.
+#   - Real offline-PCAP-replay and streaming-pattern invocations against the new
+#     image, output compared directly against the same run on the old image —
+#     identical conn.log/reporter.log shape, no new errors.
+#   - All 18 tests/detections/test_live_fire.py tests pass against a real
+#     Elasticsearch cluster (confirms the ES/Sigma half; see step 3 above for why
+#     this alone isn't evidence about the image).
+#   - Found live during this bump (security-auditor): docs/SOP-147-evidence-
+#     validation-procedure.md's `ancestor=zeek/zeek:<tag>` filter is unreliable — a
+#     container started via `repo:tag@digest` does not reliably get that tag applied
+#     to the local image store (confirmed empirically: a fresh `docker pull`+`docker
+#     run` of the new pin left `docker ps --filter ancestor=zeek/zeek:8.2.1` matching
+#     nothing despite the exact right container running). Fixed by switching to
+#     `--filter name=zeek-` (stream_capture.sh now sets --name zeek-stream, matching
+#     this unit's existing --name zeek-host-capture) — deterministic regardless of
+#     Docker's tag-caching behavior or which tag is currently pinned.
 [Unit]
 Description=Suburban-SOC Zeek host live capture (tcpdump -> Zeek; iface from CAPTURE_IFACE, default eth0)
 Documentation=https://github.com/voltron-1/Suburban-SOC
@@ -243,7 +302,7 @@ ExecStartPre=-/usr/bin/docker rm -f zeek-host-capture
 # being captured (security-auditor emergency review - this is the likely
 # reason the first two restarts read as "clean" before the third crash-looped).
 # The Zeek image below is pinned to a specific version — see #293 header comment above.
-ExecStart=/bin/bash -c 'set -o pipefail; /usr/bin/tcpdump -i ${CAPTURE_IFACE} -s 0 -U -w - | /usr/bin/docker run -i --rm --name zeek-host-capture -v /storage/PCAP/zeek_logs:/data/zeek_logs -v /storage/PCAP/intel:/data/intel -v /home/tjlam/projects/Suburban-SOC/scripts/setup/configs/zeek:/data/policy:ro -w /data/zeek_logs zeek/zeek:8.1.1@sha256:f3d539d68e2a68897b02bfa302df9c7f8bcb89f338399625686fca9cc30c85f3 zeek -C -r - LogAscii::use_json=T /data/intel/config.zeek /data/policy/scan-detection.zeek policy/protocols/ssh/detect-bruteforcing'
+ExecStart=/bin/bash -c 'set -o pipefail; /usr/bin/tcpdump -i ${CAPTURE_IFACE} -s 0 -U -w - | /usr/bin/docker run -i --rm --name zeek-host-capture -v /storage/PCAP/zeek_logs:/data/zeek_logs -v /storage/PCAP/intel:/data/intel -v /home/tjlam/projects/Suburban-SOC/scripts/setup/configs/zeek:/data/policy:ro -w /data/zeek_logs zeek/zeek:8.2.1@sha256:eca2b3915d3e067cbb4a904f23f4c4f461ea2b60613ab30f7ee77bbc707c87c7 zeek -C -r - LogAscii::use_json=T /data/intel/config.zeek /data/policy/scan-detection.zeek policy/protocols/ssh/detect-bruteforcing'
 ExecStop=-/usr/bin/docker stop -t 10 zeek-host-capture
 Restart=always
 RestartSec=5

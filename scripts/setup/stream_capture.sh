@@ -61,12 +61,22 @@ sudo mkdir -p "$LOG_DIR"
 # the bump process. tests/pipeline/test_zeek_image_pin.py enforces this
 # stays in lockstep with the other 3 real capture paths.
 run_zeek() {
-  "$@" docker run -i --rm \
+  # --name zeek-stream (security-auditor review, #364): SOP-147's evidence-
+  # validation commands need a way to find "the running Zeek container"
+  # that survives a version bump — the `ancestor=zeek/zeek:<tag>` filter
+  # they used to use is live-confirmed unreliable (a container run via
+  # `repo:tag@digest` does not always get the tag applied to the local
+  # image store, so the tagged filter can silently match nothing even
+  # though the exact right container is running). A name is deterministic
+  # regardless of Docker's tag-caching behavior; matches
+  # zeek-host-capture.service's own --name zeek-host-capture, and both are
+  # covered by the same `--filter name=zeek-` prefix.
+  "$@" docker run -i --rm --name zeek-stream \
     -v "${LOG_DIR}:/data/zeek_logs" \
     -v /storage/PCAP/intel:/data/intel \
     -v "${SCRIPT_DIR}/configs/zeek:/data/policy:ro" \
     -w /data/zeek_logs \
-    zeek/zeek:8.1.1@sha256:f3d539d68e2a68897b02bfa302df9c7f8bcb89f338399625686fca9cc30c85f3 \
+    zeek/zeek:8.2.1@sha256:eca2b3915d3e067cbb4a904f23f4c4f461ea2b60613ab30f7ee77bbc707c87c7 \
     zeek -C -r - LogAscii::use_json=T /data/intel/config.zeek /data/policy/scan-detection.zeek \
       policy/protocols/ssh/detect-bruteforcing
 }

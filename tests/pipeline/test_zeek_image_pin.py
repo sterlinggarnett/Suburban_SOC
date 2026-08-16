@@ -9,7 +9,7 @@ value a Sigma rule's logic depends on, with no corresponding repo change to
 review. Already happened once, live, during #228's review:
 net_zeek_ssl_self_signed_c2.yml's first draft assumed OpenSSL's older
 "self signed certificate" (space) wording; the real image's OpenSSL 3.0.13
-emits "self-signed certificate" (hyphenated) — a silent, value-level no-op
+emitted "self-signed certificate" (hyphenated) — a silent, value-level no-op
 that would have shipped undetected if a human hadn't happened to diff the
 exact string by hand.
 
@@ -57,8 +57,12 @@ REAL_CAPTURE_PATHS = [
 # configs/systemd/zeek-host-capture.service's #293 header comment for the
 # bump process. A deliberate bump means editing these two constants, which
 # is the review signal this whole module exists to force.
-EXPECTED_TAG = "8.1.1"
-EXPECTED_DIGEST = "sha256:f3d539d68e2a68897b02bfa302df9c7f8bcb89f338399625686fca9cc30c85f3"
+# #364: bumped 8.1.1 -> 8.2.1 to close 7 real CRITICAL CVEs #355's Trivy
+# job found on 8.1.1 — 8.2.1 scans clean. Both validation_status-dependent
+# rules re-verified against the new OpenSSL (3.5.6): byte-identical exact
+# strings, no rule change needed.
+EXPECTED_TAG = "8.2.1"
+EXPECTED_DIGEST = "sha256:eca2b3915d3e067cbb4a904f23f4c4f461ea2b60613ab30f7ee77bbc707c87c7"
 
 # Anchored on both sides against [\w./-] so a registry/namespace prefix
 # ("evil.example.com/zeek/zeek", "notzeek/zeek") or a suffix

@@ -21,7 +21,7 @@ Once the `.pcap` files were staged, we used the official Zeek Docker container t
 docker run --rm \
   -v /storage/PCAP:/data \
   -w /data/zeek_logs \
-  zeek/zeek:8.1.1 \
+  zeek/zeek:8.2.1 \
   zeek -r /data/http.pcap LogAscii::use_json=T
 ```
 

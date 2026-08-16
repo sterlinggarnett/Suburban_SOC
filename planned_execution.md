@@ -483,21 +483,64 @@ has appeared with 4 open P3 issues.
   coverage gap, not a known live vulnerability, needs its own CI workflow
   change, deliberately out of scope for "pin the image").
 
-3 issues remain in the M16 backlog, none blocked on unavailable
-infrastructure: #271 (`threat-intel-indicators` in ES never retracts
-removed indicators), #270 (`intel-refresh.service`: data/code co-location +
-unpinned CA trust-on-every-use, mirrors `slo-metrics.service`), #265 (mint
-client certs for Winlogbeat/endpoint-Filebeat before #219's mTLS
-enforcement breaks a real endpoint's first connection), plus the new
-[#355](https://github.com/voltron-1/Suburban_SOC/issues/355) follow-up
-above (also tagged to M16).
+- [x] **#271 (P3, data hygiene) — COMPLETE, MERGED** — `refresh_intel.sh`'s
+  ES bulk-index step upserted every indicator on every 6h run but never
+  deleted one a feed had since removed; `threat-intel-meta` had the same
+  problem in a more acute form (a brand-new heartbeat doc every run, no
+  natural cap). [PR #360](https://github.com/voltron-1/Suburban_SOC/pull/360)
+  merged 2026-08-16 (squash, `b50d48b`), auto-closing #271, 17/17 CI green.
+  Added a periodic TTL-retention compactor
+  (`scripts/setup/ai_agent/compact_threat_intel.py`), modeled on
+  `compact_agent_checkpoints.py`'s (#256) pattern: a dedicated
+  `threat_intel_compactor` read+delete identity split from the writer.
+  Two review rounds (security-auditor + code-reviewer + tester-debugger,
+  parallel) found and fixed real bugs confirmed against a live stack with
+  real accumulated data: the original design keyed retention on a new
+  `threat.indicator.last_seen` field, which no pre-fix doc had — an ES
+  range query never matches a missing field, so the exact backlog #271
+  exists to retract would have been permanently undeletable (live-confirmed
+  170/728 real docs affected; fixed to key on `@timestamp`, already
+  re-stamped on every run since #222, correctly deleted exactly those 170).
+  Added a blast-radius guard (refuses >50% of an index in one run without
+  `--force`) since, unlike the checkpoints sibling's multi-clause phase
+  filter, this script's delete has a single predicate. Found 3 compactor/
+  reader passwords (including this PR's own) bypassing docker-compose.yml's
+  placeholder-rejection gate entirely — fixed, plus a generalized
+  regression test. Most significantly: `intel-refresh.service` (installed
+  and actively running on this host) had the exact `systemd
+  Environment=${VAR}`-doesn't-expand bug #259 already fixed once for
+  `slo-metrics.service` — empirically reconfirmed live via `systemd-run
+  --user`; its scheduled runs have very likely never successfully
+  authenticated to ES until this fix. Also added `threat-intel-*` to
+  `slm-policy.json` (previously excluded, making the new timer's own
+  "bad delete has a snapshot to recover from" claim false) and raised
+  default retention from the issue's suggested 7d to 30d (7d would have
+  collided with the feed-health dashboard's own saved `now-7d` window).
+  Follow-ups filed: [#357](https://github.com/voltron-1/Suburban_SOC/issues/357)
+  (`checkpoints-compact.service` has the identical broken `Environment=`
+  pattern — not installed on this host, lower urgency but same bug class),
+  [#358](https://github.com/voltron-1/Suburban_SOC/issues/358) (no
+  detection if `threat-intel-indicators` itself is wiped; a client timeout
+  doesn't cancel a running server-side delete), [#359](https://github.com/voltron-1/Suburban_SOC/issues/359)
+  (Elasticsearch `:9200` bound to all host interfaces, not just localhost).
 
-Next unstarted item: #271 — smallest remaining, self-contained (one
-script's ES indexing logic + a retraction mechanism), no cross-service
-synchronization needed. Recommended over #270 (needs synchronized changes
-across 2 systemd units, `intel-refresh.service` + `slo-metrics.service`)
-and #265 (largest surface: docker-compose cert-minting + 2 config files +
-distribution script + 2 docs). #283 (M15) stays blocked.
+2 issues remain from the original M16 backlog: #270 (`intel-refresh.service`:
+data/code co-location + unpinned CA trust-on-every-use, mirrors
+`slo-metrics.service`), #265 (mint client certs for Winlogbeat/endpoint-
+Filebeat before #219's mTLS enforcement breaks a real endpoint's first
+connection) — plus 4 follow-ups filed across the last two sessions:
+[#355](https://github.com/voltron-1/Suburban_SOC/issues/355) (Trivy scan
+coverage for the pinned `zeek/zeek` image), #357, #358, #359 above.
+
+Next unstarted item: #357 — smallest and most mechanical remaining pick.
+The exact fix pattern (extract one secret into a per-service scratch
+`EnvironmentFile=`, proven live twice this session for `intel-refresh.service`
+and `threat-intel-compact.service`) is already known-correct; this is
+applying it a third time to `checkpoints-compact.service`. Recommended over
+#270 (needs synchronized changes across 2 units, plus its own investigation),
+#265 (largest surface), #358/#359 (need their own design decisions — #359
+in particular needs confirming nothing legitimately depends on non-localhost
+ES access before changing it). #283 (M15) stays blocked.
 
 ---
 
@@ -1707,6 +1750,38 @@ are implemented in code; checked off with that one caveat noted inline.
   live vulnerability, tagged to M16). M16 down to 3 open P3s (#271, #270,
   #265) plus #355; recommending #271 next — smallest remaining, no
   cross-service synchronization needed unlike #270.
+
+- **#271 closed — threat-intel-indicators/threat-intel-meta now retract
+  removed indicators via a periodic TTL compactor.** Full detail in NEXT UP
+  above. [PR #360](https://github.com/voltron-1/Suburban_SOC/pull/360)
+  merged 2026-08-16 (squash, `b50d48b`), 17/17 CI green. The session's
+  most consequential finding: `intel-refresh.service`, installed and
+  actively running on this host, had the exact `systemd Environment=${VAR}`-
+  doesn't-expand bug #259 already fixed once for `slo-metrics.service` —
+  its scheduled runs have very likely never successfully written to ES
+  until this fix, discovered only because live verification against the
+  real stack surfaced a discrepancy (a delete_by_query the compactor
+  script reported succeeding didn't change ES's count until a manual
+  `_refresh`, which led to re-checking the whole write path). Also found
+  live: the original retention design keyed on a field (`threat.indicator.
+  last_seen`) this same PR introduced, making the pre-existing backlog it
+  was meant to clean up permanently undeletable — caught by re-querying
+  real data (170/728 docs lacked the field), fixed to key on `@timestamp`
+  instead. This session also required restarting a wedged Docker Desktop
+  WSL backend twice (with explicit user confirmation each time) before any
+  live verification against a real stack was possible — see mid-session
+  troubleshooting; resolved via Docker Desktop's own "Restart the WSL
+  integration" action, not a repo change. Follow-ups filed:
+  [#357](https://github.com/voltron-1/Suburban_SOC/issues/357)
+  (`checkpoints-compact.service` has the identical `Environment=` bug, not
+  installed here so lower urgency), [#358](https://github.com/voltron-1/Suburban_SOC/issues/358)
+  (no detection if `threat-intel-indicators` is wiped; delete_by_query
+  timeout doesn't cancel server-side), [#359](https://github.com/voltron-1/Suburban_SOC/issues/359)
+  (Elasticsearch `:9200` bound to all interfaces, not just localhost).
+  M16 down to 2 of its original 3 P3s (#270, #265) plus 4 accumulated
+  follow-ups (#355, #357, #358, #359); recommending #357 next — the fix
+  pattern is now proven twice, applying it a third time is the smallest,
+  most mechanical remaining pick.
 
 ## LAST SESSION — 2026-08-13
 

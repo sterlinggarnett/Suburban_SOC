@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Field-truncation tagging fixture tests (#252, extended #263, #290, #344).
+Field-truncation tagging fixture tests (#252, extended #263, #290, #344, #337).
 
 SCOPE (same documented scope as tests/pipeline/test_grok_parse_failures.py):
 a Python re-implementation of configs/logstash.conf's field-truncation ruby
@@ -53,6 +53,8 @@ nothing in this pipeline produces the flat dotted-key shape anymore.
 Run:  python tests/pipeline/test_field_truncation.py  (or: pytest tests/pipeline)
 """
 
+import fnmatch
+import inspect
 import json
 import re
 import unittest
@@ -65,14 +67,28 @@ LOGSTASH_CONF_PATH = ROOT / "configs" / "logstash.conf"
 
 CEILING = 32766
 BYTE_CEILING = 32000
+# #337: values are (bracket_path_parts, field_ceiling) — byte-clamp only
+# ever applies when field_ceiling * 4 exceeds CEILING (32766, Lucene's
+# byte hard limit); 8191/1024 are structurally safe from the Lucene
+# immense-term crash by design (8191*4=32764, 1024*4=4096 — both stay
+# under Lucene's 32766-byte hard limit even for all-multi-byte content),
+# so those only need the char_hit truncation-visibility tag.
 LONG_FIELDS = {
-    "process.args": ["process", "args"],
-    "process.parent.args": ["process", "parent", "args"],
-    "winlog.event_data.ScriptBlockText": ["winlog", "event_data", "ScriptBlockText"],
-    "winlog.event_data.ImagePath": ["winlog", "event_data", "ImagePath"],
-    "url.path": ["url", "path"],
-    "winlog.event_data.CommandLine": ["winlog", "event_data", "CommandLine"],
-    "network_parsed.uri": ["network_parsed", "uri"],
+    "process.args": (["process", "args"], CEILING),
+    "process.parent.args": (["process", "parent", "args"], CEILING),
+    "winlog.event_data.ScriptBlockText": (["winlog", "event_data", "ScriptBlockText"], CEILING),
+    "winlog.event_data.ImagePath": (["winlog", "event_data", "ImagePath"], CEILING),
+    "url.path": (["url", "path"], CEILING),
+    "winlog.event_data.CommandLine": (["winlog", "event_data", "CommandLine"], CEILING),
+    "network_parsed.uri": (["network_parsed", "uri"], CEILING),
+    "user.name": (["user", "name"], CEILING),
+    "related.user": (["related", "user"], 8191),
+    "process.executable": (["process", "executable"], 8191),
+    "process.parent.name": (["process", "parent", "name"], 8191),
+    "file.path": (["file", "path"], 1024),
+    "user.target.name": (["user", "target", "name"], 1024),
+    "process.pe.original_file_name": (["process", "pe", "original_file_name"], 1024),
+    "file.hash.sha256": (["file", "hash", "sha256"], 1024),
 }
 
 
@@ -93,21 +109,37 @@ def _clamp_bytes(val: str, byte_ceiling: int) -> str:
     return val.encode("utf-8")[:byte_ceiling].decode("utf-8", errors="replace")
 
 
+def _utf16_length(val: str) -> int:
+    """Elasticsearch's ignore_above compares against Java's String#length —
+    UTF-16 CODE UNITS — not Python's len() (Unicode CODE POINTS). The two
+    only diverge for astral-plane characters (code point > U+FFFF, most
+    emoji among them): Python's len() counts one as 1, Java/ES counts it
+    as 2 (a surrogate pair). Encoding to UTF-16-LE and halving the byte
+    count gives the identical count Java/ES uses — mirrors
+    configs/logstash.conf's val.encode("UTF-16LE").bytesize / 2."""
+    return len(val.encode("utf-16-le")) // 2
+
+
 def tag_truncation(event: dict):
-    """Mirrors configs/logstash.conf's #252/#263 ruby filter. Returns
-    (char_hit, byte_hit): field labels dropped by ignore_above (char count)
-    and field labels defensively byte-clamped to avoid a Lucene immense-term
-    document rejection, respectively. Mutually exclusive per field — see
-    module docstring for why checking both unconditionally would be wrong."""
+    """Mirrors configs/logstash.conf's #252/#263/#337 ruby filter. Returns
+    (char_hit, byte_hit): field labels dropped by ignore_above (UTF-16
+    code-unit count) and field labels defensively byte-clamped to avoid a
+    Lucene immense-term document rejection, respectively. Mutually
+    exclusive per field — see module docstring for why checking both
+    unconditionally would be wrong. #337: byte-clamp is only ever
+    attempted when field_ceiling*4 exceeds Lucene's real 32766-byte
+    hard limit — a field at a low enough per-field ceiling can't
+    structurally reach it even at its own worst-case (all-multi-byte)
+    length, so the check is skipped rather than merely always-false."""
     char_hit = []
     byte_hit = []
-    for label, path_parts in LONG_FIELDS.items():
+    for label, (path_parts, field_ceiling) in LONG_FIELDS.items():
         val = _nested_get(event, path_parts)
         if not isinstance(val, str):
             continue
-        if len(val) > CEILING:
+        if _utf16_length(val) > field_ceiling:
             char_hit.append(label)
-        elif len(val.encode("utf-8")) > BYTE_CEILING:
+        elif field_ceiling * 4 > CEILING and len(val.encode("utf-8")) > BYTE_CEILING:
             byte_hit.append(label)
     return char_hit, byte_hit
 
@@ -220,6 +252,78 @@ class FieldTruncationTaggingTests(unittest.TestCase):
         event = {"network_parsed": {"uri": "A" * 40000}}
         self.assertEqual(tag_truncation(event), (["network_parsed.uri"], []))
 
+    def test_user_name_over_ceiling_tagged(self):
+        # #337: user.name was mapped keyword with NO ignore_above at all —
+        # unlike every field above, which was ALREADY at ignore_above:
+        # 32766 and just missing a clamp entry, user.name previously had
+        # NO char-ceiling backstop whatsoever (Elasticsearch's own
+        # unbounded default), so a long value reached Lucene directly
+        # instead of being safely ignore_above-dropped first. Now in scope
+        # with the same ceiling as its siblings above.
+        event = {"user": {"name": "A" * 40000}}
+        self.assertEqual(tag_truncation(event), (["user.name"], []))
+
+    def test_related_user_over_8191_ceiling_truncated(self):
+        # #337 security-auditor follow-up: related.user is at 8191, NOT
+        # ceiling (32766) like user.name above — ECS defines related.* as
+        # an array field, and this filter only clamps String values, so a
+        # 32766-tier entry would satisfy CeilingConsistencyTests while
+        # silently no-oping the byte-clamp the moment a real producer
+        # populates it (the same dns.answers trap the template's own
+        # _meta documents). Mapped at 8191 instead, matching its
+        # related.hosts sibling — no producer anywhere in configs/
+        # logstash.conf today (grep-confirmed), pre-emptive hardening
+        # matching #344's IpAddress precedent either way.
+        event = {"related": {"user": "A" * 9000}}
+        self.assertEqual(tag_truncation(event), (["related.user"], []))
+
+    def test_process_executable_over_8191_ceiling_truncated(self):
+        # #337: process.executable is an EXPLICIT property at
+        # ignore_above:8191 (not 32766) — the first of the lower-ceiling
+        # fields the truncation filter previously had zero visibility
+        # into, closing #252's own stated purpose (make silent
+        # ignore_above drops MEASURABLE) for it.
+        event = {"process": {"executable": "A" * 9000}}
+        self.assertEqual(tag_truncation(event), (["process.executable"], []))
+
+    def test_process_executable_under_8191_ceiling_not_tagged(self):
+        event = {"process": {"executable": "A" * 100}}
+        self.assertEqual(tag_truncation(event), ([], []))
+
+    def test_process_parent_name_over_8191_ceiling_truncated(self):
+        event = {"process": {"parent": {"name": "A" * 9000}}}
+        self.assertEqual(tag_truncation(event), (["process.parent.name"], []))
+
+    def test_file_path_over_1024_ceiling_truncated(self):
+        # #337: file.path has no explicit property — falls to
+        # strings_as_keyword's default ignore_above:1024, the lowest tier
+        # this filter now tracks.
+        event = {"file": {"path": "A" * 2000}}
+        self.assertEqual(tag_truncation(event), (["file.path"], []))
+
+    def test_user_target_name_over_1024_ceiling_truncated(self):
+        event = {"user": {"target": {"name": "A" * 2000}}}
+        self.assertEqual(tag_truncation(event), (["user.target.name"], []))
+
+    def test_process_pe_original_file_name_over_1024_ceiling_truncated(self):
+        event = {"process": {"pe": {"original_file_name": "A" * 2000}}}
+        self.assertEqual(tag_truncation(event), (["process.pe.original_file_name"], []))
+
+    def test_file_hash_sha256_over_1024_ceiling_truncated(self):
+        event = {"file": {"hash": {"sha256": "A" * 2000}}}
+        self.assertEqual(tag_truncation(event), (["file.hash.sha256"], []))
+
+    def test_multiple_ceiling_tiers_tagged_together(self):
+        # One event tripping all 3 tiers at once (32766/8191/1024) — each
+        # gets its OWN correct ceiling applied, not one global value.
+        event = {
+            "user": {"name": "A" * 33000, "target": {"name": "B" * 2000}},
+            "process": {"parent": {"name": "C" * 9000}},
+        }
+        got, byte_got = tag_truncation(event)
+        self.assertEqual(set(got), {"user.name", "user.target.name", "process.parent.name"})
+        self.assertEqual(byte_got, [])
+
     def test_flat_dotted_key_no_longer_matched(self):
         # #328 fixed the Sysmon rename block to bracket notation, so nothing
         # in the pipeline produces a flat "process.args"-shaped key anymore
@@ -282,6 +386,82 @@ class ByteClampTaggingTests(unittest.TestCase):
         event = {"winlog": {"event_data": {"CommandLine": "\U0001F600" * 9000}}}
         self.assertEqual(tag_truncation(event), ([], ["winlog.event_data.CommandLine"]))
 
+    def test_user_name_multibyte_byte_clamped(self):
+        # #337: the actually-dangerous branch for the acute part of this
+        # fix — user.name previously had NO ignore_above at all, so a
+        # byte-heavy value reached Lucene directly with nothing to catch
+        # it, unlike the other fields above which were already at
+        # ignore_above:32766 and only missing a clamp entry.
+        event = {"user": {"name": "\U0001F600" * 9000}}
+        self.assertEqual(tag_truncation(event), ([], ["user.name"]))
+
+    def test_lower_ceiling_field_never_byte_clamped_even_with_heavy_multibyte(self):
+        # #337: the load-bearing regression case for the whole per-field-
+        # ceiling design. process.executable's real ceiling is 8191
+        # UTF-16 code units, and 8191*4=32764 bytes is the worst-case byte
+        # count even for all-multi-byte content — structurally incapable
+        # of reaching Lucene's 32766-byte hard limit, so this field must
+        # NEVER reach the byte-clamp branch (field_ceiling*4 > 32766 is
+        # false for 8191). 4095 emoji = 8190 UTF-16 units, legitimately
+        # UNDER the 8191 ceiling — proves the field is correctly left
+        # completely untagged, not just "byte-clamp skipped." Live-
+        # verified against the real ruby filter in a throwaway
+        # logstash:9.3.2 container, not just this Python mirror.
+        event = {"process": {"executable": "\U0001F600" * 4095}}
+        self.assertEqual(tag_truncation(event), ([], []))
+
+    def test_lower_ceiling_field_astral_over_ceiling_truncated_not_byte_clamped(self):
+        # #337 security-auditor follow-up: the actual UTF-16-vs-code-point
+        # divergence this fix closes. 8000 emoji = 8000 Python len()
+        # (code points, UNDER 8191 — this is what the filter's PREVIOUS
+        # code-point-based check would have seen, silently missing the
+        # drop) but 16000 UTF-16 code units (Elasticsearch's own count,
+        # OVER 8191) — ES genuinely ignore_above-drops this value, so the
+        # filter must tag it truncated. Confirms the fix's whole point:
+        # char_hit fires based on UTF-16 length, not len(). NOT byte-
+        # clamped either (wrong tier — 16000*2=32000 bytes stays under
+        # Lucene's real limit anyway, and this tier never reaches that
+        # branch regardless — see field_ceiling*4 > 32766 above). The
+        # field's own value is untouched by a truncation tag (unlike a
+        # byte-clamp, tagging doesn't rewrite _source).
+        event = {"process": {"executable": "\U0001F600" * 8000}}
+        got = tag_truncation(event)
+        self.assertEqual(got, (["process.executable"], []))
+
+    def test_astral_char_ceiling_boundary_utf16_units_not_code_points(self):
+        # #337: pins the EXACT boundary in UTF-16 units (8191), not code
+        # points — 4095 emoji = 8190 units (under, not tagged), 4096
+        # emoji = 8192 units (over, tagged). A code-point-based check
+        # would see 4095/4096 code points, both comfortably under 8191,
+        # and never tag either — this is the precise fixture that
+        # distinguishes correct (UTF-16-aware) from buggy (code-point)
+        # counting, live-verified against the real ruby filter.
+        under = {"process": {"executable": "\U0001F600" * 4095}}
+        over = {"process": {"executable": "\U0001F600" * 4096}}
+        self.assertEqual(tag_truncation(under), ([], []))
+        self.assertEqual(tag_truncation(over), (["process.executable"], []))
+
+    def test_process_executable_exactly_at_8191_ceiling_not_tagged(self):
+        # code-reviewer follow-up: the 32766 tier already pins its exact
+        # boundary (test_exactly_at_byte_ceiling_not_tagged /
+        # test_one_over_ceiling_tagged) — the two new lower tiers didn't
+        # have the same precision, so an off-by-one (e.g. accidental >=)
+        # in the field_ceiling comparison wouldn't have been caught.
+        event = {"process": {"executable": "A" * 8191}}
+        self.assertEqual(tag_truncation(event), ([], []))
+
+    def test_process_executable_one_over_8191_ceiling_tagged(self):
+        event = {"process": {"executable": "A" * 8192}}
+        self.assertEqual(tag_truncation(event), (["process.executable"], []))
+
+    def test_file_path_exactly_at_1024_ceiling_not_tagged(self):
+        event = {"file": {"path": "A" * 1024}}
+        self.assertEqual(tag_truncation(event), ([], []))
+
+    def test_file_path_one_over_1024_ceiling_tagged(self):
+        event = {"file": {"path": "A" * 1025}}
+        self.assertEqual(tag_truncation(event), (["file.path"], []))
+
     def test_clamp_helper_produces_valid_utf8_under_byte_ceiling(self):
         val = "\U0001F600" * 9000
         clamped = _clamp_bytes(val, BYTE_CEILING)
@@ -327,6 +507,7 @@ class CeilingConsistencyTests(unittest.TestCase):
             "winlog.event_data.ImagePath":
                 props["winlog"]["properties"]["event_data"]["properties"]["ImagePath"]["ignore_above"],
             "url.path": props["url"]["properties"]["path"]["ignore_above"],
+            "user.name": props["user"]["properties"]["name"]["ignore_above"],
             "long_command_fields (dynamic_template)": dynamic,
         }
 
@@ -371,6 +552,129 @@ class CeilingConsistencyTests(unittest.TestCase):
         for label, value in ignore_above.items():
             self.assertEqual(value, CEILING, f"{label}: ignore_above={value}, expected {CEILING}")
 
+    _NO_SUCH_PROPERTY = object()
+
+    def _explicit_ignore_above(self, dotted_path):
+        """The real template's ignore_above for an EXPLICIT property.
+        Returns _NO_SUCH_PROPERTY if the path isn't an explicit property at
+        all (falls to a dynamic_template instead), or None if the property
+        EXISTS but has no ignore_above set (Elasticsearch's own unbounded
+        default — exactly user.name's pre-#337 state). security-auditor
+        follow-up: these two cases must not collapse to the same return
+        value — a caller treating them as equivalent could pass on a field
+        that's actually unbounded, believing it correctly falls to a lower
+        dynamic-template default."""
+        template = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+        cur = template["template"]["mappings"]["properties"]
+        parts = dotted_path.split(".")
+        for i, part in enumerate(parts):
+            if part not in cur:
+                return self._NO_SUCH_PROPERTY
+            node = cur[part]
+            if i == len(parts) - 1:
+                return node.get("ignore_above")
+            cur = node.get("properties", {})
+        return self._NO_SUCH_PROPERTY
+
+    def test_337_lower_ceiling_fields_match_reality(self):
+        # #337: LONG_FIELDS/long_fields now track fields at ceilings LOWER
+        # than 32766 — this test derives each one's EXPECTED ceiling from
+        # the real template rather than trusting the hand-maintained
+        # 8191/1024 literals to stay accurate, same "don't trust a comment,
+        # verify against the file" discipline as every other check in this
+        # class.
+        #
+        # process.executable/process.parent.name/related.user are EXPLICIT
+        # properties at ignore_above:8191 — direct lookup. Asserts an
+        # actual int, not just equality with expected_ceiling, so a
+        # property that regressed to "exists but no ignore_above"
+        # (_explicit_ignore_above returning None, not _NO_SUCH_PROPERTY)
+        # fails loudly here instead of comparing None == 8191 in a way
+        # that could theoretically coincide.
+        for label in ("process.executable", "process.parent.name", "related.user"):
+            _parts, expected_ceiling = LONG_FIELDS[label]
+            actual = self._explicit_ignore_above(label)
+            self.assertIsInstance(actual, int,
+                                  f"{label}: template ignore_above is {actual!r}, not a real ceiling")
+            self.assertEqual(actual, expected_ceiling,
+                             f"{label}: template ignore_above={actual}, LONG_FIELDS expects {expected_ceiling}")
+
+        # related.hosts isn't tracked in LONG_FIELDS (no attacker-
+        # controlled-content concern the way user.name/related.user are),
+        # but it's the sibling ignore_above:8191 was explicitly chosen to
+        # match — verify that precedent still holds.
+        self.assertEqual(self._explicit_ignore_above("related.hosts"), 8191,
+                         "related.hosts drifted from ignore_above:8191 — related.user was "
+                         "deliberately mapped to match it (#337 security-auditor review), "
+                         "re-verify that reasoning still applies")
+
+        # file.path/user.target.name/process.pe.original_file_name/
+        # file.hash.sha256 have NO explicit property — they fall to
+        # strings_as_keyword's default ignore_above:1024. Verify BOTH
+        # halves of that claim, not just the number: no explicit property
+        # exists (or this reasoning no longer applies and the test would
+        # be validating the wrong thing), and none of them accidentally
+        # matches long_command_fields' glob (which would instead raise
+        # them to ceiling — the exact #290 case-normalization-adjacent
+        # drift this repo has already hit once).
+        template = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+        dynamic_templates = template["template"]["mappings"]["dynamic_templates"]
+        strings_as_keyword_default = next(
+            dt["strings_as_keyword"]["mapping"]["ignore_above"]
+            for dt in dynamic_templates if "strings_as_keyword" in dt
+        )
+        long_command_fields_globs = next(
+            dt["long_command_fields"]["path_match"]
+            for dt in dynamic_templates if "long_command_fields" in dt
+        )
+        for label in ("file.path", "user.target.name", "process.pe.original_file_name", "file.hash.sha256"):
+            _parts, expected_ceiling = LONG_FIELDS[label]
+            self.assertIs(
+                self._explicit_ignore_above(label), self._NO_SUCH_PROPERTY,
+                f"{label} is now an EXPLICIT template property — this test's strings_as_keyword-"
+                f"default assumption no longer applies, update LONG_FIELDS to the real ignore_above"
+            )
+            # fnmatchcase, not fnmatch: Elasticsearch's path_match is
+            # case-sensitive; plain fnmatch applies the HOST OS's
+            # normcase, which on a non-POSIX CI runner would silently
+            # case-fold this comparison and diverge from real ES behavior.
+            matches_command_glob = any(fnmatch.fnmatchcase(label, glob) for glob in long_command_fields_globs)
+            self.assertFalse(
+                matches_command_glob,
+                f"{label} now matches a long_command_fields glob ({long_command_fields_globs}) — it "
+                f"would get ignore_above:{CEILING}, not strings_as_keyword's default, AND would need "
+                f"a byte-clamp entry (see test_every_ceiling_field_has_a_byte_clamp_entry)"
+            )
+            self.assertEqual(
+                strings_as_keyword_default, expected_ceiling,
+                f"strings_as_keyword's default ignore_above changed to {strings_as_keyword_default}, "
+                f"but LONG_FIELDS still expects {expected_ceiling} for {label}"
+            )
+
+    def test_dynamic_template_only_fields_use_the_dynamic_templates_own_ceiling(self):
+        # #337 security-auditor follow-up: winlog.event_data.CommandLine
+        # and network_parsed.uri are invisible to _template_ceiling_paths()
+        # (dynamic_template matches, not explicit properties — see
+        # test_every_ceiling_field_has_a_byte_clamp_entry's own docstring
+        # for why), so the field-LIST bidirectional check there proves
+        # logstash.conf and LONG_FIELDS agree on including them, but
+        # neither that check nor the walk-based ones anchor WHICH ceiling
+        # they're at to the template's actual dynamic_template value — two
+        # hand-maintained lists could drift to the SAME wrong tier
+        # together and every existing assertion would still pass.
+        template = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+        dynamic_ceiling = template["template"]["mappings"]["dynamic_templates"][0][
+            "long_command_fields"]["mapping"]["ignore_above"]
+        for label in ("winlog.event_data.CommandLine", "network_parsed.uri"):
+            _parts, expected_ceiling = LONG_FIELDS[label]
+            self.assertEqual(
+                dynamic_ceiling, expected_ceiling,
+                f"{label} is tracked at LONG_FIELDS ceiling {expected_ceiling}, but the real "
+                f"long_command_fields dynamic_template it actually matches is at ignore_above:"
+                f"{dynamic_ceiling} — these must agree or the byte-clamp guard "
+                f"(field_ceiling*4 > 32766) could silently stop firing for this field"
+            )
+
     def test_every_ceiling_field_has_a_byte_clamp_entry(self):
         # #290 security-auditor HIGH: url.path was raised to ignore_above:
         # 32766 without being added to logstash.conf's long_fields clamp
@@ -409,24 +713,35 @@ class CeilingConsistencyTests(unittest.TestCase):
         template_paths = self._template_ceiling_paths()
 
         logstash_text = LOGSTASH_CONF_PATH.read_text(encoding="utf-8")
-        long_fields_block = re.search(r"long_fields\s*=\s*\{(.*?)\n\s*\}", logstash_text, re.DOTALL)
+        long_fields_block = re.search(r"long_fields\s*=\s*\{(.*?)\n      \}", logstash_text, re.DOTALL)
         self.assertIsNotNone(long_fields_block,
                              "could not find 'long_fields = {...}' in configs/logstash.conf")
-        logstash_labels = set(re.findall(r'=>\s*"([^"]+)"', long_fields_block.group(1)))
+        block_text = long_fields_block.group(1)
+        # #337: entries are now ["label", field_ceiling] pairs, not bare
+        # "label" strings — field_ceiling is either the `ceiling` variable
+        # (32766, the only tier needing byte-clamp) or a lower numeric
+        # literal (8191/1024, truncation-visibility only). Two separate
+        # extractions: only-at-ceiling labels for the byte-clamp-specific
+        # checks below (must match template_paths, which by construction
+        # only ever contains 32766-ceiling fields), and every label
+        # regardless of tier for the full bidirectional sync check.
+        logstash_labels_at_ceiling = set(re.findall(r'=>\s*\[\s*"([^"]+)"\s*,\s*ceiling\s*\]', block_text))
+        logstash_labels_all = set(re.findall(r'=>\s*\[\s*"([^"]+)"', block_text))
 
-        missing_from_logstash = template_paths - logstash_labels
+        missing_from_logstash = template_paths - logstash_labels_at_ceiling
         self.assertEqual(set(), missing_from_logstash,
                          f"template field(s) mapped ignore_above:{CEILING} with no matching entry "
                          f"in configs/logstash.conf's long_fields clamp hash — the byte-clamp never "
                          f"runs for them, risking a Lucene immense-term whole-document rejection on "
                          f"an unclamped field: {missing_from_logstash}")
 
-        missing_from_python_mirror = template_paths - set(LONG_FIELDS.keys())
+        python_labels_at_ceiling = {label for label, (_parts, c) in LONG_FIELDS.items() if c == CEILING}
+        missing_from_python_mirror = template_paths - python_labels_at_ceiling
         self.assertEqual(set(), missing_from_python_mirror,
-                         f"template field(s) mapped ignore_above:{CEILING} missing from this "
-                         f"module's own LONG_FIELDS mirror — tag_truncation() won't tag them even "
-                         f"though the real ruby filter clamps them, giving this test suite false "
-                         f"confidence: {missing_from_python_mirror}")
+                         f"template field(s) mapped ignore_above:{CEILING} missing (or mapped at the "
+                         f"wrong ceiling) in this module's own LONG_FIELDS mirror — tag_truncation() "
+                         f"won't byte-clamp them even though the real ruby filter does, giving this "
+                         f"test suite false confidence: {missing_from_python_mirror}")
 
         # #344 security-auditor MEDIUM: everything above derives expectations
         # FROM the template, so a hand-added entry that exists ONLY in one of
@@ -437,13 +752,76 @@ class CeilingConsistencyTests(unittest.TestCase):
         # green. This closes that gap directly: the two hand-maintained lists
         # must agree with EACH OTHER, independent of what the template walk
         # can see, covering every current and future dynamic-template-only
-        # entry the walk-based checks above structurally cannot.
-        self.assertEqual(set(LONG_FIELDS.keys()), logstash_labels,
+        # entry the walk-based checks above structurally cannot. #337:
+        # extended to also cross-check that both sides agree on WHICH
+        # ceiling each field uses, not just that the label exists on both
+        # sides — a field silently drifting between ceiling tiers on one
+        # side only is the same "test suite gives false confidence" shape.
+        self.assertEqual(set(LONG_FIELDS.keys()), logstash_labels_all,
                          "configs/logstash.conf's long_fields hash and this module's LONG_FIELDS "
                          "mirror have drifted apart — every clamped field must be listed in both, "
                          "or either the ruby filter or the Python test mirror silently stops "
-                         f"matching reality. logstash-only: {logstash_labels - set(LONG_FIELDS.keys())}, "
-                         f"python-only: {set(LONG_FIELDS.keys()) - logstash_labels}")
+                         f"matching reality. logstash-only: {logstash_labels_all - set(LONG_FIELDS.keys())}, "
+                         f"python-only: {set(LONG_FIELDS.keys()) - logstash_labels_all}")
+
+        # #337 security-auditor follow-up: (8191|1024) was a hardcoded
+        # alternation — silently blind to a future THIRD lower tier (e.g.
+        # a field added at 16384), the exact "nobody remembered to update
+        # every place" class this whole extension exists to close. (\d+)
+        # matches any numeric ceiling; it can never accidentally capture
+        # the `ceiling` IDENTIFIER used by the 32766-tier entries above,
+        # so the two extractions stay non-overlapping.
+        logstash_lower_tier_pairs = set(re.findall(r'=>\s*\[\s*"([^"]+)"\s*,\s*(\d+)\s*\]', block_text))
+        python_lower_tier_pairs = {
+            (label, str(c)) for label, (_parts, c) in LONG_FIELDS.items() if c != CEILING
+        }
+        self.assertEqual(
+            python_lower_tier_pairs, logstash_lower_tier_pairs,
+            "configs/logstash.conf's long_fields hash and this module's LONG_FIELDS mirror "
+            "disagree on a field's specific lower-tier ceiling — tag_truncation() would "
+            f"tag at the wrong threshold. logstash: {logstash_lower_tier_pairs}, "
+            f"python: {python_lower_tier_pairs}"
+        )
+
+    def test_lower_tier_byte_clamp_guard_formula_matches_python_mirror(self):
+        # #337 security-auditor follow-up: the byte-clamp gate
+        # (field_ceiling * 4 > ceiling) is IDENTICAL logic in
+        # configs/logstash.conf and this module's tag_truncation(), but
+        # nothing previously checked that — the bidirectional checks above
+        # compare LONG_FIELDS *data* (which fields, which tier), not the
+        # *formula* applied to that data, so the two files' guard
+        # expressions could silently diverge (e.g. one using `* 4`, the
+        # other `* 3`) with every other assertion in this class still
+        # green. A logstash.conf comment already promised this test exists
+        # by name — it did not, until now (caught by the same follow-up
+        # review that found the gap itself).
+        logstash_text = LOGSTASH_CONF_PATH.read_text(encoding="utf-8")
+        match = re.search(r"elsif field_ceiling \* (\d+) > ceiling", logstash_text)
+        self.assertIsNotNone(match,
+                             "could not find the 'elsif field_ceiling * N > ceiling' byte-clamp "
+                             "guard in configs/logstash.conf — has it been reworded?")
+        logstash_multiplier = int(match.group(1))
+
+        python_source = inspect.getsource(tag_truncation)
+        python_match = re.search(r"field_ceiling \* (\d+) > CEILING", python_source)
+        self.assertIsNotNone(python_match,
+                             "could not find the 'field_ceiling * N > CEILING' byte-clamp guard "
+                             "in this module's tag_truncation() — has it been reworded?")
+        python_multiplier = int(python_match.group(1))
+
+        self.assertEqual(
+            logstash_multiplier, python_multiplier,
+            f"configs/logstash.conf's byte-clamp guard uses field_ceiling * {logstash_multiplier}, "
+            f"but this module's tag_truncation() uses field_ceiling * {python_multiplier} — the two "
+            f"filters would disagree on which lower-tier fields ever need byte-clamping"
+        )
+        # Pin the multiplier itself, not just cross-file agreement — the
+        # true worst-case ratio (UTF-16-aware) is 3 bytes per code unit
+        # (BMP 3-byte characters); *4 (the original code-point-era
+        # estimate) is deliberately more conservative, not tighter, so
+        # anchor to *4 explicitly rather than let both sides drift to some
+        # other still-mutually-consistent value.
+        self.assertEqual(logstash_multiplier, 4)
 
 
 if __name__ == "__main__":

@@ -43,6 +43,14 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
                                                   was silently dropped from the index,
                                                   possibly evading net_zeek_dns_txt_
                                                   answer_abuse.yml's length-heuristic rule
+  Zeek path-grok nomatch count     == 0        — pipeline.zeek_path_nomatch over the
+                                                  window (#349) — a nonzero count means a
+                                                  zeek-shaped document failed Category 0's
+                                                  filename grok, got no event.dataset, and
+                                                  is invisible to every zeek Sigma rule
+                                                  (#291's event.dataset:zeek.<service>
+                                                  scoping) — a real detection blackout,
+                                                  not a data-quality baseline
   Capture-loss max %               <= 5   %    — max Zeek capture_loss.log percent_lost
                                                   over its own SLO_CAPTURE_LOSS_WINDOW (#288,
                                                   default now-1h — NOT the shared WINDOW
@@ -125,6 +133,11 @@ TARGETS = {
     # CLAIMED doc is itself the anomaly; target is 0, same as the two
     # claim-integrity metrics above.
     "vanished_claims": float(os.environ.get("SLO_VANISHED_CLAIM_MAX", "0")),
+    # #349: a zeek-shaped document that fails Category 0's filename grok
+    # gets no event.dataset and is invisible to every zeek Sigma rule
+    # (#291) - a detection blackout, not a data-quality baseline. Target
+    # is 0, same as the three claim-integrity metrics above.
+    "zeek_path_nomatch_count": float(os.environ.get("SLO_ZEEK_PATH_NOMATCH_MAX", "0")),
     # #288: no target was calibrated against real traffic in this environment
     # (same caveat as field_truncation_count/field_byte_clamp_count below) —
     # 5% is a conservative, overridable starting point, not an
@@ -154,6 +167,7 @@ LOWER_BETTER = {
     "audit_write_failures": True, "stuck_approval_claims": True,
     "orphaned_claims": True, "vanished_claims": True, "capture_loss_max_pct": True,
     "intel_feed_stale_heartbeats": False, "intel_indicator_count_drop_pct": True,
+    "zeek_path_nomatch_count": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
 # not a benign "n/a". A dead/unreachable pipeline produces no fresh docs, so
@@ -957,6 +971,60 @@ def metric_oversized_dns_answer_count():
                   {"bool": {"filter": [win, {"term": {"pipeline.oversized_dns_answer": "true"}}]}})
 
 
+def metric_zeek_path_nomatch_count():
+    """Count of pipeline.zeek_path_nomatch:"true" docs in the window (#349).
+
+    configs/logstash.conf's Category 0 grok (`[log][file][path] =>
+    /(?<zeek_stream>[a-z0-9_]+)\\.log$/`) tags _zeek_path_nomatch when a
+    Zeek log's filename doesn't match the pattern (e.g. an uppercase
+    letter, hyphen, or dot before .log - outside [a-z0-9_]+). Before
+    #291, a grok-failed document (no event.dataset, since the dataset
+    stamp is gated on the grok's own success) was still fully ECS-mapped
+    and still matched by any zeek Sigma rule, since nothing checked
+    event.dataset. #291's event.dataset:zeek.<service> scoping condition
+    means a grok-failed document is now completely invisible to every
+    zeek-sourced detection - a real, if rare, detection blackout with
+    zero visible signal, since the tag itself had no consumer until now.
+
+    Unlike field_truncation_count/field_byte_clamp_count/oversized_dns_
+    answer_count (measured, NO_TARGET baselines - no calibration data
+    exists yet to set a threshold against), this has a real target of 0:
+    it isn't a data-quality curiosity, it's a detection-coverage signal,
+    same shape as stuck_approval_claims/orphaned_claims/vanished_claims
+    (a condition that should never legitimately occur, not one this
+    metric exists to characterize the normal rate of).
+
+    Deliberately NOT the shared module-level WINDOW (security-auditor
+    review, same reasoning metric_capture_loss_percent() already
+    documents for itself): this counts immutable indexed docs, not
+    self-clearing state like stuck/orphaned/vanished_claims, so combined
+    with WINDOW's 7-day default and this metric's own 15-min poll cadence
+    (configs/systemd/slo-metrics.timer), a SINGLE nomatch document would
+    pin this metric in breach for ~672 consecutive runs - a week of
+    repeated ntfy alerts sharing the same topic as genuinely urgent
+    metrics, drowning them out. A short, separately-overridable window
+    lets the metric self-clear once the triggering document ages out of
+    a 1-hour lookback instead of a 7-day one.
+
+    NOT hardened against active forgery, same pre-existing gap
+    metric_capture_loss_percent() already documents for itself:
+    configs/logstash.conf's Category 0 gates purely on event content
+    (log.file.path matching *zeek_logs*/*.log), not on which input
+    produced it, so this tag is triggerable via the unauthenticated
+    :5514 HTTP input - tracked as the SAME pre-existing, separate
+    pipeline-boundary gap (private security advisory, not a public
+    issue - this repo is public and the gap is live/unpatched), not
+    fixed here. The short window above bounds the practical impact to a
+    transient, self-clearing false breach rather than a permanent one,
+    matching the residual risk this repo already accepts for
+    capture_loss_percent's identical exposure - not a NEW, worse-than-
+    precedent risk this metric introduces on its own.
+    """
+    win = {"range": {"@timestamp": {"gte": os.environ.get("SLO_ZEEK_PATH_NOMATCH_WINDOW", "now-1h")}}}
+    return _count("logstash-security-*",
+                  {"bool": {"filter": [win, {"term": {"pipeline.zeek_path_nomatch": "true"}}]}})
+
+
 def metric_capture_loss_percent():
     """Max Zeek capture_loss.log percent_lost in the window (#288).
 
@@ -1277,6 +1345,7 @@ def main():
         "field_truncation_count": metric_field_truncation_count,
         "field_byte_clamp_count": metric_field_byte_clamp_count,
         "oversized_dns_answer_count": metric_oversized_dns_answer_count,
+        "zeek_path_nomatch_count": metric_zeek_path_nomatch_count,
         "capture_loss_max_pct": metric_capture_loss_percent,
         "intel_feed_stale_heartbeats": metric_intel_feed_stale_heartbeats,
         "intel_indicator_count_drop_pct": metric_intel_indicator_count_drop_pct,

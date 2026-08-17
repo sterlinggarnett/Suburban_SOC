@@ -13,6 +13,23 @@
 ##!   sudo /opt/zeek/bin/zeek -C -i lo Log::default_logdir=/storage/PCAP/zeek_logs \
 ##!        LogAscii::use_json=T local \
 ##!        /home/<you>/projects/Suburban-SOC/scripts/setup/configs/zeek/scan-detection.zeek
+##!
+##! #331 investigated tightening this script against a spoofed-source
+##! metric-gaming concern and rejected two designs after live security
+##! review: (1) gating the count on connection_established/
+##! connection_rejected instead of new_connection - doesn't defend against
+##! spoofing at this deployment's host-based capture vantage point
+##! (zeek-host-capture.service watches the monitored host's OWN interface,
+##! so that host's real reply to a spoofed SYN is exactly as visible as a
+##! reply to a genuine one), and drops real recall for filtered-host and
+##! non-SYN scans; (2) a global per-window notice-volume cap - bounds the
+##! metric-gaming impact but introduces a cheap, silent denial-of-detection
+##! primitive (a burst of spoofed sources exhausts the cap, then a real
+##! concurrent scan goes unnoticed with no telemetry marking the loss).
+##! This script is UNCHANGED as a result - #331's actual fix is a
+##! distinct-source cardinality signal in
+##! scripts/setup/ai_agent/slo_metrics.py's metric_raw_alert_volume(). Do
+##! not re-attempt either rejected design without re-reading that history.
 
 @load base/frameworks/notice
 

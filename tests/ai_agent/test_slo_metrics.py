@@ -663,15 +663,18 @@ class MetricFunctionTests(unittest.TestCase):
         # .alerts-security.alerts-* (Sigma/Elastic rule hits) — same call order
         # as the function body. Sub-counts stay visible, not just their sum
         # (#216 review: collapsing them hides which side moved).
-        with mock.patch.object(slo_metrics, "_count", side_effect=[7, 3]):
+        with mock.patch.object(slo_metrics, "_count", side_effect=[7, 3]), \
+             mock.patch.object(slo_metrics, "_cardinality", return_value=2):
             result = slo_metrics.metric_raw_alert_volume()
-        self.assertEqual(result, {"zeek_notices": 7, "rule_hits": 3, "value": 10})
+        self.assertEqual(result, {"zeek_notices": 7, "rule_hits": 3,
+                                   "zeek_notices_distinct_sources": 2, "value": 10})
 
     def test_raw_alert_volume_returns_zero_when_healthy_and_quiet(self):
         with mock.patch.object(slo_metrics, "es",
                                return_value=_FakeResponse(200, {"count": 0})):
             result = slo_metrics.metric_raw_alert_volume()
-        self.assertEqual(result, {"zeek_notices": 0, "rule_hits": 0, "value": 0})
+        self.assertEqual(result, {"zeek_notices": 0, "rule_hits": 0,
+                                   "zeek_notices_distinct_sources": 0, "value": 0})
 
     def test_raw_alert_volume_rule_hits_query_is_strict(self):
         # #216 review: .alerts-security.alerts-* should always exist once
@@ -679,7 +682,8 @@ class MetricFunctionTests(unittest.TestCase):
         # strict (allow_no_indices=false) - a missing/unresolvable pattern is
         # a real problem, not a benign "no alerts yet" the way an idle
         # tenant's logstash-security-* legitimately can be.
-        with mock.patch.object(slo_metrics, "_count", side_effect=[0, 0]) as mock_count:
+        with mock.patch.object(slo_metrics, "_count", side_effect=[0, 0]) as mock_count, \
+             mock.patch.object(slo_metrics, "_cardinality", return_value=0):
             slo_metrics.metric_raw_alert_volume()
         zeek_call, rule_call = mock_count.call_args_list
         self.assertNotIn("strict", zeek_call.kwargs)
@@ -687,6 +691,62 @@ class MetricFunctionTests(unittest.TestCase):
         # Excludes the parse-failure quarantine index from the Zeek half —
         # it can carry the same threat.technique.id tag.
         self.assertIn("-logstash-security-quarantine-*", zeek_call.args[0])
+
+    def test_raw_alert_volume_distinct_sources_queries_same_filter_on_source_ip(self):
+        # #331: the cardinality aggregation must scope to the SAME
+        # zeek_notices query (index pattern + threat.technique.id exists +
+        # window) - a mismatched filter would silently report cardinality
+        # for a different document set than the count it's meant to explain.
+        with mock.patch.object(slo_metrics, "_count", side_effect=[5, 1]), \
+             mock.patch.object(slo_metrics, "_cardinality", return_value=4) as mock_card:
+            result = slo_metrics.metric_raw_alert_volume()
+        self.assertEqual(result["zeek_notices_distinct_sources"], 4)
+        card_index, card_query, card_field = mock_card.call_args.args
+        self.assertIn("logstash-security-*", card_index)
+        self.assertIn("-logstash-security-quarantine-*", card_index)
+        self.assertEqual(card_field, "source.ip")
+        self.assertIn({"exists": {"field": "threat.technique.id"}}, card_query["bool"]["filter"])
+
+    def test_cardinality_raises_on_es_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._cardinality("logstash-security-*", {"match_all": {}}, "source.ip")
+
+    def test_cardinality_raises_on_non_200(self):
+        # Parity with _count's test_count_raises_on_non_200 - exercises the
+        # `if r.status_code != 200` branch, not just the exception path.
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(503)):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._cardinality("logstash-security-*", {"match_all": {}}, "source.ip")
+
+    def test_cardinality_raises_on_failed_shards(self):
+        # #331 review: a 200 with failed shards (e.g. `field` mapped
+        # incompatibly with cardinality on a legacy/pre-migration index)
+        # silently UNDERCOUNTS distinct sources - must raise, not return a
+        # quietly-partial value.
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(
+                                   200, {"_shards": {"failed": 1},
+                                         "aggregations": {"distinct": {"value": 2}}})):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._cardinality("logstash-security-*", {"match_all": {}}, "source.ip")
+
+    def test_cardinality_returns_aggregation_value(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(
+                                   200, {"aggregations": {"distinct": {"value": 12}}})):
+            result = slo_metrics._cardinality("logstash-security-*", {"match_all": {}}, "source.ip")
+        self.assertEqual(result, 12)
+
+    def test_cardinality_defaults_to_zero_when_aggregation_missing(self):
+        # Mirrors _count's own "no aggregations key at all" tolerance - a
+        # response shape without the expected aggregation must not crash,
+        # matching how test_raw_alert_volume_returns_zero_when_healthy_and_
+        # quiet's bare {"count": 0} response is handled today.
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {})):
+            result = slo_metrics._cardinality("logstash-security-*", {"match_all": {}}, "source.ip")
+        self.assertEqual(result, 0)
 
     # --- #252: field truncation count -----------------------------------------
     def test_field_truncation_count_raises_on_es_failure(self):

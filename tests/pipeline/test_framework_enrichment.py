@@ -260,19 +260,37 @@ class DetectionAsCodeTests(unittest.TestCase):
         # completed TCP+SSH handshake (detect-bruteforcing.zeek's SumStats
         # over real ssh_auth_failed events), not spoofable by a bare
         # source-IP forger. T1046 was deliberately left OUT of live dispatch
-        # (security-auditor review): scan-detection.zeek fires on the
+        # (security-auditor review): scan-detection.zeek fired on the
         # initial SYN alone, no handshake required, so wiring it in would
         # have turned a spoofed-source SYN sweep into an unrate-limited
         # automated-response amplifier against an attacker-chosen victim IP
         # — this repo has no rate limiting anywhere in the /alert path.
-        # Deferred until #331 (a source-spoofing defense) actually exists.
+        # #331 investigated two sensor-side fixes for the metric-gaming
+        # concern and rejected both after live security review: gating on
+        # connection_established/connection_rejected doesn't defend against
+        # spoofing at all at this deployment's capture vantage point
+        # (zeek-host-capture.service captures at the monitored host's OWN
+        # interface, so that host's real reply to a spoofed SYN is exactly
+        # as visible to Zeek as a reply to a genuine one), and a global
+        # per-hour notice-volume cap introduced a cheap, silent denial-of-
+        # detection primitive instead. scan-detection.zeek is UNCHANGED by
+        # #331 as a result - the actual fix is a distinct-source
+        # cardinality dimension on slo_metrics.py's raw_alert_volume
+        # metric, not anything at the sensor. T1046 STILL isn't wired into
+        # live dispatch, for the same original reason as before #331: no
+        # source-authenticity signal exists for this notice, and this repo
+        # still has no rate limiting anywhere in the /alert path either.
         # T1046 still gets pipeline-tagged for dashboards, unaffected.
         matches = SOAR_TRIGGER_CONDITIONS_RE.findall(CONF)
         self.assertTrue(matches, "T1110 SOAR trigger condition not found in configs/logstash.conf")
         self.assertNotIn('[threat][technique][id] in ["T1046"', CONF,
-                         "T1046 must not be wired into live SOAR dispatch until #331 is fixed")
+                         "T1046 must not be wired into live SOAR dispatch - #331 found no "
+                         "sensor-side fix that makes Scan::Port_Scan spoof-proof, and /alert "
+                         "still has no rate limiting")
         self.assertNotIn('[threat][technique][id] in ["T1046", "T1110"]', CONF,
-                         "T1046 must not be wired into live SOAR dispatch until #331 is fixed")
+                         "T1046 must not be wired into live SOAR dispatch - #331 found no "
+                         "sensor-side fix that makes Scan::Port_Scan spoof-proof, and /alert "
+                         "still has no rate limiting")
 
     def test_soar_trigger_signing_and_dispatch_conditions_match(self):
         # #267: the filter-stage HMAC-signing block and the output-stage http

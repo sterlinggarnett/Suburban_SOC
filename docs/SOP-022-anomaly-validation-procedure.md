@@ -88,9 +88,28 @@ live trigger covers 2 of the Watcher's original 3 conditions live (`zeek.intel`
 IOC hits, SSH brute-force T1110 — both handshake-backed, not spoofable).
 `Scan::Port_Scan` (T1046) stays dashboard-only, same as before #267: it fires
 on a bare SYN with no completed handshake, so wiring it into live SOAR
-dispatch without a source-spoofing defense would let a forged-source SYN
-sweep trigger automated response against an attacker-chosen IP — deferred
-until [#331](https://github.com/voltron-1/Suburban_SOC/issues/331). The
+dispatch would let a forged-source SYN sweep trigger automated response
+against an attacker-chosen IP.
+[#331](https://github.com/voltron-1/Suburban_SOC/issues/331) investigated
+two sensor-side fixes and rejected both after live security review — the
+deployment's own capture vantage point (`zeek-host-capture.service` watches
+the monitored host's own interface) means it can't distinguish a spoofed
+source from a real one no matter which Zeek event it counts on, without
+losing scan-type coverage, and a global notice-volume cap introduced a
+cheap, silent denial-of-detection primitive instead. `scan-detection.zeek`
+is unchanged as a result; #331's actual fix is a distinct-source signal
+added to `metric_raw_alert_volume()` in `slo_metrics.py`, so a spoofed
+flood shows up as a metric anomaly instead of being (unsuccessfully) fought
+at the sensor. T1046 stays dashboard-only indefinitely — no source-
+authenticity signal exists for this notice at all.
+**Known limitation:** the distinct-source signal (`zeek_notices_distinct_
+sources`) only separates a *wide* flood (many forged sources) from real
+activity — a small, fixed number of forged sources sustained over the
+metric's window can push `zeek_notices` high while `zeek_notices_distinct_
+sources` stays low, reading like a few real repeat scanners. Treat a high
+`zeek_notices` count paired with a low distinct-source count as
+**ambiguous**, not confirmed-benign — cross-check `conn.log` for the
+sources involved before ruling out spoofing. The
 Watcher file itself has moved to
 `rules/elastic_watcher/retired/soar_quarantine_alert.json` (historical
 reference only, do not install) and is no longer picked up by
@@ -209,13 +228,13 @@ ssh -i ~/.ssh/id_ed25519_hivemind root@192.168.1.1 \
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `[FAIL] Port scan — hits=0` | Zeek's Scan policy needs `Scan::analyzing_up_to_port` ≥ scanned range | check `local.zeek` for scan policy load |
+| `[FAIL] Port scan — hits=0` | `scan-detection.zeek` (this repo's own custom Scan::Port_Scan reimplementation — modern Zeek dropped the legacy Scan framework `Scan::analyzing_up_to_port` belonged to) isn't loaded, or the scan didn't cross `port_scan_threshold` (20 distinct ports) within `port_scan_interval` (5 min) | confirm `configs/systemd/zeek-host-capture.service`'s `ExecStart` actually loads `scan-detection.zeek` (not `configs/zeek/local.zeek`, which is dead config unused by any real capture path since #286) |
 | `[FAIL] SSH brute force — hits=N<5` | Target SSH service rate-limiting | wait 60s and rerun, or target a lab box without fail2ban |
 | `[FAIL] Malware download` | Egress proxy stripping EICAR mid-transit | use an internal sample URL |
 | `verify_quarantine.sh exit 3` | OpenWrt SSH key missing or wrong | check `SSH_KEY` env, regen with `ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_hivemind` and copy to router |
 | AI Agent doesn't invoke isolate.sh | `sudo` requires password | add NOPASSWD entry in sudoers for the isolate.sh path |
 | Discord embed not delivered | `DISCORD_WEBHOOK_URL` not exported | `export DISCORD_WEBHOOK_URL=...` in the same shell that runs Flask |
-| Live trigger never fires | `threat.indicator.domain` not present in `zeek.conn`, or a Zeek notice never made it past `event.dataset == "zeek.notice"` with a `T1110` tag (**T1046 does not dispatch — dashboard-tagged only, deliberately, until #331**) | enrich via the threat-intel feed, check `configs/logstash.conf`'s Category 5/6 blocks, or test by POSTing directly to `/alert` per Step 7 (the Watcher-based trigger is retired, #267 — this is the ingest-time trigger now) |
+| Live trigger never fires | `threat.indicator.domain` not present in `zeek.conn`, or a Zeek notice never made it past `event.dataset == "zeek.notice"` with a `T1110` tag (**T1046 does not dispatch — dashboard-tagged only, deliberately, indefinitely (#331)**) | enrich via the threat-intel feed, check `configs/logstash.conf`'s Category 5/6 blocks, or test by POSTing directly to `/alert` per Step 7 (the Watcher-based trigger is retired, #267 — this is the ingest-time trigger now) |
 
 ---
 

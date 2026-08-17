@@ -35,6 +35,41 @@ test_sigma_detections.py, which fails if a rule introduces an unsupported featur
     equivalent - Sigma has no native "value is a number" type, so the target
     is coerced to float for comparison regardless of how it's written in the
     rule YAML.
+  * multi-valued event fields (#351): if the event's field VALUE (not the
+    Sigma rule's target) is itself a list, matched per-element with OR
+    semantics - mirrors Elasticsearch's real behavior against a multi-value
+    keyword field (a doc matches if ANY element matches), confirmed via
+    test_live_fire.py's own note that a 1-element array and a bare scalar
+    index identically (no distinct array type in Elasticsearch), so N>1
+    elements is the only shape this can differ on. EXCEPT `all`: Sigma's
+    `all` expands one selector into several ANDed query clauses, each
+    evaluated independently per-element against the SAME multi-value field
+    (a doc matches `field:*a* AND field:*b*` if either element satisfies
+    *a* and a possibly DIFFERENT element satisfies *b* - not one element
+    satisfying both), so `|all` against a list value is
+    AND-over-targets(OR-over-elements), not a uniform per-element
+    recursion (security-auditor, #351 review). A dict-shaped value raises
+    TypeError rather than silently regex-matching its Python repr -
+    dns.answers's real shape is a flat string array, not ECS-canonical
+    dns.answers.data/type/ttl objects (configs/logstash.conf and configs/
+    detections/suburban-soc-ecs.yml both call this out explicitly); if a
+    future producer ever writes that object shape, failing loudly beats
+    silently matching a dict's repr, the same class of bug #351 itself
+    fixed for lists.
+    dns.answers (Zeek's `answers`, added #292) is the first field in this
+    corpus any rule selects on that is genuinely multi-valued in practice
+    - every other field selected on to date (query, qtype_name, mime_type,
+    orig_bytes, ...) is scalar, which is why this gap shipped silently for
+    #292's own rule (its fixtures.json entry models `answers` as a scalar,
+    matching every other fixture's convention, so it never exercised the
+    N>1 case). process.args (Sysmon CommandLine, ECS-array-typed by
+    definition) is scalar in THIS pipeline only by an unrelated
+    implementation accident - configs/logstash.conf renames the whole
+    CommandLine string wholesale rather than tokenizing it - not a schema
+    guarantee; if that ever changes, every `contains|all`/`endswith|all`
+    rule selecting on CommandLine needs the `all` semantics above, not
+    the naive per-element-AND a first read of this note might suggest
+    (security-auditor, #351 review).
   * cidr: IP-in-network membership (#228 round 2, security-auditor), for
     internal/external address scoping (conn_external_rdp_inbound,
     conn_smb_lateral_admin) - confirmed compiling to a native Elasticsearch
@@ -71,7 +106,6 @@ is case-sensitive (see above).
 
 import ipaddress
 import re
-from typing import Optional
 
 _SUPPORTED_MODS = {"contains", "endswith", "startswith", "all", "cased", "re", "gt", "gte", "lt", "lte", "cidr"}
 _NUMERIC_MODS = {"gt", "gte", "lt", "lte"}
@@ -100,7 +134,55 @@ _NUMERIC_MODS = {"gt", "gte", "lt", "lte"}
 _TEXT_MAPPED_FIELDS = {"message"}
 
 
-def _match_one(value: Optional[str], mods, target, field: str = "") -> bool:
+def _match_one(value, mods, target, field: str = "") -> bool:
+    if isinstance(value, dict):
+        # #351 review (security-auditor): dns.answers is documented (this
+        # module's docstring, configs/logstash.conf, configs/detections/
+        # suburban-soc-ecs.yml) as a flat string array, NOT ECS-canonical
+        # dns.answers.data/type/ttl objects - if a future producer ever
+        # writes that shape, silently regex-matching str({...})'s repr
+        # would be the exact class of bug #351 fixed, one level down. Fail
+        # loudly instead.
+        raise TypeError(
+            f"{field!r}: object/dict-shaped event field values are not "
+            f"modeled by this evaluator (got {value!r}) - this evaluator "
+            f"only supports scalar and flat-list Sigma field values")
+    if isinstance(value, list):
+        # #351: Elasticsearch evaluates a query against a multi-value
+        # keyword field per-element (OR) - a doc matches if ANY element
+        # matches. Recurse per element rather than stringifying the list
+        # (the old behavior: str(["a", "b"]) matched against the literal
+        # repr "['a', 'b']", not either real element).
+        if not value:
+            # Zero elements can never match - but a malformed rule (e.g.
+            # `re|all` on a list target, a numeric modifier on a list
+            # target) must still fail loudly rather than silently return
+            # False just because THIS event happens to carry an empty
+            # array (security-auditor finding: the naive any([]) below
+            # would otherwise skip every raise-ValueError shape guard
+            # further down whenever value is []). Validate shape via a
+            # scalar call and discard its (irrelevant) match result.
+            _match_one(None, mods, target, field)
+            return False
+        if "all" in mods and isinstance(target, list):
+            # Sigma's `all` expands one selector into several ANDed query
+            # clauses. Elasticsearch evaluates each clause independently
+            # against a multi-value field: a document matches
+            # `field:*a* AND field:*b*` if EITHER element satisfies *a*
+            # and (possibly a DIFFERENT) element satisfies *b* - it does
+            # NOT require one single element to satisfy every target.
+            # Security-auditor finding (#351 review): a blanket
+            # any(_match_one(v, mods, target, ...) for v in value) gets
+            # this backwards - it pushes `all` INSIDE the per-element
+            # check (OR-over-elements(AND-over-targets): one element must
+            # satisfy every target by itself), the opposite of what real
+            # Elasticsearch does (AND-over-targets(OR-over-elements)).
+            # Not live-exploitable today (no rule combines `contains|all`
+            # with a genuinely multi-valued field in this corpus - see
+            # module docstring), but wrong in exactly the code this fix
+            # adds, so corrected here rather than shipped latent.
+            return all(any(_match_one(v, mods, t, field) for v in value) for t in target)
+        return any(_match_one(v, mods, target, field) for v in value)
     numeric_mods = _NUMERIC_MODS & set(mods)
     if numeric_mods:
         if len(numeric_mods) > 1:

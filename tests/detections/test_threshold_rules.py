@@ -149,6 +149,22 @@ class ThresholdRuleTests(unittest.TestCase):
                     f"enforcement; a stable/test Sigma rule would ALSO deploy as a "
                     f"noisy per-event query rule)")
 
+    def test_bruteforce_source_spray_excludes_all_four_ip_sentinels(self):
+        # #370: without this exclusion, every local/console/service-account 4625
+        # (no real network source - Winlogbeat emits one of these 4 placeholder
+        # values) collapses into one shared bucket, so 6 distinct accounts
+        # failing a local logon within the window fires a false severity:high
+        # "password spray" alert. Regression guard for the exact gap #370's own
+        # live-verification found in the issue's OWN suggested fix: a 3-value
+        # exclusion (omitting "") still let the empty-string sentinel through.
+        # Must match configs/logstash.conf's source.ip copy guard (#342)
+        # exactly - see the cross-reference comment there.
+        path = THRESHOLD_DIR / "auth-win-bruteforce-source-spray.ndjson"
+        rule = load_ndjson(path)[0]
+        for sentinel in ('"-"', '"0.0.0.0"', '"::"', '""'):
+            self.assertIn(sentinel, rule["query"],
+                           f"{path.name}: query must exclude IpAddress sentinel {sentinel}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

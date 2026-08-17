@@ -23,7 +23,7 @@ matching the M12/M13/M14 pattern.
 
 | Milestone | Issues | Theme |
 |---|---|---|
-| [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | 3 | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
+| [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | 🚧 6/8 closed, 1 deferred | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 8 | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 4/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
@@ -167,6 +167,58 @@ unit, no unattended multi-issue runs.
   3 more minor gaps (a comment citing a nonexistent test, a hardcoded
   tier regex blind to a future third tier, stale guard-formula comments)
   — all fixed. 8 mutation-test scenarios total, every one caught.
+
+**M16 progress:**
+
+- [x] **#361 (P2, security) — COMPLETE, MERGED** — `agent_checkpoints_
+  compactor` (live since #357) holds read+delete on `agent-checkpoints-*`
+  with no document-level restriction (Basic license, no DLS); nothing at
+  the ES layer stopped that credential from deleting a live claim doc
+  directly, after which `claim_approval()`'s `op_type=create` grants a
+  fresh claim unconditionally — reopening the at-most-once execution gate.
+  `metric_stuck_approval_claims()`/`metric_orphaned_claims()` both read
+  *healthier*, not worse, when this happens.
+  [PR #375](https://github.com/voltron-1/Suburban_SOC/pull/375) merged
+  2026-08-16 (squash), auto-closing #361 — no GitHub-side human review,
+  same review-bypass basis as every prior session fix (17/17 CI green,
+  parallel security-auditor + code-reviewer sub-agent review, plus two
+  tester-debugger live-verification rounds against the real stack).
+  Added a new `vanished_claims` SLO metric: each run persists a snapshot
+  of every CLAIMED-or-RESOLVED claim doc's identity; the next run `_mget`s
+  the prior snapshot to catch any that no longer exist at all. RESOLVED
+  was added alongside CLAIMED — beyond the issue's own literal scope — after
+  a tester-debugger live-verification finding: `claim_approval()`'s
+  `op_type=create` only checks doc *existence*, not phase, so deleting a
+  RESOLVED doc (a confirmed-successful execution that must never be
+  re-winnable) is exploitable the same way, and arguably worse — a real
+  second dispatch of a completed containment action. RELEASED is
+  deliberately excluded: the compactor's own 90-day retention already
+  deletes those routinely, by design.
+  Two parallel review rounds independently converged on the same root
+  defect in the first draft: Elasticsearch's `exists` query doesn't match
+  a field indexed as `[]`, so keying the baseline lookup on the snapshot
+  field itself silently skipped every quiet run (the common case — claims
+  resolve in seconds). Fixed by keying on an always-non-empty companion
+  timestamp instead, bounded both past (a freshness window, default 2
+  days) and future (rejects a forged baseline dated ahead of `now`).
+  Also fixed: `slo_metrics_reader` never had `read` on `soc-slo-metrics`
+  (only `create_index`/`create` — write-only by design until this metric
+  needed to read its own history back), so the new metric would 403 under
+  the real service account despite passing every mocked test — live
+  confirmed 403-then-200 across the fix. A missing-index cold start now
+  uses `ignore_unavailable=true` instead of 404ing into a spurious P1
+  alert on the first-ever run. `_mget` per-doc errors (e.g. a whole tenant
+  index gone) raise instead of being silently counted as vanished. The
+  persisted snapshot is validated before it can reach a real `_mget`
+  request body, since any `soc-slo-metrics` writer other than the
+  compactor credential could otherwise shape it.
+  Filed [#373](https://github.com/voltron-1/Suburban_SOC/issues/373)
+  (no dashboard panel, no durable per-run record of which claim vanished)
+  and [#374](https://github.com/voltron-1/Suburban_SOC/issues/374)
+  (`soc_admin`'s `soc-*` wildcard can itself write/erase this same SLO
+  history) as new M16-adjacent follow-ups, deliberately out of scope.
+  M16 down to its 2 remaining issues: #358 (next up) and #265 (still
+  deferred, gated on a real endpoint this environment doesn't have).
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -1996,6 +2048,27 @@ are implemented in code; checked off with that one caveat noted inline.
   Two security-auditor rounds (related.user array-clamp trap, gsub
   ordering, Ruby-vs-Java UTF-16 counting, guard generality, plus 3 more
   minor follow-up gaps) — all fixed and mutation-tested.
+- **#361 closed (M16) — a deleted CLAIMED-or-RESOLVED claim doc is now
+  detected instead of silently reopening the at-most-once execution
+  gate.** Full detail in NEXT UP's new "M16 progress" above.
+  [PR #375](https://github.com/voltron-1/Suburban_SOC/pull/375) merged
+  2026-08-16 (squash), auto-closing #361. New `vanished_claims` SLO
+  metric; scope grew from CLAIMED-only to CLAIMED+RESOLVED after a
+  tester-debugger live-verification finding that deleting an
+  already-RESOLVED claim is exploitable the same way and arguably worse
+  (re-dispatches a completed containment action). Two parallel review
+  rounds (security-auditor + code-reviewer) independently found the same
+  root defect in the first draft — Elasticsearch's `exists` query doesn't
+  match `[]`, silently skipping every quiet run's baseline — plus a
+  separate `slo_metrics_reader` role gap (missing `read` on
+  `soc-slo-metrics`) that would have 403'd the new metric in production
+  despite every mocked test passing. Both tester-debugger live-verification
+  passes confirmed the fixes hold against the real stack, not just mocks.
+  Filed [#373](https://github.com/voltron-1/Suburban_SOC/issues/373)
+  (dashboard panel / durable per-run record) and
+  [#374](https://github.com/voltron-1/Suburban_SOC/issues/374)
+  (`soc_admin`'s `soc-*` wildcard) as new, deliberately out-of-scope
+  follow-ups. M16 down to #358 (next up) and #265 (still deferred).
 
 ---
 

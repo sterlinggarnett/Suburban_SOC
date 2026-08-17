@@ -817,6 +817,29 @@ class MetricFunctionTests(unittest.TestCase):
         self.assertIn("logstash-security-*", index)
         self.assertIn({"term": {"pipeline.oversized_dns_answer": "true"}}, query["bool"]["filter"])
 
+    # --- #349: zeek path-grok nomatch count --------------------------------
+    def test_zeek_path_nomatch_count_raises_on_es_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_zeek_path_nomatch_count()
+
+    def test_zeek_path_nomatch_count_returns_count_on_success(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 2})):
+            self.assertEqual(slo_metrics.metric_zeek_path_nomatch_count(), 2)
+
+    def test_zeek_path_nomatch_count_returns_zero_when_none_seen(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 0})):
+            self.assertEqual(slo_metrics.metric_zeek_path_nomatch_count(), 0)
+
+    def test_zeek_path_nomatch_count_queries_pipeline_zeek_path_nomatch_tag(self):
+        with mock.patch.object(slo_metrics, "_count", return_value=0) as mock_count:
+            slo_metrics.metric_zeek_path_nomatch_count()
+        index, query = mock_count.call_args[0]
+        self.assertIn("logstash-security-*", index)
+        self.assertIn({"term": {"pipeline.zeek_path_nomatch": "true"}}, query["bool"]["filter"])
+
     # --- #288: capture-loss max percent -----------------------------------
     def test_capture_loss_percent_raises_on_non_200(self):
         with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(500)):
@@ -1234,7 +1257,7 @@ class MainExitCodeTests(unittest.TestCase):
                            ingest_lag=10.0, parse_err=0.0, audit_write_failures=0.0,
                            orphaned_claims=0.0, vanished_claims=0.0, raw_alert_volume=None,
                            field_truncation_count=0, field_byte_clamp_count=0,
-                           oversized_dns_answer_count=0,
+                           oversized_dns_answer_count=0, zeek_path_nomatch_count=0,
                            capture_loss_max_pct=0.0, intel_feed_stale_heartbeats=1.0,
                            intel_indicator_count_drop_pct=0.0):
         if raw_alert_volume is None:
@@ -1260,6 +1283,8 @@ class MainExitCodeTests(unittest.TestCase):
                                return_value=field_byte_clamp_count),
             mock.patch.object(slo_metrics, "metric_oversized_dns_answer_count",
                                return_value=oversized_dns_answer_count),
+            mock.patch.object(slo_metrics, "metric_zeek_path_nomatch_count",
+                               return_value=zeek_path_nomatch_count),
             mock.patch.object(slo_metrics, "metric_capture_loss_percent",
                                return_value=capture_loss_max_pct),
             mock.patch.object(slo_metrics, "metric_intel_feed_stale_heartbeats",
@@ -1310,6 +1335,22 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("vanished_claims", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_zeek_path_nomatch_count_breach_exits_2_and_sends_ntfy(self):
+        # Regression guard for #349: metric_zeek_path_nomatch_count must
+        # actually be wired into main()'s metric_fns dict, not just
+        # defined - same bug shape #216/#247/#257/#288/#361 already guard
+        # other metrics against (a defined-but-unregistered metric would
+        # silently never breach regardless of its value).
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in self._mock_all_metrics(zeek_path_nomatch_count=1):
+                stack.enter_context(p)
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        ntfy_post.assert_called_once()
+        self.assertIn("zeek_path_nomatch_count", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_audit_write_failures_below_threshold_does_not_breach(self):
         # coverage pinned to the real env's SLO_COVERAGE_MIN (105-rule

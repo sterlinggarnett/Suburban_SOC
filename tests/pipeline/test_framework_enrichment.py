@@ -292,6 +292,54 @@ class DetectionAsCodeTests(unittest.TestCase):
                           "domain-prefix stripping must not run on the SSH "
                           "auth-log's attacker-controlled [user][name] value")
 
+    def test_zeek_path_nomatch_tag_is_consumed_not_write_only(self):
+        # #349: _zeek_path_nomatch (Category 0's grok tag_on_failure) had no
+        # consumer before this - no alert, no dashboard panel, no test - so
+        # a grok-failed zeek document (invisible to every zeek Sigma rule
+        # since #291) had zero visible signal. Must stamp a pipeline.*
+        # field, matching this file's own pipeline.truncated/pipeline.byte_
+        # clamped/pipeline.oversized_dns_answer convention (#252/#263/#352),
+        # so metric_zeek_path_nomatch_count() in slo_metrics.py can measure
+        # it. Scoped to the Category 0 zeek_logs branch specifically, not
+        # just "does this substring appear anywhere in the file".
+        zeek_start = CONF.index('if [log][file][path] =~ "zeek_logs"')
+        zeek_end = CONF.index('if [source] {', zeek_start)
+        zeek_block = CONF[zeek_start:zeek_end]
+        self.assertIn('"_zeek_path_nomatch" in [tags]', zeek_block,
+                       "Category 0 must check for its own grok's failure tag")
+        self.assertIn('[pipeline][zeek_path_nomatch]', zeek_block,
+                       "the failure tag must be turned into a queryable "
+                       "pipeline.* field, not left write-only")
+
+    def test_network_logs_branch_tags_undated_documents(self):
+        # #349 (related, same issue): the :5514 network_logs branch never
+        # stamps event.dataset at all (only Category 0 does) - #291's
+        # event.dataset:zeek.<service> scoping condition means any event
+        # that reaches the end of this branch with no event.dataset is
+        # unmatchable by every zeek Sigma rule with zero visible signal.
+        # Full dataset-stamping here was deliberately rejected (this
+        # branch's json{target=>network_parsed} shape differs from
+        # Category 0's, and 6/19 zeek rules select on fields this branch
+        # never renames at all - see the extensive comment on this
+        # branch's own rename block) - just tagging it so it's visibly
+        # quarantined instead of silently unmatchable.
+        net_start = CONF.index('if "network_logs" in [tags]')
+        net_end = CONF.index("Category 2: Host, Process, & Identity Telemetry", net_start)
+        net_block = CONF[net_start:net_end]
+        self.assertIn('if ![event][dataset]', net_block,
+                       "must check whether ANYTHING (this branch or Category "
+                       "0, for a :5514 payload with a matching log.file.path) "
+                       "already stamped event.dataset")
+        # Named _network_logs_undated, not _zeek_undated (code-reviewer +
+        # security-auditor, independently): this branch is entered on the
+        # input-level "network_logs" tag alone, not on any check that the
+        # content is actually Zeek-shaped - a future Suricata/syslog
+        # payload with no event.dataset would get this tag too, and
+        # "_zeek_undated" would overclaim what it means.
+        self.assertIn('"_network_logs_undated"', net_block,
+                       "an undated network_logs document must be visibly "
+                       "tagged, not silently unmatchable")
+
     def test_network_detections_still_mapped(self):
         for tech in NETWORK_TECHNIQUES:
             self.assertIn(tech, self.mapped_ids,

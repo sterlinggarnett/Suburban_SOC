@@ -25,7 +25,7 @@ matching the M12/M13/M14 pattern.
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏸️ 6/8 closed, 2 not actionable (no actionable work left) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 7/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 8/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
@@ -38,8 +38,8 @@ this doc doesn't duplicate 37 issue bodies inline the way it narrates
 same way every prior milestone's issues were recorded below.
 
 M17 closed out 2026-08-17 (6/8, no actionable work left). **M18 is now the
-active queue** — 7/13 closed already (#344, #341, #342, #337, #370, #339,
-#338), 6 remaining: #326, #336, #345, #347, #349, #367 (#326 is not
+active queue** — 8/13 closed already (#344, #341, #342, #337, #370, #339,
+#338, #349), 5 remaining: #326, #336, #345, #347, #367 (#326 is not
 actionable — needs real Windows/PowerShell telemetry this environment
 doesn't have, same shape as M17's #283/#333). Same approach as M17:
 smallest/most-contained issue first, one at a time, each through the full
@@ -240,6 +240,32 @@ multi-issue runs. M19–M22 remain open calls after M18.
   backslash) value, and a strengthened regression test pinning the exact
   `.last` call and the full SSH branch's negative-window span. Live-
   verified the final logic against the real pinned image across 7 cases.
+- [x] **#349 (P3, tech-debt) — COMPLETE, MERGED** — Category 0's
+  `zeek_stream` grok tags `_zeek_path_nomatch` on a bad filename, but
+  nothing consumed the tag; #291's `event.dataset:zeek.<service>` scoping
+  means a grok-failed document is now completely invisible to every
+  zeek-sourced detection, a real blackout with zero visible signal.
+  [PR #400](https://github.com/voltron-1/Suburban_SOC/pull/400) merged
+  2026-08-17 (squash), auto-closing #349. M18 now 8/13 closed.
+  Stamps `pipeline.zeek_path_nomatch` from the tag and adds
+  `metric_zeek_path_nomatch_count()` (target 0, a detection-coverage
+  signal not a data-quality baseline) to `slo_metrics.py`; tags an
+  undated document in the related `:5514` `network_logs` branch too.
+  security-auditor found 2 HIGH findings before landing on this design:
+  the shared 7-day `WINDOW` + 15-min poll cadence would pin a single
+  nomatch document in breach for ~672 consecutive runs — fixed with a
+  dedicated short window (`SLO_ZEEK_PATH_NOMATCH_WINDOW`, default
+  `now-1h`), mirroring `metric_capture_loss_percent()`'s own established
+  precedent for the identical problem; and Category 0's content-based
+  (not input-based) gate makes this attacker-triggerable via the
+  unauthenticated `:5514` input — the SAME pre-existing, already-tracked
+  gap `metric_capture_loss_percent()` documents for itself (private
+  security advisory, not a public issue), not a new one this metric
+  introduces — the dedicated short window bounds the combined impact to
+  a transient, self-clearing false breach rather than a permanent one.
+  Both reviewers also independently flagged the `network_logs` branch's
+  tag name (`_zeek_undated`) as overclaiming Zeek-specific content —
+  renamed to `_network_logs_undated`.
 
 **M16 progress:**
 

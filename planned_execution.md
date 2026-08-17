@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 🚧 3/8 closed | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 🚧 4/8 closed | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 4/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -275,9 +275,10 @@ unit, no unattended multi-issue runs.
 now — #283 is externally blocked on real Windows telemetry (same shape as
 #265), #333 is a speculative OpenSSH-version investigation the issue itself
 flags as low-priority/optional. Working the remaining 6 smallest/most-
-contained first. **M17 down to 5 open** after #351 — #352 next
-(`sigma_eval.py` has no visibility when a Zeek `dns.answers` element
-exceeds 8191 chars).
+contained first. **M17 down to 4 open** after #352 — #283 and #333 remain
+not actionable; #332 (session-cadence SSH brute-force threshold rule) or
+#331 (scan-detection.zeek's SYN-only/spoofable Port_Scan) are the two
+remaining actionable candidates.
 
 - [x] **#281 (P3, bug) — COMPLETE, MERGED** — `build_attack_coverage.py`'s
   `navigator_layer()` built one ATT&CK Navigator technique object per rule
@@ -423,6 +424,59 @@ exceeds 8191 chars).
   pre-existing) and [#387](https://github.com/voltron-1/Suburban_SOC/issues/387)
   (`re` modifier's newline/DOTALL behavior vs. real Lucene regexp, needs
   live-fire confirmation) as follow-ups, both deliberately out of scope.
+- [x] **#352 (P3, low, detection, tech-debt) — COMPLETE, MERGED** —
+  a Zeek `dns.answers` element over the template's `ignore_above:8191`
+  (#292) was silently unindexed with no error and no visibility tag —
+  `dns.answers` is a flat ARRAY, structurally excluded from
+  `configs/logstash.conf`'s existing `long_fields` truncation-visibility
+  mechanism (String-only byte-clamp). [PR #391](https://github.com/voltron-1/Suburban_SOC/pull/391)
+  merged 2026-08-17 (squash), auto-closing #352 — no GitHub-side human
+  review, same review-bypass basis as every prior session fix (17/17 CI
+  green, two full rounds of parallel security-auditor + code-reviewer,
+  plus a tester-debugger pass).
+  Fixed with a new ruby filter block tagging `pipeline.oversized_dns_answer`
+  (visibility only, no clamp/raise, per the issue's own scope), paired with
+  a new `metric_oversized_dns_answer_count()` SLO metric matching the
+  established `field_truncation_count`/`field_byte_clamp_count` precedent
+  (#252/#263) rather than shipping a write-only tag. Two review rounds
+  found real gaps beyond the literal ask: the first draft only checked
+  Array values, silently skipping a SCALAR `dns.answers` — this corpus's
+  own established fixture convention, and the exact shape an
+  unauthenticated `:5514` POST actually produces; fixed, then a second
+  round found a NESTED array (`[["<9000 chars>"]]`) was *also* silently
+  skipped — live-confirmed against the real running Elasticsearch that it
+  flattens arrays-of-arrays for a keyword field exactly like a flat array —
+  fixed with `.flatten`. A dedicated test pinning the block's field
+  path/output field name/tag name (this repo's established #263/#228/#217
+  typo-regression class) initially missed two of the three literals
+  because its scoping marker sat below the new guard/flatten lines; fixed
+  by moving the marker earlier.
+  **Major finding**: a tester-debugger agent crafted a real, wire-verified
+  DNS packet (a TXT resource record built from 40 distinct 250-byte
+  character-strings) and replayed it through the real pinned
+  `zeek/zeek:8.2.1` image. Zeek joins the character-strings into one
+  `answers[]` element as expected, but hard-truncates that joined string
+  at ~4096 characters with NO truncation marker anywhere in `dns.log` —
+  meaning the `>8191` check this fix is built around is structurally
+  unreachable for real TXT-record traffic today. Disclosed honestly in
+  four places rather than silently shipping a check with a disproven
+  premise; kept as defense-in-depth (correct for any non-Zeek producer,
+  including the same unauthenticated `:5514` input). Filed
+  [#389](https://github.com/voltron-1/Suburban_SOC/issues/389) (Zeek's own
+  silent truncation — the actual, more directly exploitable blind spot
+  this review uncovered, needs a Zeek-side fix) and
+  [#390](https://github.com/voltron-1/Suburban_SOC/issues/390) (sibling
+  array fields — `related.user`/`related.hosts`/`threat.feed.name` — with
+  the same shape) as follow-ups, both deliberately out of scope.
+  Live-verified end to end against the real pinned
+  `docker.elastic.co/logstash/logstash:9.3.2` image (full config parse +
+  runtime behavior for 11+ event shapes via a throwaway stdin/stdout
+  pipeline) and against the real running dev-stack Elasticsearch (nested-
+  array flattening behavior and the new live-fire test both confirmed
+  live, not just reasoned about). **M17 now 4/8 closed** — #283 and #333
+  remain the only open issues not currently actionable (externally
+  blocked / speculative-optional, per NEXT UP above); the 2 smallest/
+  most-contained remaining candidates are #332 and #331.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -2345,6 +2399,23 @@ are implemented in code; checked off with that one caveat noted inline.
   behavior — both replaced with bare-equality-based tests, each confirmed
   via `git stash` mutation testing to fail pre-fix and pass post-fix. Filed
   #386, #387 as follow-ups. **M17 now 3/8 closed; #352 next.**
+- **#352 closed (M17) — a Zeek dns.answers element over
+  ignore_above:8191 was silently unindexed with zero visibility.**
+  Full detail in NEXT UP's "M17 progress" above. [PR #391](https://github.com/voltron-1/Suburban_SOC/pull/391)
+  merged 2026-08-17 (squash), auto-closing #352, 17/17 CI green. Added a
+  visibility tag + paired SLO metric; two review rounds found the first
+  draft silently skipped both a scalar `dns.answers` (the shape an
+  unauthenticated `:5514` POST actually produces) and a nested array
+  (live-confirmed against real Elasticsearch to flatten and silently drop
+  exactly like a flat array) — both fixed. A tester-debugger agent's
+  wire-verified DNS-packet replay against the real pinned `zeek/zeek:8.2.1`
+  image found the fix's own `>8191` premise is structurally unreachable
+  for real TXT traffic — Zeek itself silently truncates at ~4096 chars
+  first, with no marker — disclosed honestly rather than hidden, kept as
+  defense-in-depth. Filed #389 (the actual, more significant blind spot
+  this uncovered — Zeek's own silent truncation) and #390 (sibling array
+  fields with the same shape) as follow-ups. **M17 now 4/8 closed; #332
+  or #331 next** (#283/#333 remain not actionable).
 
 ---
 

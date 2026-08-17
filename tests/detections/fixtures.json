@@ -1593,6 +1593,9 @@
       {
         "source": "SMTP",
         "mime_type": "application/pdf"
+      },
+      {
+        "source": "SMTP"
       }
     ]
   },

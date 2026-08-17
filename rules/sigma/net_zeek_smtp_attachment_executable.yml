@@ -15,15 +15,58 @@ description: |
     net_zeek_executable_download.yml's own description for the full live-
     verification methodology and findings (identical list, kept in sync;
     the underlying MIME-detection engine is the same regardless of which
-    protocol carried the bytes). security-auditor review, HONESTLY
-    disclosed rather than assumed: every payload in that verification pass
-    was actually served over HTTP, not SMTP — content-magic MIME detection
-    itself is protocol-agnostic by design (Zeek types file BYTES, not the
-    transport), but this rule's specific behavior on a genuine plaintext
-    SMTP MIME attachment (including whether a mail entity's declared
-    Content-Type header can ever influence mime_type when content-magic
-    itself is inconclusive) has not been independently confirmed the same
-    way. Filed as #382, not blocking.
+    protocol carried the bytes). That pass served every payload over HTTP,
+    not SMTP — filed as #382 to independently confirm this rule's specific
+    behavior on a genuine plaintext SMTP MIME attachment.
+    #382 (live-verified, 2026-08-17; full methodology, SHA-256 hashes and
+    raw files.log records in findings/20260817-382-smtp-mime-verification.md):
+    a real plaintext SMTP session (raw socket client/server, captured to a
+    real pcap, replayed through the same pinned zeek/zeek:8.2.1 image #365
+    used) carrying a genuine Windows PE executable (notepad.exe, pulled
+    from a real Windows host) as a base64 MIME attachment, declared
+    `Content-Type: application/x-msdownload` in the MIME headers —
+    confirmed `source: "SMTP"` on the extracted files.log entry (settling
+    the base/protocols/smtp/entities.zeek source-code assertion above with
+    a runtime observation, not just a code read) and `mime_type:
+    "application/x-dosexec"` — identical to #365's HTTP-served result for
+    the same binary, confirming content-magic detection is genuinely
+    transport-agnostic in practice, not just by design. Verified at Zeek's
+    files.log output; the Filebeat→Logstash `source`→`zeek.source` rename
+    the deployed query actually depends on (field-mapping-zeek-files) was
+    not separately re-exercised with SMTP-sourced data here — covered by
+    its own test_field_mapping_drift.py coverage, unchanged by this issue.
+    The declared-Content-Type-fallback question needed two attempts: the
+    same binary truncated to 16 bytes still produced `mime_type:
+    "application/x-dosexec"` (content-magic still had enough of the real
+    PE header to recognize it — not the inconclusive case intended, but
+    itself informative about how little content-magic needs). Escalated
+    to 200 zero-bytes (no MZ/PE signature at all, same declared
+    Content-Type: application/x-msdownload header) to reach a genuinely
+    inconclusive input — that produced a files.log entry with the
+    `mime_type` field entirely absent, not `application/x-msdownload`,
+    not a generic fallback. Confirmed for this one all-zero-byte case
+    that content-magic does not fall back to the declared header — not
+    exhaustively tested against other ambiguous-but-nonzero byte
+    patterns a real mismatched-Content-Type attachment might produce, or
+    against a payload content-magic types as some OTHER wrong-but-
+    conclusive type. Separately, a quoted-printable-encoded attachment
+    (same binary, non-base64 transfer encoding) decoded correctly and
+    still typed `application/x-dosexec` — not a bypass, at least for this
+    one alternate encoding; uuencode/yEnc/a declared-but-wrong CTE remain
+    untested.
+    On this evidence, `application/x-msdownload` remains correctly
+    excluded from this rule's mime_type list (as it already was from the
+    HTTP sibling's, per #365) — but the absent-`mime_type` result IS a
+    real, disclosed coverage gap, not just a settled question: an SMTP
+    attachment whose bytes match none of Zeek's narrow signature set
+    produces no `mime_type` at all, and this rule's equality selection
+    can never fire against a missing field. Archive/packed/container and
+    script-interpreter payload classes (#384, filed separately) are the
+    realistic instances of this gap, not a theoretical edge case.
+    `filename` on the same files.log entry (e.g. "notepad.exe" above) is
+    the MIME-declared filename, fully attacker-controlled and NOT
+    content-derived (double extensions, spoofed extensions) — useful for
+    triage context, never as a type signal.
     Reuses field-mapping-zeek-files (configs/detections/suburban-soc-ecs.yml)
     entirely as-is — no new prerequisite mapping work needed for this rule.
     Same correlation caveat as its HTTP sibling: files.log doesn't carry the
@@ -38,7 +81,10 @@ description: |
     this rule entirely. This rule's practical coverage is unencrypted
     MTA-to-MTA relay on port 25, not general inbound phishing-attachment
     delivery; the T1566.001 tag below should be read with that scope, not
-    as blanket coverage of the technique.
+    as blanket coverage of the technique. This caveat does not survive
+    into docs/detections/SIEM_KQL_Documentation.md (title/tags/query only)
+    — filed as #410 to move the scope limit into the rule title itself,
+    the one field every downstream rendering keeps.
 references:
     - https://attack.mitre.org/techniques/T1566/001/
     - https://docs.zeek.org/en/master/logs/files.html

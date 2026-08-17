@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 🚧 4/8 closed | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 🚧 5/8 closed | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 4/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -275,10 +275,9 @@ unit, no unattended multi-issue runs.
 now — #283 is externally blocked on real Windows telemetry (same shape as
 #265), #333 is a speculative OpenSSH-version investigation the issue itself
 flags as low-priority/optional. Working the remaining 6 smallest/most-
-contained first. **M17 down to 4 open** after #352 — #283 and #333 remain
-not actionable; #332 (session-cadence SSH brute-force threshold rule) or
-#331 (scan-detection.zeek's SYN-only/spoofable Port_Scan) are the two
-remaining actionable candidates.
+contained first. **M17 down to 3 open** after #332 — #283 and #333 remain
+not actionable; #331 (scan-detection.zeek's SYN-only/spoofable Port_Scan)
+is the last actionable candidate.
 
 - [x] **#281 (P3, bug) — COMPLETE, MERGED** — `build_attack_coverage.py`'s
   `navigator_layer()` built one ATT&CK Navigator technique object per rule
@@ -477,6 +476,69 @@ remaining actionable candidates.
   remain the only open issues not currently actionable (externally
   blocked / speculative-optional, per NEXT UP above); the 2 smallest/
   most-contained remaining candidates are #332 and #331.
+- [x] **#332 (detection) — COMPLETE, MERGED** — `policy/protocols/ssh/
+  detect-bruteforcing` (#261) fires at 30 failed auths from one source
+  within 30 minutes; 29 attempts in 30 minutes (or a distributed set of
+  sources each staying under 30) produced zero T1110 signal anywhere in
+  this pipeline. [PR #394](https://github.com/voltron-1/Suburban_SOC/pull/394)
+  merged 2026-08-17 (squash), auto-closing #332 — no GitHub-side human
+  review, same review-bypass basis as every prior session fix (13/13 CI
+  green after a transient GitHub-infrastructure outage on the CodeQL
+  upload step required two retries — the analysis itself was clean, 0
+  findings, both times; not a real code issue), two full rounds of
+  parallel security-auditor + code-reviewer.
+  Added `rules/sigma/net_zeek_ssh_session_cadence.yml` (single-event
+  logic-of-record, `status: experimental`, matching this repo's
+  established threshold-companion pattern) + `rules/elastic/threshold/
+  net-zeek-ssh-session-cadence.ndjson` (5+ SSH sessions from one source
+  within a 6-minute lookback), reading `zeek.ssh` session records
+  directly rather than the aggregated `zeek.notice` the pipeline's T1110
+  tag reads. Live-verified via a real captured SSH session (client/server
+  on separate docker network namespaces over a real bridge network,
+  replayed through the pinned `zeek/zeek:8.2.1` image) that Zeek's
+  `auth_success` field is entirely absent, not false, on failed-auth
+  `ssh.log` records — confirming why the rule deliberately does not key
+  on it. Also added a `field-mapping-zeek-ssh` transformation (first
+  `zeek/ssh` Sigma rule in the corpus, so the established 4-tuple
+  invariant applies), an `emulation_telemetry.map` entry pairing the
+  existing `sim_brute_ssh.sh` script with the new rule, a fixtures.json
+  entry, and regenerated `docs/detections/*`.
+  Two review rounds found the rule's original framing overclaimed what it
+  actually improves — 5 sessions/6 minutes and 30/30 minutes are the SAME
+  steady-state rate (~1/min), so this rule improves detection latency for
+  a burst-shaped attack and drops the `auth_success` dependency, but does
+  NOT lower the sustained rate an attacker can pace under to evade both
+  rules indefinitely; corrected in both files' descriptions rather than
+  left overclaimed. Also found and documented: `SSH::Info$client` is
+  `&optional` in Zeek's own schema (a session on a lossy vantage can write
+  an ssh.log row with `client` absent, silently undercounted); the
+  "mutually exclusive by construction" claim needed correction (disjoint
+  datasets, but `metric_raw_alert_volume()` sums both sub-counts into one
+  combined value); a fixture true_negative wasn't actually discriminating
+  the `startswith` boundary (and a first replacement candidate turned out
+  to be a real false negative — a lowercase variant that's actually a
+  TRUE positive under Sigma's case-insensitive default, caught by
+  checking directly against `sigma_eval.py` before landing the fixture).
+  A CI failure on the first PR run (`SIEM_KQL_Documentation.md` stale)
+  turned out to be a NEW, more precise root cause than the already-
+  tracked #330 toolchain-drift class: not cross-version package drift,
+  but Python 3.11 (CI's runner) vs 3.12 (local) producing different
+  Lucene escaping for 2 unrelated pre-existing rules with the identical
+  `pysigma-backend-elasticsearch` version — regenerated under a real
+  `python:3.11.15` container to match CI exactly; correction posted to
+  #330.
+  Filed [#392](https://github.com/voltron-1/Suburban_SOC/issues/392) (a
+  long-window companion for genuinely sustained low-and-slow coverage,
+  since #332's own rule doesn't lower the rate floor) and
+  [#393](https://github.com/voltron-1/Suburban_SOC/issues/393)
+  (threshold-rule test hardening: the 1-minute overlap window doesn't
+  fully close the straddle gap it claims to, on this file and the
+  pre-existing Windows precedent it copied the pattern from;
+  `ThresholdLiveFireTests` only live-fire-exercises one of three
+  threshold rules) as follow-ups, both deliberately out of scope.
+  **M17 now 5/8 closed** — #283 and #333 remain not actionable; #331
+  (scan-detection.zeek's spoofable SYN-only Port_Scan) is the last
+  actionable candidate.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -2416,6 +2478,31 @@ are implemented in code; checked off with that one caveat noted inline.
   this uncovered — Zeek's own silent truncation) and #390 (sibling array
   fields with the same shape) as follow-ups. **M17 now 4/8 closed; #332
   or #331 next** (#283/#333 remain not actionable).
+- **#332 closed (M17) — session-cadence SSH brute-force threshold rule
+  added, closing the recall gap below detect-bruteforcing's 30-attempts/
+  30-minutes default.** Full detail in NEXT UP's "M17 progress" above.
+  [PR #394](https://github.com/voltron-1/Suburban_SOC/pull/394) merged
+  2026-08-17 (squash), auto-closing #332, 13/13 CI green (after two
+  retries on a transient GitHub-infrastructure outage affecting CodeQL's
+  SARIF upload step specifically — the analysis itself was clean both
+  times, not a real code issue). Live-verified via a real captured SSH
+  session (docker bridge network, replayed through the pinned
+  zeek/zeek:8.2.1 image) that auth_success is entirely absent on
+  failed-auth ssh.log records. Two review rounds corrected an overclaim
+  (5-in-6-minutes and 30-in-30-minutes are the SAME steady-state rate —
+  this rule improves detection latency, not the rate floor), documented
+  a known limitation (SSH::Info$client is &optional, undercounts on a
+  lossy vantage), and caught a fixture true_negative that was actually a
+  true positive under Sigma's case-insensitive default (verified directly
+  against sigma_eval.py before landing). A CI failure traced to a new,
+  more precise root cause than #330's tracked toolchain-drift class:
+  Python 3.11 (CI) vs 3.12 (local) render Lucene escaping differently for
+  the same pysigma-backend-elasticsearch version — regenerated under a
+  real python:3.11.15 container to match CI exactly; correction posted
+  to #330. Filed #392 (long-window companion for genuinely sustained
+  low-and-slow coverage) and #393 (threshold-rule test hardening) as
+  follow-ups. **M17 now 5/8 closed; #331 next** (#283/#333 remain not
+  actionable).
 
 ---
 

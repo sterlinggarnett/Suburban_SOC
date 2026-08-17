@@ -5,7 +5,7 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**106 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**107 rules.** Each query is the exact Lucene the Sigma rule compiles to.
 
 ## SSH Login Attempt for a Nonexistent User
 
@@ -309,6 +309,14 @@ event.dataset:zeek.smtp AND trans_depth:>20
 
 ```
 event.dataset:zeek.notice AND (note:(SSH\:\:Password_Guessing OR SSH\:\:Login_By_Password_Guesser))
+```
+
+## SSH Session Cadence — Complementary Brute-Force Coverage Below detect-bruteforcing's Threshold
+
+- **Rule:** `net_zeek_ssh_session_cadence.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1110
+
+```
+event.dataset:zeek.ssh AND client:SSH\-*
 ```
 
 ## TLS Connection with Expired Certificate

@@ -27,6 +27,27 @@ ECS_Mapping       : threat.technique.id = "T1110" | threat.tactic.name = "Creden
 Target_Sigma_Rule : rules/sigma/net_zeek_ssh_bruteforce.yml
 NIST_CSF_Control  : DE.AE-02 (Detection and Anomaly Validation)
 
+# #332: same emulation script, second independent detection path — the
+# session-cadence threshold rule reads zeek.ssh directly (raw session
+# count per source), not the aggregated notice.log the entry above reads,
+# so both legitimately fire from one sim_brute_ssh.sh run without a new
+# emulation script.
+# ZERO-MARGIN CAVEAT (security-auditor finding): sim_brute_ssh.sh's default
+# BRUTE_PASSWORDS issues exactly 5 attempts, exactly meeting this rule's
+# threshold.value:5 — any single dropped/timed-out/throttled connection
+# (ConnectTimeout expiring, sshd MaxStartups, a missing SSH::Info$client
+# banner on a lossy vantage) makes the emulation run silently fail to
+# trigger this rule, while validate_emulation_map.py still reports this
+# mapping green (it checks file existence/tag/platform sanity only, not
+# threshold margin). Not fixed here — bumping the shared script's attempt
+# count affects net_zeek_ssh_bruteforce.yml's own emulation pairing too.
+[EMULATION: CREDENTIAL_ACCESS_SSH_CADENCE]
+Execution_Vector  : tests/anomaly_simulation/sim_brute_ssh.sh
+Log_Source        : configs/systemd/zeek-host-capture.service -> ssh.log
+ECS_Mapping       : threat.technique.id = "T1110" | threat.tactic.name = "Credential Access"
+Target_Sigma_Rule : rules/sigma/net_zeek_ssh_session_cadence.yml
+NIST_CSF_Control  : DE.AE-02 (Detection and Anomaly Validation)
+
 # --------------------------- WINDOWS ENDPOINT LANE (Sysmon) ---------------------------
 
 [EMULATION: DELIVERY_BITSADMIN]

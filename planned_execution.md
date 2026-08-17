@@ -25,7 +25,7 @@ matching the M12/M13/M14 pattern.
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏸️ 6/8 closed, 2 not actionable (no actionable work left) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 5/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 6/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
@@ -38,8 +38,8 @@ this doc doesn't duplicate 37 issue bodies inline the way it narrates
 same way every prior milestone's issues were recorded below.
 
 M17 closed out 2026-08-17 (6/8, no actionable work left). **M18 is now the
-active queue** — 5/13 closed already (#344, #341, #342, #337, #370), 8
-remaining: #326, #336, #338, #339, #345, #347, #349, #367 (#326 is not
+active queue** — 6/13 closed already (#344, #341, #342, #337, #370, #339),
+7 remaining: #326, #336, #338, #345, #347, #349, #367 (#326 is not
 actionable — needs real Windows/PowerShell telemetry this environment
 doesn't have, same shape as M17's #283/#333). Same approach as M17:
 smallest/most-contained issue first, one at a time, each through the full
@@ -194,6 +194,26 @@ multi-issue runs. M19–M22 remain open calls after M18.
   [#396](https://github.com/voltron-1/Suburban_SOC/issues/396) (a
   companion rule bucketing on `winlog.computer_name` instead) as the
   proper fix.
+- [x] **#339 (P2, bug) — COMPLETE, MERGED** — #328 fixed the Sysmon
+  `Hashes` rename's NESTING but not its CONTENT: Sysmon's `Hashes` field
+  is algorithm-prefixed (`"SHA256=<hex>"`, or composite
+  `"SHA1=...,MD5=...,SHA256=...,IMPHASH=..."`), so `file.hash.sha256` held
+  the raw prefixed string, never a bare hash an IOC hunt could match.
+  [PR #398](https://github.com/voltron-1/Suburban_SOC/pull/398) merged
+  2026-08-17 (squash), auto-closing #339. M18 now 6/13 closed.
+  Added a grok extraction after the rename, live-verified against the
+  real pinned `logstash:9.3.2` image across 5 scenarios (single value,
+  composite value, no-SHA256 value, absent field, >64-char value). A
+  custom `tag_on_failure` keeps a normal "no SHA256 in this value"
+  condition out of the parse-error-rate SLO; on that failure the field is
+  removed rather than left mislabeled. Parallel security-auditor +
+  code-reviewer review, both approved with only LOW findings, applied
+  before shipping: the regex had no trailing boundary (a >64-char value
+  would silently truncate-match instead of failing closed — added
+  `(?![A-Fa-f0-9])`, re-verified live), and
+  `configs/detections/suburban-soc-ecs.yml`'s mapping comment updated so a
+  future Sigma rule using the standard `Hashes|contains: 'SHA256=...'`
+  idiom doesn't compile to a permanently non-matching query.
 
 **M16 progress:**
 

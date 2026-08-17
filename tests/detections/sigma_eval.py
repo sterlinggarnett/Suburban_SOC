@@ -29,12 +29,15 @@ test_sigma_detections.py, which fails if a rule introduces an unsupported featur
     a metacharacter, so an anchored-looking pattern silently never matches
     real data (verified the anchor-then-realize trap firsthand while writing
     the #228 DNS rules - full-match semantics make anchors redundant, not
-    optional).
+    optional). `all` combined with `re` raises ValueError (#386) - a single
+    regex target has nothing to AND against.
   * gt/gte/lt/lte: numeric comparison (#228), for Zeek count fields
     (orig_bytes, request_body_len, trans_depth) that have no string modifier
     equivalent - Sigma has no native "value is a number" type, so the target
     is coerced to float for comparison regardless of how it's written in the
-    rule YAML.
+    rule YAML. `all` combined with a numeric modifier raises ValueError
+    (#386) - it's meaningless against the single-target comparison these
+    modifiers require, not silently accepted and ignored.
   * multi-valued event fields (#351): if the event's field VALUE (not the
     Sigma rule's target) is itself a list, matched per-element with OR
     semantics - mirrors Elasticsearch's real behavior against a multi-value
@@ -75,6 +78,16 @@ test_sigma_detections.py, which fails if a rule introduces an unsupported featur
     conn_smb_lateral_admin) - confirmed compiling to a native Elasticsearch
     IP-range query against `ip`-typed fields, not a pipeline transformation,
     so no configs/detections/suburban-soc-ecs.yml entry is needed for it.
+    `all` combined with `cidr` raises ValueError (#386) rather than
+    silently ORing across the target list the same as plain `cidr` would -
+    Sigma's documented AND semantics (address in every listed network) are
+    well-defined (unlike `re`+list-target, which has no defined meaning at
+    all) but UNVERIFIED against a real compiled query/live Elasticsearch,
+    unlike every other semantic branch in this module built under real
+    confidence (each cites a live probe - see the #292/#351 postmortems
+    above). Rejected rather than implemented on an unverified assumption;
+    a rule needing this today should use separate selection blocks ANDed
+    in the condition instead (see the error message itself).
   * bare equality (no modifier) against a field in _TEXT_MAPPED_FIELDS
     (#229/#243) matches if the target is a WHOLE WORD anywhere in the
     value, not whole-string equality - see _TEXT_MAPPED_FIELDS' own comment
@@ -181,6 +194,18 @@ def _match_one(value, mods, target, field: str = "") -> bool:
             # with a genuinely multi-valued field in this corpus - see
             # module docstring), but wrong in exactly the code this fix
             # adds, so corrected here rather than shipped latent.
+            if not target:
+                # #386 (security-auditor): an empty TARGET list makes the
+                # `all(...)` below vacuously True without ever recursing
+                # into _match_one - for a multi-valued event field, this
+                # silently bypasses every one of the cidr/numeric/re `all`
+                # ValueErrors above (a malformed `field|cidr|all: []` would
+                # return a match instead of failing loudly). Same shape as
+                # the empty-VALUE guard just above and _block_match's own
+                # "empty list selection block" rejection - a degenerate
+                # rule shape, not something to match successfully via a
+                # vacuous truth.
+                raise ValueError(f"empty target list for {mods} on field {field!r}")
             return all(any(_match_one(v, mods, t, field) for v in value) for t in target)
         return any(_match_one(v, mods, target, field) for v in value)
     numeric_mods = _NUMERIC_MODS & set(mods)
@@ -190,6 +215,15 @@ def _match_one(value, mods, target, field: str = "") -> bool:
         mod = numeric_mods.pop()
         if isinstance(target, list):
             raise ValueError(f"the {mod} modifier does not support list values")
+        if "all" in mods:
+            # #386 (security-auditor, #351 review): `all` is meaningless
+            # against a single-target numeric comparison - the list-target
+            # guard above already rejects a list target outright, so `all`
+            # here was accepted syntactically but never validated as
+            # meaningless. Fail loudly rather than silently ignore it,
+            # matching this module's established convention (see the re+
+            # list-target and text-field word-boundary ValueErrors above).
+            raise ValueError(f"the {mod} modifier does not support the all modifier")
         if value is None:
             return False
         try:
@@ -210,6 +244,24 @@ def _match_one(value, mods, target, field: str = "") -> bool:
         # here) - confirmed via a real `sigma convert` probe, not a pipeline
         # transformation, so there is no configs/detections/suburban-soc-
         # ecs.yml entry backing this the way string field renames need one.
+        if "all" in mods:
+            # #386 (security-auditor, #351 review): the branch below always
+            # ORs across a target list regardless of `all` - `field|cidr|
+            # all: [net1, net2]` silently evaluated identically to
+            # `field|cidr` without `all` instead of Sigma's documented AND
+            # semantics (address must be in every listed network). That AND
+            # semantics IS well-defined (`any` -> `all` in the return below)
+            # - unlike `re`+list-target, which has no defined meaning at
+            # all - but it is UNVERIFIED against a real compiled Lucene
+            # query/live Elasticsearch, and every other semantic branch this
+            # module implements under real confidence cites exactly that
+            # kind of live probe (see module docstring). Zero live use in
+            # this corpus (confirmed via corpus grep); fail loudly rather
+            # than silently evaluate the wrong boolean, matching this
+            # module's established convention.
+            raise ValueError(
+                "the cidr modifier does not support the all modifier - use "
+                "separate selection blocks ANDed in the condition instead")
         if value is None:
             return False
         try:
@@ -226,6 +278,13 @@ def _match_one(value, mods, target, field: str = "") -> bool:
         # error, not something to silently OR/AND together.
         if isinstance(target, list):
             raise ValueError("the re modifier does not support list values")
+        if "all" in mods:
+            # #386 (code-reviewer, live-confirmed): `all` against a single
+            # regex target is meaningless (there's only one pattern to
+            # satisfy) and was silently accepted and ignored, the same gap
+            # class as the cidr/numeric guards above - issue #386's own
+            # title names `re` alongside `cidr`.
+            raise ValueError("the re modifier does not support the all modifier")
         s = str(value if value is not None else "")
         return re.fullmatch(target, s) is not None
 

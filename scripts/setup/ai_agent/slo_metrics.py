@@ -225,6 +225,37 @@ def _count(index, query, strict=False):
         raise MetricUnavailable(f"{index} count request failed: {e}") from e
 
 
+def _cardinality(index, query, field):
+    """Distinct-value count of `field` among docs matching `query` (#331) -
+    a cardinality aggregation, not an exact count. Approximate once distinct
+    values exceed Elasticsearch's default precision_threshold (3000) - a
+    large spoofed flood (the scenario this signal exists for) can cross that
+    easily, but the resulting error (~1-2%) still separates a few-source
+    pattern from a many-thousand-source one, which is all this signal needs
+    to do; no explicit threshold override is set."""
+    try:
+        r = es("POST", f"/{index}/_search",
+               {"size": 0, "query": query,
+                "aggs": {"distinct": {"cardinality": {"field": field}}}})
+        if r.status_code != 200:
+            raise MetricUnavailable(f"{index} cardinality({field}) search returned HTTP {r.status_code}")
+        body = r.json()
+        failed_shards = body.get("_shards", {}).get("failed", 0)
+        if failed_shards:
+            # A 200 with failed shards (e.g. `field` mapped incompatibly with
+            # cardinality on one shard - a legacy/pre-migration index) silently
+            # UNDERCOUNTS distinct sources, biasing this signal toward "looks
+            # like a few real sources" - must surface as an error, not a
+            # quietly-partial value.
+            raise MetricUnavailable(
+                f"{index} cardinality({field}) search had {failed_shards} failed shard(s)")
+        return body.get("aggregations", {}).get("distinct", {}).get("value", 0)
+    except MetricUnavailable:
+        raise
+    except Exception as e:
+        raise MetricUnavailable(f"{index} cardinality({field}) request failed: {e}") from e
+
+
 def metric_mttd():
     """Mean detect latency (min): alert creation time minus the source event time."""
     body = {"size": 500, "sort": [{"@timestamp": "desc"}],
@@ -745,29 +776,74 @@ def metric_raw_alert_volume():
         (Scan::Port_Scan) and T1110 (SSH::Password_Guessing/
         Login_By_Password_Guesser) are real, thresholded, aggregated Zeek
         notices (#261 fixed T1110's tag, which previously matched every
-        single auth_success=false event instead). Still inflatable by a
-        different vector: scan-detection.zeek's Scan::Port_Scan fires on the
-        initial SYN alone (no completed handshake), so a spoofed-source SYN
-        sweep can generate one notice per forged source per its 1-minute
-        resuppression window - see #261's PR discussion for detail, tracked
-        separately since fixing it needs a source-spoofing defense, not a
-        pipeline classification change.
+        single auth_success=false event instead).
       - rule_hits: Sigma/Elastic Detection Engine alerts in
         .alerts-security.alerts-* (same index metric_mttd() already reads).
         Queried strict (#216) - this index should always exist once Kibana's
         Security app has initialized, so a missing/unresolvable pattern here
         is a real problem, not a benign "no alerts yet."
+      - zeek_notices_distinct_sources: #331 - scan-detection.zeek's Scan::
+        Port_Scan counts a port on the initial SYN alone (no completed
+        handshake), so a spoofed-source SYN sweep can generate one notice
+        per forged source with zero real network presence, inflating
+        zeek_notices in a way a before/after tuning comparison can't tell
+        apart from real activity. Two sensor-side fixes were tried and
+        rejected by live security review before landing here: (1) gating
+        the count on connection_established/connection_rejected (only
+        count once the responder's reply was observed) doesn't actually
+        defend against spoofing at THIS deployment's capture topology -
+        zeek-host-capture.service captures at the monitored host's OWN
+        interface, so that host's real reply to a spoofed SYN is exactly as
+        visible to Zeek as a reply to a genuine one (the textbook
+        SYN-flood-reflection mechanism, not a Zeek quirk) - and it cost
+        real detection recall (filtered-host scans and non-SYN scan types
+        stopped counting at all). (2) a sensor-side global notice-volume
+        cap bounded the metric-gaming impact but introduced a WORSE
+        problem: a cheap, silent denial-of-detection primitive (a
+        sub-second burst of spoofed sources exhausts the cap, then a real,
+        concurrent scan generates no notice at all for the rest of the
+        window, with zero telemetry marking that anything was dropped).
+        source-authenticity verification isn't achievable at Zeek's own
+        vantage point without destroying recall, and any sensor-side
+        remedy trades real detections away to fix what is fundamentally a
+        REPORTING problem, not a detection one - so the fix lives here
+        instead, where the raw data survives. A cardinality aggregation on
+        source.ip for the same zeek_notices query: a flood from many
+        distinct (spoofed or real) sources reads very differently from a
+        few real sources repeatedly triggering the notice, which is
+        exactly the discrimination a before/after comparison needs and a
+        sensor-side volume cap can never provide (it can only say "some
+        flood happened," never "and here's how many distinct sources it
+        came from"). scan-detection.zeek itself is intentionally
+        UNCHANGED by #331 - reverted to its original, pre-#331 form after
+        both sensor-side attempts were found unsound.
 
-    Returns the two sub-counts separately, not just their sum: collapsing
-    them into one number would hide exactly the kind of swing described
-    above, making a before/after comparison unable to tell "tuning reduced
-    noise" from "someone stopped scanning me."
+    Known limitation: this signal catches WIDE floods (many distinct forged
+    sources), not NARROW high-volume ones. scan-detection.zeek suppresses to
+    one notice per source per port_scan_resuppress (1 min), so a handful of
+    forged sources sustained across the full WINDOW (default 7d) can still
+    push zeek_notices into the thousands while zeek_notices_distinct_sources
+    stays in the single digits - reading identically to a few real repeat
+    scanners. A high zeek_notices count paired with a low
+    zeek_notices_distinct_sources count is AMBIGUOUS (real repeat activity or
+    a small-N spoofed flood), not confirmed-benign - see
+    docs/SOP-022-anomaly-validation-procedure.md and
+    docs/SOP-147-evidence-validation-procedure.md for analyst guidance.
+
+    Returns all sub-counts separately, not just zeek_notices + rule_hits
+    summed: collapsing them into one number would hide exactly the kind of
+    swing described above, making a before/after comparison unable to tell
+    "tuning reduced noise" from "someone stopped scanning me" (or, with
+    zeek_notices_distinct_sources, from "someone spoofed a flood at me").
     """
     win = {"range": {"@timestamp": {"gte": WINDOW}}}
-    zeek_notices = _count("logstash-security-*,-logstash-security-quarantine-*",
-                           {"bool": {"filter": [win, {"exists": {"field": "threat.technique.id"}}]}})
+    zeek_notices_query = {"bool": {"filter": [win, {"exists": {"field": "threat.technique.id"}}]}}
+    zeek_notices_index = "logstash-security-*,-logstash-security-quarantine-*"
+    zeek_notices = _count(zeek_notices_index, zeek_notices_query)
     rule_hits = _count(".alerts-security.alerts-*", win, strict=True)
+    zeek_notices_distinct_sources = _cardinality(zeek_notices_index, zeek_notices_query, "source.ip")
     return {"zeek_notices": zeek_notices, "rule_hits": rule_hits,
+            "zeek_notices_distinct_sources": zeek_notices_distinct_sources,
             "value": zeek_notices + rule_hits}
 
 

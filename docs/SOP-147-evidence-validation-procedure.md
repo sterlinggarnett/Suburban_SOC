@@ -198,9 +198,22 @@ Evidence to capture:
 wired into the live `/alert` dispatch (`configs/logstash.conf` Category 6,
 #267) — `scan-detection.zeek` fires on a bare SYN with no completed
 handshake, so a source-spoofed sweep could otherwise trigger automated
-containment against an attacker-chosen IP. Wiring T1046 into dispatch is
-deferred until [#331](https://github.com/voltron-1/Suburban_SOC/issues/331)
-(a source-spoofing defense) exists. Steps 3/4 (approve → broker DROP →
+containment against an attacker-chosen IP.
+[#331](https://github.com/voltron-1/Suburban_SOC/issues/331) investigated
+two sensor-side fixes for the resulting metric-gaming impact and rejected
+both after live security review (neither actually defended against
+spoofing at this deployment's capture vantage point without losing real
+detection recall or introducing a silent denial-of-detection gap).
+`scan-detection.zeek` is unchanged; #331's actual fix is a distinct-source
+signal added to `slo_metrics.py`'s `raw_alert_volume` metric instead. T1046
+stays dashboard-only indefinitely — no source-authenticity signal exists
+for this notice at all.
+**Known limitation:** the distinct-source signal only separates a *wide*
+flood (many forged sources) from real activity — a small, fixed number of
+forged sources sustained over the metric's window can push `zeek_notices`
+high while `zeek_notices_distinct_sources` stays low, reading like a few
+real repeat scanners. A high count paired with a low distinct-source count
+is **ambiguous**, not confirmed-benign. Steps 3/4 (approve → broker DROP →
 Case/audit) do not apply to this scenario today; see Step A.2 for a
 scenario that does exercise the full SOAR chain.
 

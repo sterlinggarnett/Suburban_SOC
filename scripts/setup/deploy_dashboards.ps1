@@ -114,6 +114,28 @@ try {
     }
 }
 
+# #358: intel_feed_stale was retired too — unlike soar_quarantine_alert, this
+# one never actually installed successfully on ANY cluster with this stack's
+# Basic license, so this DELETE is purely defensive rather than
+# un-installing a previously-live watch. tester-debugger live-verified
+# against the real cluster: a PUT of a trivial watch 403s (license-gated —
+# see rules/elastic_watcher/retired/intel_feed_stale.json's own _comment),
+# but DELETE on a watch that was never installed 404s instead — ES resolves
+# the target's non-existence (no .watches index at all yet) before it ever
+# reaches the license check. Accept both so neither shape prints a
+# spurious WARN on every single deploy.
+try {
+    Invoke-RestMethod -Method Delete -Uri "$EsUrl/_watcher/watch/intel_feed_stale" | Out-Null
+    Write-Ok "Removed retired watcher intel_feed_stale"
+} catch {
+    $statusCode = $_.Exception.Response.StatusCode.value__
+    if ($statusCode -eq 404 -or $statusCode -eq 403) {
+        Write-Ok "Retired watcher intel_feed_stale already absent/unlicensed"
+    } else {
+        Write-Warn2 "WARN: could not remove retired watcher intel_feed_stale"
+    }
+}
+
 # 5. Sync logstash.conf + restart --------------------------------------------
 Write-Step "[6/6] Syncing logstash.conf to Docker mount + restarting Logstash"
 if (Test-Path $LogstashSrc) {

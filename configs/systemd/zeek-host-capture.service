@@ -280,7 +280,8 @@ ExecStartPre=/bin/bash -c 'set -e; cp -r --remove-destination /home/tjlam/projec
 # "-"-prefixed: capture availability outranks intel freshness — a failure
 # in this self-heal chain must not crash-loop the SOC's only network
 # sensor. A failure here degrades to refresh_intel.sh's own tagged "stale"
-# status (visible via the intel_feed_stale watcher), not a capture outage.
+# status (visible via slo_metrics.py's metric_intel_feed_stale_heartbeats(),
+# #358), not a capture outage.
 ExecStartPre=-/bin/bash -c 'chown -h root:tjlam /storage/PCAP/intel && chmod 1775 /storage/PCAP/intel'
 # intel.dat itself (not just the directory) needs to be tjlam-OWNED, not
 # merely group-writable: refresh_intel.sh's live sync writes a temp file

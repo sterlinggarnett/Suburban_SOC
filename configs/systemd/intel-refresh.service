@@ -1,6 +1,9 @@
 # Suburban-SOC — refresh the Zeek threat-intel feed (WS1.3 / #222) and index it
-# into threat-intel-indicators + threat-intel-meta (the freshness heartbeat the
-# intel_feed_stale Watcher and the "Threat Intel Feed Health" dashboard read).
+# into threat-intel-indicators + threat-intel-meta (the freshness heartbeat
+# slo_metrics.py's metric_intel_feed_stale_heartbeats() and the "Threat Intel
+# Feed Health" dashboard read — #358: the rules/elastic_watcher/intel_feed_
+# stale.json Watcher this used to say "Watcher" is retired, never actually
+# fired on this Basic-license stack).
 # Triggered by intel-refresh.timer every 6 hours. Replaces the old manual
 # `crontab -l | cat - configs/intel/intel-refresh.cron | crontab -` install
 # step (configs/intel/intel-refresh.cron, removed) — #222's acceptance
@@ -104,9 +107,10 @@ ExecStart=/usr/bin/bash /home/tjlam/projects/Suburban-SOC/configs/intel/refresh_
 WorkingDirectory=/home/tjlam/projects/Suburban-SOC
 # refresh_intel.sh exits 2 when a feed fetch failed/was empty (status=stale) —
 # that is a successful run reporting degraded feed health, not a job failure;
-# the intel_feed_stale Watcher is what actually alerts on it. Treat 0 and 2 as
-# success so the timer is not marked failed (same convention as
-# slo-metrics.service's own breach-is-not-failure exit code).
+# slo_metrics.py's metric_intel_feed_stale_heartbeats() is what actually
+# alerts on it (#358). Treat 0 and 2 as success so the timer is not marked
+# failed (same convention as slo-metrics.service's own breach-is-not-failure
+# exit code).
 SuccessExitStatus=0 2
 # Default DefaultTimeoutStartSec (90s on stock systemd) can land mid-write
 # under worst-case latency: 2x `curl --max-time 30` feed fetches + two

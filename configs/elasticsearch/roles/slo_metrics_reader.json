@@ -7,7 +7,9 @@
     {"names": ["soc-agent-health-*"],
      "privileges": ["read"]},
     {"names": ["soc-slo-metrics"],
-     "privileges": ["create_index", "create", "read"]}
+     "privileges": ["create_index", "create", "read"]},
+    {"names": ["threat-intel-indicators", "threat-intel-meta"],
+     "privileges": ["read"]}
   ],
   "applications": [
     {"application": "kibana-.kibana", "privileges": ["feature_generalCases.read"], "resources": ["*"]}

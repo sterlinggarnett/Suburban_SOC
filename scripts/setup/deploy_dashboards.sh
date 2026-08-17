@@ -162,6 +162,26 @@ else
   red   "    WARN: could not remove retired watcher soar_quarantine_alert -> HTTP ${del_code}"
 fi
 
+# #358: intel_feed_stale was retired too — unlike soar_quarantine_alert, this
+# one never actually installed successfully on ANY cluster with this stack's
+# Basic license, so this DELETE is purely defensive rather than
+# un-installing a previously-live watch. tester-debugger live-verified
+# against the real cluster: a PUT of a trivial watch 403s (license-gated —
+# see rules/elastic_watcher/retired/intel_feed_stale.json's own _comment),
+# but DELETE on a watch that was never installed 404s instead — ES resolves
+# the target's non-existence (no .watches index at all yet) before it ever
+# reaches the license check. Accept both so neither shape prints a
+# spurious WARN on every single deploy. On a cluster where Watcher IS
+# licensed and this watch somehow WAS installed, 20x still covers a real
+# removal.
+del_code=$(curl -s -o /dev/null -w '%{http_code}' "${AUTH[@]}" \
+  -X DELETE "${ES_URL}/_watcher/watch/intel_feed_stale" || true)
+if [[ "$del_code" =~ ^(20|403|404) ]]; then
+  green "    Removed retired watcher intel_feed_stale (HTTP ${del_code})"
+else
+  red   "    WARN: could not remove retired watcher intel_feed_stale -> HTTP ${del_code}"
+fi
+
 # -----------------------------------------------------------------------------
 # 5b. Install the data lifecycle (WS0.5): ILM + snapshots + data-stream templates
 # -----------------------------------------------------------------------------

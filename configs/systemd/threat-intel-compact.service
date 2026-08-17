@@ -80,7 +80,22 @@ RuntimeDirectory=suburban-soc-threat-intel-compact
 # matches slo-metrics.service/intel-refresh.service/checkpoints-compact.service).
 ExecStartPre=-/usr/bin/docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt /run/suburban-soc-threat-intel-compact/ca.crt
 ExecStart=/usr/bin/python3 /home/tjlam/projects/Suburban-SOC/scripts/setup/ai_agent/compact_threat_intel.py
-TimeoutStartSec=120
+# #358: compact_threat_intel.py's delete_by_query is now async
+# (wait_for_completion=false) + polls _tasks/<id>, with its OWN
+# TASK_POLL_TIMEOUT_SECONDS budget (default 300s) per index — compact()
+# runs both TARGET_INDICES sequentially, so a worst-case run needs headroom
+# for BOTH indices' full poll budgets (300s x 2), not just one. 120s was
+# sized for the old single fixed-timeout synchronous call and would now
+# kill the unit mid-poll on a genuinely large backlog — systemd killing the
+# process doesn't cancel the ES-side task either, trading one silent-orphan
+# failure mode for a different one. security-auditor review: the real
+# worst case per index is closer to ~360s, not 300s — TASK_POLL_TIMEOUT_
+# SECONDS(300) + the deadline check firing only AFTER a poll returns (up
+# to one more 15s GET) + the two _count calls (15s each) + the kickoff
+# POST (15s) ahead of it — so two sequential indices is ~720s before the
+# ExecStartPre secret-extraction/CA-copy steps and remaining HTTP overhead.
+# 900s covers that with real margin, not just 2x the poll budget alone.
+TimeoutStartSec=900
 
 # --- Sandboxing (audit #167 / NIST CM-7) ---------------------------------------
 # This unit only makes outbound HTTPS calls to Elasticsearch (requests) and

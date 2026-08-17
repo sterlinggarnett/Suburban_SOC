@@ -25,7 +25,7 @@ matching the M12/M13/M14 pattern.
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏸️ 6/8 closed, 2 not actionable (no actionable work left) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 9/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 10/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
@@ -38,8 +38,8 @@ this doc doesn't duplicate 37 issue bodies inline the way it narrates
 same way every prior milestone's issues were recorded below.
 
 M17 closed out 2026-08-17 (6/8, no actionable work left). **M18 is now the
-active queue** — 9/13 closed already (#344, #341, #342, #337, #370, #339,
-#338, #349, #347), 4 remaining: #326, #336, #345, #367 (#326 is not
+active queue** — 10/13 closed already (#344, #341, #342, #337, #370,
+#339, #338, #349, #347, #345), 3 remaining: #326, #336, #367 (#326 is not
 actionable — needs real Windows/PowerShell telemetry this environment
 doesn't have, same shape as M17's #283/#333). Same approach as M17:
 smallest/most-contained issue first, one at a time, each through the full
@@ -289,6 +289,32 @@ multi-issue runs. M19–M22 remain open calls after M18.
   to assert the exact expected bracket shape plus a key-collision guard;
   a negative self-test that could never actually fail (mutation-tested
   to confirm the fix works); two docstring accuracy nits.
+- [x] **#345 (P3, tech-debt) — COMPLETE, MERGED** — `apply-templates.sh`
+  documented in its own header comment that a data-stream-backed index
+  template's mapping only shapes indices created AFTER the template is
+  re-applied, and rolling over the current write index was needed to
+  actually take effect — but never performed that rollover; every prior
+  fix to this template needed it as a separate, manual, undocumented-
+  in-code step. [PR #402](https://github.com/voltron-1/Suburban_SOC/pull/402)
+  merged 2026-08-17 (squash), auto-closing #345. M18 now 10/13 closed.
+  Adds a `ROLLOVER=1`-gated step enumerating and rolling over the real
+  `logstash-security-*`/`soar-actions-*` data streams. Live-verified end
+  to end against the real running dev-stack Elasticsearch: all 9 real
+  data streams in this environment correctly discovered and rolled
+  over, generations bumped, cluster health unaffected. Parallel
+  security-auditor + code-reviewer review, both independently converging
+  on the same critical finding: the discovery GET's HTTP status was
+  never checked, so an error response parsed as invalid JSON exactly
+  like a genuine zero-match, both silently reporting "nothing to roll
+  over" — precisely the silent-no-op this issue exists to kill. Fixed
+  with an explicit status check, live-verified against all 3 real
+  response shapes. Also fixed: rollover is additive, not idempotent, so
+  abort-on-first-failure became collect-and-report (a partial failure no
+  longer requires re-rolling already-succeeded streams); `--globoff` on
+  the rollover POST; and an unconditional read-only reminder (data-
+  stream count still on the old mapping) whenever `ROLLOVER` isn't set,
+  since the opt-in gate reintroduces the exact "operator forgets" risk
+  this issue exists to close.
 
 **M16 progress:**
 

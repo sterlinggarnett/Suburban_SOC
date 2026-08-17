@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 🚧 2/8 closed | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 🚧 3/8 closed | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 4/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -275,7 +275,9 @@ unit, no unattended multi-issue runs.
 now — #283 is externally blocked on real Windows telemetry (same shape as
 #265), #333 is a speculative OpenSSH-version investigation the issue itself
 flags as low-priority/optional. Working the remaining 6 smallest/most-
-contained first.
+contained first. **M17 down to 5 open** after #351 — #352 next
+(`sigma_eval.py` has no visibility when a Zeek `dns.answers` element
+exceeds 8191 chars).
 
 - [x] **#281 (P3, bug) — COMPLETE, MERGED** — `build_attack_coverage.py`'s
   `navigator_layer()` built one ATT&CK Navigator technique object per rule
@@ -369,6 +371,58 @@ contained first.
   [#384](https://github.com/voltron-1/Suburban_SOC/issues/384)
   (Python/Perl/archive/container payload classes never covered by either
   rule, old or new list) as follow-ups, all deliberately out of scope.
+- [x] **#351 (P3, low, detection, tech-debt) — COMPLETE, MERGED** —
+  `tests/detections/sigma_eval.py`'s `_match_one()` had no handling for an
+  event field whose VALUE is a Python list — every field previously
+  selected by a rule in this corpus is scalar. `dns.answers` (Zeek's
+  `answers`, #292) is the corpus's first genuinely multi-valued field: real
+  Elasticsearch evaluates a query against a multi-value keyword field
+  per-element (OR — a doc matches if ANY element matches), but the old code
+  stringified the whole list via `str(value)` and regex-matched against
+  that repr blob (`"['a', 'b']"`) instead — silently benign for #292's own
+  rule only because its `.*`-wrapped pattern and scalar fixture never
+  exposed the gap. [PR #388](https://github.com/voltron-1/Suburban_SOC/pull/388)
+  merged 2026-08-17 (squash), auto-closing #351 — no GitHub-side human
+  review, same review-bypass basis as every prior session fix (12/12 CI
+  green, parallel security-auditor + code-reviewer, then tester-debugger
+  for independent validation).
+  Fixed with per-element OR recursion in `_match_one()`. security-auditor
+  (round 2) found the fix needed more than a blanket recursion: Sigma's
+  `all` modifier expands one selector into several ANDed query clauses,
+  each independently evaluated per-element against the SAME field — real
+  Elasticsearch computes AND-over-targets(OR-over-elements), not
+  OR-over-elements(AND-over-targets), which is what a naive per-element
+  recursion gives (one element required to satisfy every target). Not
+  live-exploitable today (no rule combines `contains|all`/`all` with a
+  genuinely multi-valued field in this corpus), but wrong in exactly the
+  code this fix adds, so corrected rather than shipped latent. Also closed:
+  a dict-shaped value now raises `TypeError` instead of silently
+  regex-matching its repr (the same bug class #351 fixed, one level down,
+  for the ECS-canonical `dns.answers.data/type/ttl` object shape this
+  evaluator deliberately doesn't model); an empty-list value no longer
+  bypasses this file's rule-authoring shape guards (`re`+list-target,
+  numeric+list-target `ValueError`s — `any([])` previously short-circuited
+  before those checks ever ran); a docstring overclaim ("first genuinely
+  multi-valued field") corrected after it was found to contradict the
+  module's own SCOPE note about `process.args` array semantics.
+  Two successive review rounds caught that the regression-pinning tests
+  didn't actually pin anything: code-reviewer and security-auditor
+  independently found the first draft relied on #292's own rule, whose
+  `.*pattern.*` shape absorbs a Python list repr's punctuation well enough
+  that the pre-fix buggy code passed the test too; replaced with a
+  bare-equality `_match_one()`-level test. tester-debugger then found the
+  *replacement* `all`-modifier test used `contains`, whose substring search
+  also happened to pass against the real pre-fix code (whole list
+  stringified to one blob, both target substrings trivially present
+  regardless of which element they came from) — replaced with bare
+  equality again. Every regression test in the final diff was empirically
+  confirmed via `git stash` mutation testing to fail against the real
+  pre-fix committed code and pass with the fix, not just reasoned about.
+  Filed [#386](https://github.com/voltron-1/Suburban_SOC/issues/386)
+  (`cidr`/numeric modifiers silently ignore `all` against a target list,
+  pre-existing) and [#387](https://github.com/voltron-1/Suburban_SOC/issues/387)
+  (`re` modifier's newline/DOTALL behavior vs. real Lucene regexp, needs
+  live-fire confirmation) as follow-ups, both deliberately out of scope.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -2275,6 +2329,22 @@ are implemented in code; checked off with that one caveat noted inline.
   reviewer proved (via a reverted mutation test) the new regression test
   was missing the exact original bug string. Filed #382, #383, #384 as
   follow-ups. M17 now 2/8 closed.
+- **#351 closed (M17) — `sigma_eval.py`'s Sigma-detection evaluator had no
+  array-value semantics; a multi-valued Zeek field (dns.answers) was
+  silently matched against its own Python `str(list)` repr instead of
+  per-element.** Full detail in NEXT UP's "M17 progress" above.
+  [PR #388](https://github.com/voltron-1/Suburban_SOC/pull/388) merged
+  2026-08-17 (squash), auto-closing #351, 12/12 CI green. Fixed with
+  per-element OR recursion; security-auditor (round 2) caught that a naive
+  version of this fix gets the `all` modifier backwards (OR-over-elements
+  (AND-over-targets) instead of real Elasticsearch's AND-over-targets
+  (OR-over-elements)) — not live-exploitable today, fixed anyway since it's
+  wrong in exactly the code this issue adds. Two rounds of review
+  (code-reviewer/security-auditor, then tester-debugger) each caught that
+  the regression-pinning test didn't actually discriminate old vs. fixed
+  behavior — both replaced with bare-equality-based tests, each confirmed
+  via `git stash` mutation testing to fail pre-fix and pass post-fix. Filed
+  #386, #387 as follow-ups. **M17 now 3/8 closed; #352 next.**
 
 ---
 

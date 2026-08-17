@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 7/15 closed, resumed 2026-08-17 (project-board backfill retroactively assigned 7 more open follow-ups back to this milestone) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 8/15 closed, resumed 2026-08-17 (project-board backfill retroactively assigned 7 more open follow-ups back to this milestone) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -889,6 +889,47 @@ are real, working smallest/most-contained first: #386 → #387 → #382 →
   no rule combines `all` with `cidr`/numeric/`re` today) — a CI-fidelity
   fix, not a production behavior change. **M17 now 7/15 closed** (8 open
   remaining: #283/#333 not actionable, 6 real follow-ups left) — #387 next.
+- [x] **#387 (P3, tech-debt, detection) — COMPLETE, MERGED** — `sigma_eval.py`'s
+  `re` modifier used Python's `re.fullmatch(target, s)` with no `re.DOTALL`,
+  so `.` could not match a literal newline in the event value — untested
+  against whether real Elasticsearch's compiled Lucene `regexp` query
+  behaves the same way, only reasoned about.
+  [PR #409](https://github.com/voltron-1/Suburban_SOC/pull/409) merged
+  2026-08-17 (squash), auto-closing #387 — no GitHub-side human review,
+  same review-bypass basis as every prior session fix (13/13 CI green,
+  parallel security-auditor + code-reviewer sub-agent review).
+  Live-verified against the real dev-stack Elasticsearch (pinned 9.3.2):
+  indexed a `dns.answers` value with an embedded literal newline,
+  constructed so a non-DOTALL match is mathematically impossible (two
+  60-char charset runs separated by one `\n` the character class
+  excludes, forcing `.*` to cross the newline for `net_zeek_dns_txt_
+  answer_abuse.yml`'s pattern to fully match) — confirmed it matches the
+  real compiled query. Fixed the `re` modifier's `re.fullmatch` call and
+  added a new **permanent live-fire test** (not just a one-off manual
+  check) that indexes the same fixture into real Elasticsearch and
+  asserts the compiled query matches — ran and passed against the real
+  cluster, and will run for real (not skip) in CI since `detections.yml`
+  pins the same ES version.
+  code-reviewer independently live-verified a real scope gap in the first
+  draft: `cmp()`'s `contains`/`endswith`/`startswith`/bare-equality paths
+  build the identical `.`/`.*` from Sigma's own `*`/`?` wildcard syntax
+  via `_sigma_wildcard_to_regex()`, with the same missing-DOTALL gap —
+  live-confirmed a Lucene wildcard query (`msg:ab?cd`) also crosses an
+  embedded newline the same way. Fixed all four call sites (independently
+  re-confirmed live against real ES outside the test suite too). Zero
+  live corpus impact either way — confirmed via grep that no rule embeds
+  a bare `*`/`?` wildcard in a contains/endswith/startswith/bare-equality
+  target today, and only 1 of the 4 `re`-modifier rules in the corpus
+  targets a newline-plausible field (the other 3 target DNS query names).
+  security-auditor hit 5 consecutive infra 500 errors across every retry
+  for this specific issue — worked around with a general-purpose-agent
+  fallback doing an independent live-ES security investigation (its own
+  control experiments: an anchoring probe and a doc-value/normalization
+  probe, both ruling out false-positive match mechanisms other than
+  DOTALL itself; verdict "merge as-is"). Every new guard mutation-tested
+  (both the `re` modifier and all four wildcard-path call sites).
+  **M17 now 8/15 closed** (7 open remaining: #283/#333 not actionable, 5
+  real follow-ups left) — #382 next (SMTP `mime_type` live verification).
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>

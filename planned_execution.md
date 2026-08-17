@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 8 | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 🚧 1/8 closed | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 4/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -270,6 +270,48 @@ unit, no unattended multi-issue runs.
   new follow-up, deliberately out of scope.
   **M16 down to just #265**, still deferred (gated on a real endpoint this
   environment doesn't have) — no actionable work remains in this milestone.
+
+**M17 progress:** 2 of 8 open issues (#283, #333) are not actionable right
+now — #283 is externally blocked on real Windows telemetry (same shape as
+#265), #333 is a speculative OpenSSH-version investigation the issue itself
+flags as low-priority/optional. Working the remaining 6 smallest/most-
+contained first.
+
+- [x] **#281 (P3, bug) — COMPLETE, MERGED** — `build_attack_coverage.py`'s
+  `navigator_layer()` built one ATT&CK Navigator technique object per rule
+  with no dedup; two rules tagging the same technique under the same
+  tactic produced two `techniqueID` objects, which Navigator renders as
+  one, silently dropping the other's score/comment. Published coverage was
+  108 rule-mappings reported as "108 techniques" when only 75 are unique.
+  [PR #381](https://github.com/voltron-1/Suburban_SOC/pull/381) merged
+  2026-08-17 (squash), auto-closing #281 — no GitHub-side human review,
+  same review-bypass basis as every prior session fix (13/13 CI green,
+  parallel security-auditor + code-reviewer sub-agent review).
+  The issue's own suggested fix ("group by techniqueID alone") turned out
+  to be wrong: T1078.003 legitimately appears under BOTH Initial Access
+  (`auth_linux_ssh_root_login.yml`) and Privilege Escalation
+  (`auth_linux_su_session_opened.yml`) — two real, distinct ATT&CK tactic
+  mappings for the same sub-technique, which Navigator's layer schema
+  scores per TACTIC COLUMN, not globally. Fixed by grouping on the
+  `(techniqueID, tactic)` pair instead; security-auditor independently
+  re-derived Navigator's layer-format semantics to confirm this is the
+  real uniqueness constraint. Review found the new regression test file
+  was never wired into any CI workflow (the guard was inert, now runs in
+  `detections.yml`) and that the real-corpus duplicate check would still
+  pass under the issue's own wrong fix (closed with a corpus-independent
+  pair-set-equality test pinning both directions). Also closed: a rule
+  title containing `|`/`;` would corrupt generated docs (now fails loudly
+  at harvest time); an unresolvable tactic tag silently rendered a dead
+  "Unknown" Navigator cell (now fails loudly too); a naive comment merge
+  bloated a 5-rule real case to a 949-character tooltip (now 609).
+  Filed [#378](https://github.com/voltron-1/Suburban_SOC/issues/378)
+  (`harvest()` keeps only the first tactic/technique tag per rule, 21/6
+  secondary tags dropped), [#379](https://github.com/voltron-1/Suburban_SOC/issues/379)
+  (`slo_metrics.py`'s `metric_coverage()` inherits the same legitimate
+  76-vs-75 multi-tactic double-count), and
+  [#380](https://github.com/voltron-1/Suburban_SOC/issues/380) (README/SOP
+  quote long-stale 37/9/35 coverage numbers) as follow-ups, all
+  deliberately out of scope.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -2143,6 +2185,22 @@ are implemented in code; checked off with that one caveat noted inline.
   (`compact_agent_checkpoints.py` has the identical async-delete gap) as
   a new follow-up. **M16 down to just #265** (still deferred) — no
   actionable work left in this milestone.
+- **#281 closed (M17, first issue) — ATT&CK coverage matrix no longer
+  overstates coverage by publishing 108 rule-mappings as "108
+  techniques."** Full detail in NEXT UP's new "M17 progress" above.
+  [PR #381](https://github.com/voltron-1/Suburban_SOC/pull/381) merged
+  2026-08-17 (squash), auto-closing #281. The issue's own suggested fix
+  (dedup by techniqueID alone) turned out to be wrong — would have
+  silently dropped a real, legitimate Navigator cell (T1078.003 spans two
+  tactics) — caught by live-deriving ATT&CK Navigator's actual layer-format
+  semantics rather than trusting the issue's suggestion at face value.
+  Fixed by grouping on `(techniqueID, tactic)` instead. security-auditor
+  found the new regression tests were never wired into CI (inert guard)
+  and that the strongest invariant wasn't pinned — both closed. Filed
+  [#378](https://github.com/voltron-1/Suburban_SOC/issues/378),
+  [#379](https://github.com/voltron-1/Suburban_SOC/issues/379), and
+  [#380](https://github.com/voltron-1/Suburban_SOC/issues/380) as
+  follow-ups. M17 now 1/8 closed; #365 in progress next.
 
 ---
 

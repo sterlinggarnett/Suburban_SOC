@@ -223,7 +223,9 @@ if [[ -n "$ES_PASS" ]]; then
   fi
   rm -f "$bulk"
   # 3b. Heartbeat doc for the freshness panel / stale-feed alert. One combined
-  # doc per run (not one per feed, #222) — intel_feed_stale.json's Watcher
+  # doc per run (not one per feed, #222) — slo_metrics.py's
+  # metric_intel_feed_stale_heartbeats() (#358; formerly intel_feed_stale.json's
+  # Watcher, retired — never actually fired on this Basic-license stack)
   # only checks for ANY status=ok doc in the window, and the "Live
   # Indicators"/"Indicators in Feed" dashboard panels (configs/server/
   # intel_feed_health.ndjson) are single metric tiles keyed on live_count/
@@ -238,7 +240,7 @@ if [[ -n "$ES_PASS" ]]; then
   else
     # Can't set status=stale here - this IS the doc that carries status, and
     # it just failed to write. Loud enough to be found in the unit's journal.
-    log "ERROR: heartbeat write to threat-intel-meta failed (HTTP $heartbeat_code) — intel_feed_stale Watcher will eventually catch this via the missing heartbeat itself"
+    log "ERROR: heartbeat write to threat-intel-meta failed (HTTP $heartbeat_code) — slo_metrics.py's metric_intel_feed_stale_heartbeats() will eventually catch this via the missing heartbeat itself"
   fi
 else
   log "NOTE: ES_PASS unset — skipped ES indexing (feed file still updated)"

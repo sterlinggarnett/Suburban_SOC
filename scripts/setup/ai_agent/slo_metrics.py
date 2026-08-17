@@ -44,6 +44,21 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
                                                   breaching for a full 7-day window) — a
                                                   resource-pressure/packet-drop guard for the
                                                   real capture path, which has no load shedding
+  Intel feed stale heartbeats       >= 1        — status:ok docs in threat-intel-meta
+                                                  within the last 8h (#358) — replaces
+                                                  rules/elastic_watcher/intel_feed_stale.json,
+                                                  RETIRED because Watcher itself is not
+                                                  licensed on this stack (Basic license;
+                                                  every Watcher API call 403s) and had
+                                                  never actually fired
+  Intel indicator count drop %     <= 50  %    — how far threat-intel-indicators' real
+                                                  _count sits below the latest heartbeat's
+                                                  own indicator_count (#358) — catches a
+                                                  malicious/errant wipe via the delete-
+                                                  capable threat_intel_compactor credential
+                                                  that the two metrics above wouldn't see
+                                                  (they read the WRITER's belief, not the
+                                                  index's actual contents)
 
 Pure stdlib (requests). Env (auto-loaded from scripts/setup/.env):
   ES_URL, ES_USER, ES_PASS/ELASTIC_PASSWORD, KIBANA_URL, NTFY_TOPIC.
@@ -109,6 +124,22 @@ TARGETS = {
     # 5% is a conservative, overridable starting point, not an
     # empirically-derived number.
     "capture_loss_max_pct": float(os.environ.get("SLO_CAPTURE_LOSS_MAX_PCT", "5")),
+    # #358: same 8h window rules/elastic_watcher/intel_feed_stale.json (now
+    # retired) used — refresh_intel.sh runs every 6h. security-auditor
+    # correction: 8h tolerates ~2h of scheduling jitter around a SUCCESSFUL
+    # run, not a fully MISSED one — a single missed run at T+6h leaves this
+    # window empty from T+8h until the next success at T+12h, a real ~4h
+    # breach window, which is the intended/correct behavior (inherited
+    # verbatim from the retired Watcher's own identical window and
+    # comment), just not what "tolerates one missed run" implied. >=1 (not
+    # ==0-style): a HEALTHY run is what satisfies this.
+    "intel_feed_stale_heartbeats": float(os.environ.get("SLO_INTEL_HEARTBEAT_MIN", "1")),
+    # #358: reuses compact_threat_intel.py's own BLAST_RADIUS_FRACTION=0.5
+    # precedent for "how much shrink is suspicious" — see
+    # metric_intel_indicator_count_drop_pct()'s docstring for why actual
+    # count normally sits AT OR ABOVE a single heartbeat's indicator_count,
+    # making a meaningful shortfall the real anomaly signal.
+    "intel_indicator_count_drop_pct": float(os.environ.get("SLO_INTEL_DROP_MAX_PCT", "50")),
 }
 # Comparator per metric: True = lower is better (value <= target).
 LOWER_BETTER = {
@@ -116,6 +147,7 @@ LOWER_BETTER = {
     "false_positive_pct": True, "ingest_lag_seconds": True, "parse_error_pct": True,
     "audit_write_failures": True, "stuck_approval_claims": True,
     "orphaned_claims": True, "vanished_claims": True, "capture_loss_max_pct": True,
+    "intel_feed_stale_heartbeats": False, "intel_indicator_count_drop_pct": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
 # not a benign "n/a". A dead/unreachable pipeline produces no fresh docs, so
@@ -898,6 +930,195 @@ def metric_capture_loss_percent():
     return None
 
 
+def metric_intel_feed_stale_heartbeats():
+    """Count of `status:"ok"` heartbeat docs in `threat-intel-meta` within
+    the last 8h (#358).
+
+    Replaces `rules/elastic_watcher/intel_feed_stale.json` — RETIRED
+    (`rules/elastic_watcher/retired/`) because Elastic Watcher itself is
+    not licensed on this stack: `xpack.license.self_generated.type=basic`
+    (`.env`), and every Watcher API call — live-confirmed against the real
+    running cluster, including a brand-new trivial watch — is rejected
+    with `security_exception: current license is non-compliant for
+    [watcher]` (HTTP 403). That Watcher's install step
+    (`deploy_dashboards.sh`) has silently absorbed this failure via its own
+    best-effort `WARN` logging since WS1.3 — this stale-feed alert has
+    never actually fired here. Same condition, same 8h window (6h refresh
+    cadence + ~2h of scheduling-jitter tolerance around a successful run —
+    see the TARGETS entry above for why "tolerates one missed run" is NOT
+    what this window does), now on infrastructure that actually runs: this
+    file's own proven ntfy-alerting/indexed-history pipeline.
+
+    `refresh_intel.sh` writes one heartbeat doc per run (`status:"ok"` or
+    `status:"stale"` — see that script's own `status=` assignments) whether
+    or not `ES_PASS` is even set to index it at all; a dead
+    `intel-refresh.timer`, a `refresh_intel.sh` itself crashing, or every
+    run in the window landing `status:"stale"` (a fetch failure on both
+    feeds, a missing seed, or a failed heartbeat write) all collapse to the
+    same observable here: zero matching docs. Target `>= 1` — a healthy run
+    is what satisfies this, not a count to keep low.
+    """
+    win = {"range": {"@timestamp": {"gte": "now-8h"}}}
+    return _count("threat-intel-meta",
+                  {"bool": {"filter": [win, {"term": {"status": "ok"}}]}})
+
+
+# #358: freshness window for the run-over-run actual-count baseline
+# metric_intel_indicator_count_drop_pct() persists onto its own
+# soc-slo-metrics doc — same pattern/reasoning as
+# SLO_VANISHED_CLAIM_BASELINE_MAX_AGE_MIN (#361): wide enough to tolerate a
+# missed run, far short of compact_threat_intel.py's DEFAULT_RETENTION_DAYS
+# so a stale baseline can't reach into legitimately-aged-out data.
+SLO_INTEL_DROP_BASELINE_MAX_AGE_MIN = float(
+    os.environ.get("SLO_INTEL_DROP_BASELINE_MAX_AGE_MIN", str(2 * 24 * 60)))
+
+
+def _intel_indicator_actual_count():
+    """`threat-intel-indicators`' real document count, right now — the one
+    number in `metric_intel_indicator_count_drop_pct()`'s comparison
+    neither `threat_intel_compactor` nor `intel_writer` can retroactively
+    manipulate once persisted (see that metric's docstring on why it's
+    needed as a SECOND baseline, not just the heartbeat-reported one)."""
+    return _count("threat-intel-indicators", {"match_all": {}})
+
+
+def _prior_intel_actual_count():
+    """Most recent PRIOR run's real `threat-intel-indicators` count,
+    persisted onto its own `soc-slo-metrics` doc by `main()` — untouchable
+    by `threat_intel_compactor` (delete on `threat-intel-*` only) or
+    `intel_writer` (index on `threat-intel-*` only), neither of which holds
+    any grant on `soc-slo-metrics`. Freshness-windowed the same way
+    `metric_vanished_claims()`'s baseline is (#361 precedent): `exists` on
+    an always-non-empty scalar timestamp field (not the count field itself,
+    which — unlike `vanished_claims`' snapshot array — is never legitimately
+    absent once written, but keying on the same sibling timestamp field
+    keeps this consistent with that established pattern), bounded both past
+    (tolerates a missed run) and future (rejects a forged baseline dated
+    ahead of `now`).
+
+    None if no persisted baseline exists within the window — a genuine
+    "nothing to compare against yet" for THIS specific comparison, not an
+    error; `metric_intel_indicator_count_drop_pct()` still has the
+    heartbeat-based comparison to fall back on.
+    """
+    try:
+        r = es("POST", "/soc-slo-metrics/_search?ignore_unavailable=true",
+               {"size": 1, "sort": [{"@timestamp": "desc"}],
+                "query": {"bool": {"filter": [
+                    {"exists": {"field": "intel_indicator_actual_count_at"}},
+                    {"range": {"intel_indicator_actual_count_at": {
+                        "gte": f"now-{SLO_INTEL_DROP_BASELINE_MAX_AGE_MIN:g}m",
+                        "lte": "now"}}},
+                ]}},
+                "_source": ["intel_indicator_actual_count"]})
+        if r.status_code != 200:
+            raise MetricUnavailable(f"intel-drop actual-count baseline search returned HTTP {r.status_code}")
+        hits = r.json().get("hits", {}).get("hits", [])
+    except MetricUnavailable:
+        raise
+    except Exception as e:
+        raise MetricUnavailable(f"intel-drop actual-count baseline search failed: {e}") from e
+
+    if not hits:
+        return None
+    value = hits[0]["_source"].get("intel_indicator_actual_count")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None  # malformed/forged baseline doc — treat as no usable baseline, not a crash
+    return value
+
+
+def metric_intel_indicator_count_drop_pct():
+    """How far `threat-intel-indicators`' real document count sits below
+    EITHER of two independent baselines (#358) — whichever shows the WORSE
+    (larger) drop wins:
+
+    (a) The latest `threat-intel-meta` heartbeat's own `indicator_count`.
+        `indicator_count` is a SINGLE RUN's merged-feed total (seed + both
+        live feeds' current output), not the cumulative historical set
+        `threat-intel-indicators` actually holds: `refresh_intel.sh`'s bulk
+        upsert only touches indicators present in the CURRENT run's
+        output — one that drops out of the feed keeps its existing
+        document, unrefreshed, until `compact_threat_intel.py`'s own
+        30-day retention ages it out (see that script's module docstring).
+        So under healthy operation the real count normally sits AT OR
+        ABOVE any single heartbeat's `indicator_count` — a MEANINGFUL
+        shortfall is the actual anomaly, not routine feed churn.
+    (b) The PRIOR run's own persisted real count (`_prior_intel_actual_
+        count()`), untouchable by either credential named below.
+
+    Why (a) alone isn't enough (security-auditor finding): comparison (a)
+    depends entirely on `threat-intel-meta`, which the SAME credential
+    this metric exists to catch can also reach.
+    `threat_intel_compactor` holds `delete` on `threat-intel-meta` itself
+    (not just `-indicators`) — wiping every heartbeat makes (a) return
+    "no baseline" instead of a breach. `intel_writer` holds `index` on
+    `threat-intel-meta` — forging one `{"status":"ok","indicator_count":0}`
+    doc makes `metric_intel_feed_stale_heartbeats()` read healthy AND (a)'s
+    `indicator_count` falsy, again "no baseline". Comparison (b) reads
+    from `soc-slo-metrics` instead, which neither credential can write —
+    persisted by an EARLIER run, before any tampering could target it, the
+    same trust-boundary shape `metric_vanished_claims()` already
+    establishes for `agent-checkpoints-*` (#361).
+
+    Reuses `compact_threat_intel.py`'s own `BLAST_RADIUS_FRACTION=0.5`
+    precedent for "how much shrink is suspicious" (`SLO_INTEL_DROP_MAX_PCT`
+    in `TARGETS`) for both comparisons, rather than inventing a second,
+    uncoordinated threshold for the same underlying shape.
+
+    None (no breach) only when NEITHER baseline is available — a genuine
+    "nothing to compare against yet" (fresh deployment, or comparison (b)'s
+    own freshness window hasn't been populated yet). A degenerate
+    `indicator_count:0` heartbeat is excluded from (a) specifically (can't
+    divide by zero, and `metric_intel_feed_stale_heartbeats()` already
+    flags a genuinely-empty heartbeat on its own terms) but does NOT by
+    itself suppress (b).
+
+    KNOWN RESIDUAL GAP, deliberately not fixed here: if `slo-metrics.timer`
+    itself has been down long enough for comparison (b)'s own freshness
+    window to lapse, a wipe timed into that gap is caught only by
+    comparison (a) — which the same wipe-capable credential can also
+    blind, per the trust-boundary analysis above. Narrowing the freshness
+    window trades against tolerating a legitimately missed run; matches
+    `metric_vanished_claims()`'s own accepted tradeoff for the identical
+    shape.
+    """
+    candidates = []
+
+    try:
+        r = es("POST", "/threat-intel-meta/_search?ignore_unavailable=true",
+               {"size": 1, "sort": [{"@timestamp": "desc"}], "_source": ["indicator_count"]})
+        if r.status_code != 200:
+            raise MetricUnavailable(f"intel-indicator-drop heartbeat search returned HTTP {r.status_code}")
+        hits = r.json().get("hits", {}).get("hits", [])
+    except MetricUnavailable:
+        raise
+    except Exception as e:
+        raise MetricUnavailable(f"intel-indicator-drop heartbeat search failed: {e}") from e
+
+    reported = hits[0]["_source"].get("indicator_count") if hits else None
+    # security-auditor MEDIUM: reported comes straight from a doc
+    # intel_writer can shape arbitrarily — a non-numeric/negative value
+    # must not reach arithmetic (a TypeError here would escape main()'s
+    # per-metric loop, which only catches MetricUnavailable, killing the
+    # ENTIRE metrics run over one malformed heartbeat).
+    if isinstance(reported, bool) or not isinstance(reported, (int, float)) or reported < 0:
+        if reported is not None:
+            raise MetricUnavailable(
+                f"threat-intel-meta heartbeat has a non-numeric indicator_count: {reported!r}")
+        reported = None
+
+    actual = _intel_indicator_actual_count()
+
+    if reported:  # excludes both None and the degenerate 0 case
+        candidates.append(max(0.0, 100.0 * (reported - actual) / reported))
+
+    prior_actual = _prior_intel_actual_count()
+    if prior_actual:
+        candidates.append(max(0.0, 100.0 * (prior_actual - actual) / prior_actual))
+
+    return round(max(candidates), 2) if candidates else None
+
+
 def main():
     if not ES_PASS:
         print("ERROR: ES_PASS / ELASTIC_PASSWORD required", file=sys.stderr)
@@ -918,6 +1139,8 @@ def main():
         "field_truncation_count": metric_field_truncation_count,
         "field_byte_clamp_count": metric_field_byte_clamp_count,
         "capture_loss_max_pct": metric_capture_loss_percent,
+        "intel_feed_stale_heartbeats": metric_intel_feed_stale_heartbeats,
+        "intel_indicator_count_drop_pct": metric_intel_indicator_count_drop_pct,
     }
     values, errors = {}, {}
     for name, fn in metric_fns.items():
@@ -994,6 +1217,23 @@ def main():
     except MetricUnavailable as e:
         print(f"  -> claimed-snapshot capture failed (next vanished_claims "
               f"check will compare against an older baseline, if still "
+              f"within its freshness window): {e}", file=sys.stderr)
+
+    # #358: this run's own real threat-intel-indicators count, persisted for
+    # metric_intel_indicator_count_drop_pct()'s run-over-run comparison —
+    # same top-level/best-effort/unconditional-timestamp shape as
+    # claimed_snapshot above, and for the same reason (an always-non-empty
+    # sibling timestamp field the `exists` prior-sample lookup can key on
+    # reliably). Untouchable by threat_intel_compactor/intel_writer, neither
+    # of which holds any grant on soc-slo-metrics — see that metric's own
+    # docstring for the trust-boundary analysis this defends.
+    try:
+        doc["intel_indicator_actual_count"] = _intel_indicator_actual_count()
+        doc["intel_indicator_actual_count_at"] = now
+    except MetricUnavailable as e:
+        print(f"  -> intel-indicator actual-count capture failed (next "
+              f"intel_indicator_count_drop_pct check falls back to the "
+              f"heartbeat-only comparison, or an older baseline if still "
               f"within its freshness window): {e}", file=sys.stderr)
 
     # Index for the SLO dashboard.

@@ -849,6 +849,238 @@ class MetricFunctionTests(unittest.TestCase):
         self.assertIn({"term": {"event.module": "zeek"}}, filters)
         self.assertIn({"range": {"@timestamp": {"lte": "now-30m"}}}, filters)
 
+    # #358: rules/elastic_watcher/intel_feed_stale.json is retired — Watcher
+    # itself is not licensed on this stack (live-confirmed: every Watcher API
+    # call 403s under xpack.license.self_generated.type=basic), so that
+    # Watcher never actually fired. metric_intel_feed_stale_heartbeats()
+    # reimplements its exact condition (status:ok in threat-intel-meta within
+    # 8h) on this file's own proven alerting pipeline instead.
+
+    def test_intel_feed_stale_heartbeats_raises_on_es_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_intel_feed_stale_heartbeats()
+
+    def test_intel_feed_stale_heartbeats_returns_zero_when_none_ok(self):
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(200, {"count": 0})):
+            self.assertEqual(slo_metrics.metric_intel_feed_stale_heartbeats(), 0)
+
+    def test_intel_feed_stale_heartbeats_returns_real_count_when_healthy(self):
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(200, {"count": 1})):
+            self.assertEqual(slo_metrics.metric_intel_feed_stale_heartbeats(), 1)
+
+    def test_intel_feed_stale_heartbeats_query_shape(self):
+        with mock.patch.object(
+                slo_metrics, "es",
+                return_value=_FakeResponse(200, {"count": 1})) as mock_es:
+            slo_metrics.metric_intel_feed_stale_heartbeats()
+        index = mock_es.call_args[0][1]
+        body = mock_es.call_args[0][2]
+        self.assertIn("threat-intel-meta", index)
+        filters = body["query"]["bool"]["filter"]
+        self.assertIn({"term": {"status": "ok"}}, filters)
+        self.assertIn({"range": {"@timestamp": {"gte": "now-8h"}}}, filters)
+
+    # #358: metric_intel_indicator_count_drop_pct() reads threat-intel-
+    # indicators' REAL count directly, unlike the heartbeat-based metric
+    # above, which only reflects what refresh_intel.sh believes it wrote —
+    # blind to a wipe via threat_intel_compactor's delete-capable credential.
+
+    # metric_intel_indicator_count_drop_pct() makes up to THREE es() calls,
+    # in this order: (1) latest threat-intel-meta heartbeat, (2) real
+    # threat-intel-indicators _count, (3) the prior-run persisted actual-
+    # count baseline. Helper below builds the standard 3-response
+    # side_effect list; individual tests override whichever leg matters.
+
+    def _drop_pct_responses(self, heartbeat_hits=None, actual_count=0, prior_hits=None):
+        return [
+            _FakeResponse(200, {"hits": {"hits": heartbeat_hits or []}}),
+            _FakeResponse(200, {"count": actual_count}),
+            _FakeResponse(200, {"hits": {"hits": prior_hits or []}}),
+        ]
+
+    def test_intel_indicator_count_drop_raises_on_heartbeat_search_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_intel_indicator_count_drop_pct()
+
+    def test_intel_indicator_count_drop_raises_on_heartbeat_search_non_200(self):
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(503)):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_intel_indicator_count_drop_pct()
+
+    def test_intel_indicator_count_drop_raises_on_non_numeric_indicator_count(self):
+        # security-auditor MEDIUM: intel_writer can shape threat-intel-meta
+        # arbitrarily — a non-numeric indicator_count must not reach
+        # arithmetic (a raw TypeError would escape main()'s per-metric
+        # loop, which only catches MetricUnavailable, killing the ENTIRE
+        # metrics run over one malformed heartbeat).
+        # (None is deliberately excluded — that's "field absent", a
+        # legitimate no-baseline case, not a malformed value.)
+        for bad in ("not-a-number", [1, 2], {"x": 1}, True, -5):
+            with self.subTest(bad=bad):
+                resp = _FakeResponse(200, {"hits": {"hits": [
+                    {"_source": {"indicator_count": bad}},
+                ]}})
+                with mock.patch.object(slo_metrics, "es", return_value=resp):
+                    with self.assertRaises(slo_metrics.MetricUnavailable):
+                        slo_metrics.metric_intel_indicator_count_drop_pct()
+
+    def test_intel_indicator_count_drop_returns_none_when_no_baseline_at_all(self):
+        with mock.patch.object(slo_metrics, "es",
+                               side_effect=self._drop_pct_responses(actual_count=5)) as mock_es:
+            self.assertIsNone(slo_metrics.metric_intel_indicator_count_drop_pct())
+        self.assertEqual(mock_es.call_count, 3)
+
+    def test_intel_indicator_count_drop_none_on_degenerate_zero_heartbeat_and_no_prior(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=self._drop_pct_responses(
+                heartbeat_hits=[{"_source": {"indicator_count": 0}}], actual_count=5)):
+            self.assertIsNone(slo_metrics.metric_intel_indicator_count_drop_pct())
+
+    def test_intel_indicator_count_drop_uses_heartbeat_baseline_when_no_prior_baseline(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=self._drop_pct_responses(
+                heartbeat_hits=[{"_source": {"indicator_count": 200}}], actual_count=40)):
+            self.assertEqual(slo_metrics.metric_intel_indicator_count_drop_pct(), 80.0)
+
+    def test_intel_indicator_count_drop_uses_prior_baseline_when_heartbeat_gives_no_signal(self):
+        # security-auditor HIGH, the core fix: threat_intel_compactor can
+        # delete every threat-intel-meta doc (no heartbeat at all), or
+        # intel_writer can forge indicator_count:0 — EITHER way comparison
+        # (a) goes silent. The prior-run persisted actual-count baseline,
+        # untouchable by both credentials, must still catch the wipe.
+        with mock.patch.object(slo_metrics, "es", side_effect=self._drop_pct_responses(
+                heartbeat_hits=[], actual_count=20,
+                prior_hits=[{"_source": {"intel_indicator_actual_count": 200}}])):
+            self.assertEqual(slo_metrics.metric_intel_indicator_count_drop_pct(), 90.0)
+
+    def test_intel_indicator_count_drop_uses_prior_baseline_despite_forged_zero_heartbeat(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=self._drop_pct_responses(
+                heartbeat_hits=[{"_source": {"indicator_count": 0}}], actual_count=20,
+                prior_hits=[{"_source": {"intel_indicator_actual_count": 200}}])):
+            self.assertEqual(slo_metrics.metric_intel_indicator_count_drop_pct(), 90.0)
+
+    def test_intel_indicator_count_drop_takes_the_worse_of_the_two_baselines(self):
+        # heartbeat says 30% gone; the untouchable prior-actual baseline
+        # says 80% gone — the worse (larger) number must win, not whichever
+        # baseline happened to be computed first.
+        with mock.patch.object(slo_metrics, "es", side_effect=self._drop_pct_responses(
+                heartbeat_hits=[{"_source": {"indicator_count": 100}}], actual_count=70,
+                prior_hits=[{"_source": {"intel_indicator_actual_count": 350}}])):
+            self.assertEqual(slo_metrics.metric_intel_indicator_count_drop_pct(), 80.0)
+
+    def test_intel_indicator_count_drop_clamps_both_baselines_at_zero_on_growth(self):
+        # The normal/healthy case for EITHER baseline: threat-intel-
+        # indicators only grows across runs within its 30-day retention —
+        # growth must never register as a negative "drop" for either leg.
+        with mock.patch.object(slo_metrics, "es", side_effect=self._drop_pct_responses(
+                heartbeat_hits=[{"_source": {"indicator_count": 100}}], actual_count=250,
+                prior_hits=[{"_source": {"intel_indicator_actual_count": 150}}])):
+            self.assertEqual(slo_metrics.metric_intel_indicator_count_drop_pct(), 0.0)
+
+    def test_intel_indicator_count_drop_raises_on_actual_count_failure(self):
+        heartbeat_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"indicator_count": 100}},
+        ]}})
+        with mock.patch.object(slo_metrics, "es",
+                               side_effect=[heartbeat_resp, ConnectionError("refused")]):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_intel_indicator_count_drop_pct()
+
+    def test_intel_indicator_count_drop_raises_on_prior_baseline_search_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=[
+                _FakeResponse(200, {"hits": {"hits": []}}),
+                _FakeResponse(200, {"count": 5}),
+                ConnectionError("refused")]):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_intel_indicator_count_drop_pct()
+
+    def test_intel_indicator_count_drop_ignores_malformed_prior_baseline(self):
+        # A soc-slo-metrics doc with a non-numeric persisted count (however
+        # it got that way) must degrade to "no usable prior baseline", not
+        # crash — _prior_intel_actual_count() itself guards this, verified
+        # directly in PriorIntelActualCountTests below; this confirms the
+        # metric composes with that guard correctly end to end.
+        with mock.patch.object(slo_metrics, "es", side_effect=self._drop_pct_responses(
+                heartbeat_hits=[{"_source": {"indicator_count": 100}}], actual_count=40,
+                prior_hits=[{"_source": {"intel_indicator_actual_count": "not-a-number"}}])):
+            self.assertEqual(slo_metrics.metric_intel_indicator_count_drop_pct(), 60.0)
+
+    def test_intel_indicator_count_drop_heartbeat_query_shape(self):
+        with mock.patch.object(
+                slo_metrics, "es",
+                side_effect=self._drop_pct_responses()) as mock_es:
+            slo_metrics.metric_intel_indicator_count_drop_pct()
+        path = mock_es.call_args_list[0][0][1]
+        body = mock_es.call_args_list[0][0][2]
+        self.assertIn("threat-intel-meta", path)
+        self.assertIn("ignore_unavailable=true", path)
+        self.assertEqual(body["sort"], [{"@timestamp": "desc"}])
+        self.assertEqual(body["size"], 1)
+
+    def test_intel_indicator_count_drop_prior_baseline_query_shape(self):
+        with mock.patch.object(
+                slo_metrics, "es",
+                side_effect=self._drop_pct_responses()) as mock_es:
+            slo_metrics.metric_intel_indicator_count_drop_pct()
+        path = mock_es.call_args_list[2][0][1]
+        body = mock_es.call_args_list[2][0][2]
+        self.assertIn("soc-slo-metrics", path)
+        self.assertIn("ignore_unavailable=true", path)
+        filters = body["query"]["bool"]["filter"]
+        self.assertIn({"exists": {"field": "intel_indicator_actual_count_at"}}, filters)
+        range_filter = next(f["range"]["intel_indicator_actual_count_at"]
+                            for f in filters if "range" in f)
+        self.assertEqual(range_filter.get("lte"), "now")
+        self.assertIn("gte", range_filter)
+
+
+class PriorIntelActualCountTests(unittest.TestCase):
+    """#358: _prior_intel_actual_count()'s own guards, tested directly —
+    the composed-metric tests above cover the happy/wipe paths; these pin
+    the malformed-baseline defense in isolation."""
+
+    def test_returns_none_when_no_prior_doc(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})):
+            self.assertIsNone(slo_metrics._prior_intel_actual_count())
+
+    def test_returns_the_persisted_value(self):
+        resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"intel_indicator_actual_count": 123}},
+        ]}})
+        with mock.patch.object(slo_metrics, "es", return_value=resp):
+            self.assertEqual(slo_metrics._prior_intel_actual_count(), 123)
+
+    def test_treats_non_numeric_value_as_no_baseline(self):
+        for bad in ("not-a-number", True, [1], {"x": 1}, -5):
+            with self.subTest(bad=bad):
+                resp = _FakeResponse(200, {"hits": {"hits": [
+                    {"_source": {"intel_indicator_actual_count": bad}},
+                ]}})
+                with mock.patch.object(slo_metrics, "es", return_value=resp):
+                    self.assertIsNone(slo_metrics._prior_intel_actual_count())
+
+    def test_raises_on_search_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._prior_intel_actual_count()
+
+    def test_raises_on_search_non_200(self):
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(503)):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._prior_intel_actual_count()
+
+    def test_baseline_window_is_configurable(self):
+        with mock.patch.object(
+                slo_metrics, "es",
+                return_value=_FakeResponse(200, {"hits": {"hits": []}})) as mock_es, \
+             mock.patch.object(slo_metrics, "SLO_INTEL_DROP_BASELINE_MAX_AGE_MIN", 60.0):
+            slo_metrics._prior_intel_actual_count()
+        body = mock_es.call_args[0][2]
+        filters = body["query"]["bool"]["filter"]
+        range_filter = next(f["range"]["intel_indicator_actual_count_at"] for f in filters if "range" in f)
+        self.assertEqual(range_filter["gte"], "now-60m")
+
 
 class EsKbWrapperTests(unittest.TestCase):
     """Cover the real es()/kb() request wrappers — every test above mocks them
@@ -904,6 +1136,8 @@ class MainExitCodeTests(unittest.TestCase):
         def fake_es(method, path, body=None):
             if path == "/logstash-security-*/_search":
                 return _FakeResponse(200, {"hits": {"hits": [{"_source": {"@timestamp": now_iso}}]}})
+            if path == "/threat-intel-meta/_count":
+                return _FakeResponse(200, {"count": 1})
             return _FakeResponse(200, {"hits": {"hits": []}, "aggregations": {"avg_lat": {}}})
 
         with mock.patch.object(slo_metrics, "es", side_effect=fake_es), \
@@ -917,7 +1151,8 @@ class MainExitCodeTests(unittest.TestCase):
                            ingest_lag=10.0, parse_err=0.0, audit_write_failures=0.0,
                            orphaned_claims=0.0, vanished_claims=0.0, raw_alert_volume=None,
                            field_truncation_count=0, field_byte_clamp_count=0,
-                           capture_loss_max_pct=0.0):
+                           capture_loss_max_pct=0.0, intel_feed_stale_heartbeats=1.0,
+                           intel_indicator_count_drop_pct=0.0):
         if raw_alert_volume is None:
             raw_alert_volume = {"zeek_notices": 0, "rule_hits": 0, "value": 0}
         return [
@@ -941,6 +1176,10 @@ class MainExitCodeTests(unittest.TestCase):
                                return_value=field_byte_clamp_count),
             mock.patch.object(slo_metrics, "metric_capture_loss_percent",
                                return_value=capture_loss_max_pct),
+            mock.patch.object(slo_metrics, "metric_intel_feed_stale_heartbeats",
+                               return_value=intel_feed_stale_heartbeats),
+            mock.patch.object(slo_metrics, "metric_intel_indicator_count_drop_pct",
+                               return_value=intel_indicator_count_drop_pct),
             mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(200, {})),
         ]
 
@@ -1035,6 +1274,32 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("capture_loss_max_pct", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_intel_feed_stale_heartbeats_breach_exits_2_and_sends_ntfy(self):
+        # Regression guard for #358: metric_intel_feed_stale_heartbeats
+        # must actually be wired into main()'s metric_fns dict, not just
+        # defined — same bug shape #216/#247/#257/#288/#361 already guard
+        # other metrics against.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in self._mock_all_metrics(intel_feed_stale_heartbeats=0.0):
+                stack.enter_context(p)
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        ntfy_post.assert_called_once()
+        self.assertIn("intel_feed_stale_heartbeats", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_intel_indicator_count_drop_breach_exits_2_and_sends_ntfy(self):
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in self._mock_all_metrics(intel_indicator_count_drop_pct=75.0):
+                stack.enter_context(p)
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        ntfy_post.assert_called_once()
+        self.assertIn("intel_indicator_count_drop_pct", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_raw_alert_volume_never_breaches_regardless_of_value(self):
         # #216: NO_TARGET means this is measured but never checked against a
@@ -1192,6 +1457,21 @@ class SloMetricsReaderRoleGrantTests(unittest.TestCase):
                        "'read' — metric_vanished_claims()'s prior-sample _search "
                        "against soc-slo-metrics will 403 under the real slo_metrics "
                        "service account (#361)")
+
+    def test_role_file_grants_read_on_threat_intel_indices(self):
+        # #358 security-auditor finding: threat-intel-indicators/
+        # threat-intel-meta had no grant at all in slo_metrics_reader.json —
+        # metric_intel_feed_stale_heartbeats()/metric_intel_indicator_
+        # count_drop_pct() would 403 under the real slo_metrics service
+        # account despite passing every mocked test, exactly the #275/#361
+        # bug shape this whole test class exists to catch.
+        privileges = self._granted_privileges("threat-intel-indicators")
+        self.assertIn("read", privileges,
+                       "slo_metrics_reader.json is missing a read grant on "
+                       "threat-intel-indicators (#358)")
+        self.assertEqual(privileges, self._granted_privileges("threat-intel-meta"),
+                          "threat-intel-indicators and threat-intel-meta must share "
+                          "the same grant entry — both metrics read both indices")
 
     def test_compose_inline_copy_matches_role_file(self):
         # The compose file's inline PUT body must stay byte-for-byte in sync

@@ -1,4 +1,5 @@
 {
+  "cluster": ["monitor"],
   "indices": [
     {"names": ["threat-intel-indicators", "threat-intel-meta"],
      "privileges": ["read", "delete"]}

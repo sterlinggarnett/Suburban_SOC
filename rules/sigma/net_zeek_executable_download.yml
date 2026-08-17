@@ -3,8 +3,16 @@ id: ffde19ce-a7f2-4637-a25d-eb839b694697
 status: experimental
 description: |
     Detects transfer of executable or script payloads over HTTP as recorded in
-    Zeek's files.log (shipped via Filebeat). Pairs with the EXPLOITATION
-    emulation (tests/anomaly_simulation/sim_malware_download.sh).
+    Zeek's files.log (shipped via Filebeat).
+    security-auditor review (#365): the EXPLOITATION emulation
+    (tests/anomaly_simulation/sim_malware_download.sh) this description
+    previously claimed to "pair with" cannot actually exercise this rule —
+    it fetches EICAR over HTTPS (SOP-147-evidence-validation-procedure.md's
+    own note: "neither crosses bat0 nor exposes the file to Zeek"), and its
+    plaintext fallback yields mime_type=application/zip, which is in
+    neither this rule's old 9-entry list nor the new 4-entry one. Filed as
+    #383 (not this issue's scope) rather than silently left as a false
+    claim now that this description block is being rewritten anyway.
     #217: demoted medium -> low rather than adding an allowlist filter.
     files.log does not carry the HTTP hostname/server (that lives in the
     separately-logged http.log, correlated only via connection uid, which
@@ -15,12 +23,54 @@ description: |
     distinguish attacker staging from routine software updates without more
     context; correlate with http.log (by uid) or endpoint telemetry before
     escalating a hit from this rule.
-    Added application/x-pie-executable (#228, M13 US5 review, kept in sync
-    with the identical list in net_zeek_smtp_attachment_executable.yml):
-    modern libmagic reports this MIME type for position-independent ELF
-    executables, which is the default output of every current Linux distro's
-    toolchain — the original list without it missed the majority of
-    present-day Linux binaries.
+    #365: the mime_type list below (kept in sync with the identical list in
+    net_zeek_smtp_attachment_executable.yml) was rewritten from 9 entries
+    to 4, ALL individually live-verified against the real pinned zeek/zeek
+    image (the exact tag+digest enforced by
+    tests/pipeline/test_zeek_image_pin.py's EXPECTED_TAG/EXPECTED_DIGEST,
+    e.g. configs/systemd/zeek-host-capture.service's own docker invocation
+    — NOT docker-compose.yml, which doesn't reference zeek/zeek at all) —
+    not general-purpose libmagic, which Zeek does NOT use at all for
+    file-analysis MIME detection: it has its own, much narrower,
+    independent signature engine
+    (base/frameworks/files/magic/libmagic.sig inside the image), confirmed
+    via `find`/`ldd` inside the container that no system libmagic is even
+    linked. Verified end to end (a real HTTP download of each payload type,
+    captured to a real pcap, replayed through the real pinned image,
+    files.log's actual mime_type read back) for: a shell script (`#!/bin/bash`
+    - Zeek reports `text/x-shellscript`, the exact gap #365 was filed
+    over — application/x-sh and application/x-shellscript, both REMOVED
+    below, are never produced), a statically-linked ELF, a non-PIE ELF, a
+    PIE ELF, a true shared library (.so), and — security-auditor review
+    round 2, replacing an initial hand-crafted-PE-header test whose
+    representativeness was fairly questioned — three REAL, genuinely
+    compiler-produced Windows binaries pulled from this WSL host's own
+    mounted C:\Windows (notepad.exe, kernel32.dll, and a real .NET-managed
+    assembly, System.dll, each with a full Rich header/section table/CLI
+    header a hand-crafted minimal PE lacks): all three landed
+    application/x-dosexec, identically to the original synthetic PE test.
+    Findings beyond the issue's own literal ask (verified, not assumed):
+    application/x-msdownload, application/vnd.microsoft.portable-executable,
+    application/x-elf, and application/x-pie-executable (all REMOVED) never
+    appear ANYWHERE in the pinned image's entire /usr/local/zeek/share/zeek/
+    tree — security-auditor review round 2: broadened from an initial
+    single-file grep (just libmagic.sig) to a full recursive grep across
+    every script/signature resource the image ships, zero matches — Zeek
+    reports EVERY MS-DOS/PE variant tested (2 synthetic + 3 real, EXE or
+    DLL) as application/x-dosexec, the one entry kept. Most surprising:
+    application/x-pie-executable — added in #228 on the strength of
+    "modern libmagic reports this for PIE executables", true for
+    general-purpose libmagic but NOT for Zeek's own detector, which cannot
+    distinguish a PIE executable from a genuine shared library (both are
+    ET_DYN ELF at the byte level) and reports BOTH as application/x-sharedlib
+    — meaning #228's own live PIE-executable test case was ALREADY covered
+    by the pre-existing application/x-sharedlib entry the whole time; the
+    dedicated entry it added was dead weight, not a fix (see the now-
+    corrected note in configs/systemd/zeek-host-capture.service's own
+    image-bump precedent list, which cited this exact addition as a prior
+    "value moved under an upstream rebuild" case — it never did).
+    application/x-executable (kept) matches both static and non-PIE
+    dynamically-linked ELF binaries.
 references:
     - https://attack.mitre.org/techniques/T1105/
     - https://docs.zeek.org/en/master/logs/files.html
@@ -38,14 +88,9 @@ detection:
     selection_payload:
         mime_type:
             - 'application/x-dosexec'
-            - 'application/x-msdownload'
-            - 'application/vnd.microsoft.portable-executable'
-            - 'application/x-elf'
             - 'application/x-executable'
-            - 'application/x-pie-executable'
             - 'application/x-sharedlib'
-            - 'application/x-sh'
-            - 'application/x-shellscript'
+            - 'text/x-shellscript'
     condition: selection_transport and selection_payload
 falsepositives:
     - Legitimate software distribution, installers, and update downloads

@@ -42,8 +42,15 @@
 #      (`docker inspect <tag> --format '{{index .RepoDigests 0}}'`).
 #   2. The failure class isn't limited to OpenSSL/validation_status — ANY value or
 #      schema element the image generates can move under an upstream rebuild (already
-#      happened twice: the OpenSSL wording change above, and #228's mime_type list
-#      needing application/x-pie-executable added for modern PIE binaries). Grepping
+#      happened once for real: the OpenSSL wording change above. #228's addition of
+#      application/x-pie-executable was ORIGINALLY cited here as a second such case —
+#      #365's live verification disproved that: Zeek never emitted that MIME string on
+#      ANY version tested, so #228 wasn't reacting to a value that moved, it was
+#      reacting to a false premise from the start — application/x-sharedlib already
+#      covered the same PIE-executable payloads #228 was testing against, the whole
+#      time. Left as a cautionary example of a DIFFERENT risk this same golden-output-
+#      diff discipline also catches: a fix based on general-purpose libmagic behavior
+#      that doesn't hold for Zeek's own narrower, independent detector). Grepping
 #      for one field name (e.g. "validation_status") is not sufficient — it missed,
 #      among others, SSH::Password_Guessing (net_zeek_ssh_bruteforce.yml, upstream
 #      policy/protocols/ssh/detect-bruteforcing.zeek), Intel::ADDR/Intel::DOMAIN

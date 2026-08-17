@@ -124,7 +124,7 @@ winlog.event_id:4624 AND winlog.event_data.LogonType:9 AND winlog.event_data.Aut
 - **Rule:** `auth_win_priv_group_membership_change.yml` · **level:** high · **status:** stable · **ATT&CK:** T1098, T1078
 
 ```
-(winlog.event_id:(4732 OR 4728 OR 4756)) AND ((winlog.event_data.TargetUserName:(Administrators OR "Domain Admins" OR "Enterprise Admins")) OR (winlog.event_data.TargetSid:(*\-544 OR *\-512 OR *\-519)))
+(winlog.event_id:(4732 OR 4728 OR 4756)) AND ((winlog.event_data.TargetUserName:(Administrators OR Domain\ Admins OR Enterprise\ Admins)) OR (winlog.event_data.TargetSid:(*\-544 OR *\-512 OR *\-519)))
 ```
 
 ## Interactive Logon via RDP (LogonType 10)
@@ -172,7 +172,7 @@ winlog.event_id:4720
 - **Rule:** `create_remote_thread_win_susp_target.yml` · **level:** high · **status:** stable · **ATT&CK:** T1055
 
 ```
-winlog.event_id:8 AND (winlog.event_data.TargetImage:*\\lsass.exe OR (NOT winlog.event_data.SourceUser:"NT AUTHORITY\\SYSTEM"))
+winlog.event_id:8 AND (winlog.event_data.TargetImage:*\\lsass.exe OR (NOT winlog.event_data.SourceUser:NT\ AUTHORITY\\SYSTEM))
 ```
 
 ## RDP Connection Originating From Outside Private Address Space
@@ -260,7 +260,7 @@ event.dataset:zeek.dns AND (dns.question.type:TXT AND dns.question.name:/.*[a-zA
 - **Rule:** `net_zeek_executable_download.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1105
 
 ```
-event.dataset:zeek.files AND (zeek.source:HTTP AND (mime_type:(application\/x\-dosexec OR application\/x\-msdownload OR application\/vnd.microsoft.portable\-executable OR application\/x\-elf OR application\/x\-executable OR application\/x\-pie\-executable OR application\/x\-sharedlib OR application\/x\-sh OR application\/x\-shellscript)))
+event.dataset:zeek.files AND (zeek.source:HTTP AND (mime_type:(application\/x\-dosexec OR application\/x\-executable OR application\/x\-sharedlib OR text\/x\-shellscript)))
 ```
 
 ## HTTP Request to a Known Default C2 Beacon URI
@@ -292,7 +292,7 @@ event.dataset:zeek.notice AND (note:(Scan\:\:Port_Scan OR Scan\:\:Address_Scan O
 - **Rule:** `net_zeek_smtp_attachment_executable.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1566.001
 
 ```
-event.dataset:zeek.files AND (zeek.source:SMTP AND (mime_type:(application\/x\-dosexec OR application\/x\-msdownload OR application\/vnd.microsoft.portable\-executable OR application\/x\-elf OR application\/x\-executable OR application\/x\-pie\-executable OR application\/x\-sharedlib OR application\/x\-sh OR application\/x\-shellscript)))
+event.dataset:zeek.files AND (zeek.source:SMTP AND (mime_type:(application\/x\-dosexec OR application\/x\-executable OR application\/x\-sharedlib OR text\/x\-shellscript)))
 ```
 
 ## SMTP Session with an Anomalously Deep Transaction Count

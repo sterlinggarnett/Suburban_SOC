@@ -11,6 +11,19 @@ description: |
     framework tags every extracted file with the protocol that carried it
     regardless of transport, confirmed against
     base/protocols/smtp/entities.zeek's own `$source="SMTP"` assignment.
+    #365: mime_type list rewritten from 9 entries to 4 — see
+    net_zeek_executable_download.yml's own description for the full live-
+    verification methodology and findings (identical list, kept in sync;
+    the underlying MIME-detection engine is the same regardless of which
+    protocol carried the bytes). security-auditor review, HONESTLY
+    disclosed rather than assumed: every payload in that verification pass
+    was actually served over HTTP, not SMTP — content-magic MIME detection
+    itself is protocol-agnostic by design (Zeek types file BYTES, not the
+    transport), but this rule's specific behavior on a genuine plaintext
+    SMTP MIME attachment (including whether a mail entity's declared
+    Content-Type header can ever influence mime_type when content-magic
+    itself is inconclusive) has not been independently confirmed the same
+    way. Filed as #382, not blocking.
     Reuses field-mapping-zeek-files (configs/detections/suburban-soc-ecs.yml)
     entirely as-is — no new prerequisite mapping work needed for this rule.
     Same correlation caveat as its HTTP sibling: files.log doesn't carry the
@@ -43,14 +56,9 @@ detection:
     selection_payload:
         mime_type:
             - 'application/x-dosexec'
-            - 'application/x-msdownload'
-            - 'application/vnd.microsoft.portable-executable'
-            - 'application/x-elf'
             - 'application/x-executable'
-            - 'application/x-pie-executable'
             - 'application/x-sharedlib'
-            - 'application/x-sh'
-            - 'application/x-shellscript'
+            - 'text/x-shellscript'
     condition: selection_transport and selection_payload
 falsepositives:
     - Legitimate IT-distributed software, scripts, or installers sent by email (uncommon practice, but occurs at some organizations) — encourage a non-email distribution channel rather than allowlisting.

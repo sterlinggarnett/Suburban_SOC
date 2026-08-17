@@ -60,7 +60,82 @@ _NIST_ASSIGN_RE = re.compile(r"\[nist\]\[function\]\"\s*=>")
 # two already found, so a third occurrence fails CI instead of needing
 # another live-verification pass to notice.
 _RENAME_BLOCK_RE = re.compile(r"rename\s*=>\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", re.DOTALL)
-_RENAME_PAIR_RE = re.compile(r'"([^"]+)"\s*=>\s*"([^"]+)"')
+# #336: also accept single-quoted Logstash config strings
+# (`'[foo]' => '[bar]'`), not just double-quoted ones — Logstash allows
+# both, and this regex previously only matched the latter, an invisible
+# gap that would have silently skipped a real single-quoted footgun.
+# Shared by every consumer of _RENAME_BLOCK_RE/_COPY_BLOCK_RE in this
+# file — purely about quote STYLE, orthogonal to which stanza keyword a
+# given block regex matches.
+_RENAME_PAIR_RE = re.compile(r'''["']([^"']+)["']\s*=>\s*["']([^"']+)["']''')
+
+# #336: the dotted-target hygiene check below (test_no_rename_block_
+# uses_a_dotted_string_target) checks BOTH _RENAME_BLOCK_RE and
+# _COPY_BLOCK_RE's matches, tagged by keyword - deliberately does NOT
+# also check `replace`/`update` (the issue's own suggested regex,
+# `(?:rename|copy|replace|update)\s*=>`, included them; a first
+# implementation here did too, before security-auditor review). rename
+# and copy share real field-path-to-field-path semantics (`source =>
+# target`, both sides address a field, so a dotted target IS the #328
+# footgun), but replace/update are `field => value` - the right side is
+# a literal value or sprintf template, never a field path, so a dot in
+# it (a version string, an IP address, a MITRE-style dotted value) is
+# never the #328 bug and this check's whole premise doesn't apply.
+# Live-confirmed harmless on TODAY's 6 real replace/update blocks (none
+# have a dotted value) - but that's not why they're excluded; the
+# premise is simply inapplicable to replace/update regardless of
+# whether the config happens to dodge it today, and including them
+# would eventually produce a bogus CI failure on a perfectly valid
+# future `replace => { "[field]" => "some.dotted.value" }`, whose
+# "fix" would be adding a real VALUE (not a verified dotted field
+# target) to _RENAME_DOTTED_TARGET_ALLOWLIST below - polluting the
+# allowlist's own meaning.
+#
+# Deliberately does NOT replace _RENAME_BLOCK_RE above with a combined
+# regex either - test_security_channel_copies_not_renames_or_removes_
+# raw_fields (further down) relies on it matching ONLY `rename =>`
+# blocks to distinguish rename (removes the source field) from copy
+# (keeps it) semantics; a first attempt at a single combined regex here
+# broke that test (a #342 copy pair was misreported as an illegal
+# rename) and, separately, would have duplicated _RENAME_BLOCK_RE's own
+# brace-capture pattern text verbatim (code-reviewer follow-up) for no
+# benefit over just querying the two existing regexes separately.
+
+# #336: 2 pre-existing, deliberately dotted `copy` targets, found live by
+# checking copy blocks too, not just rename ones. Keyed by (keyword,
+# source, target), not just (source, target) - security-auditor follow-
+# up: the same source/target pair has very different risk depending on
+# WHICH keyword it appeared under (a rename REMOVES the source field; a
+# copy keeps it), so an allowlist entry verified safe as a copy must not
+# also silently exempt the identical pair if it ever appeared as a
+# rename instead. Verified independently (grep, not the issue's own
+# claim taken at face value — the issue asserted BOTH are dashboard-
+# queried via ES's dot-expansion, but that only holds for one of them):
+#   - "[agent][name]" => "agent.hostname": genuinely dashboard-consumed
+#     (configs/server/dataquality_dashboard.ndjson, soc_navigation_hub.
+#     ndjson both reference agent.hostname) AND a real distinct field from
+#     its source (agent.name != agent.hostname) - not a duplicate.
+#   - "[log][file][path]" => "log.file.path": NOT referenced by any
+#     dashboard (grepped configs/server/*.ndjson - zero hits, unlike the
+#     entry above). Its dotted target ALSO dot-expands to the exact same
+#     final Elasticsearch location as its own bracket-notation SOURCE
+#     ([log][file][path] -> nested log.file.path) - live-confirmed
+#     against a real Elasticsearch index: a document with both the
+#     nested and flat-dotted forms keeps BOTH keys distinct in _source
+#     (no data loss/overwrite), but the mapped field itself becomes
+#     multi-valued with the identical value indexed twice, not two
+#     genuinely different values - a harmless but genuinely redundant
+#     self-write, not a real second field. The issue's own "confirmed
+#     intentional" framing was only half right. Left in the allowlist
+#     rather than removed here (a pipeline BEHAVIOR change, out of scope
+#     for a hygiene-CHECK issue, and this test only asserts the CHECK
+#     doesn't false-positive on already-live config, not that the config
+#     itself is optimal) -
+#     tracked as a follow-up instead.
+_RENAME_DOTTED_TARGET_ALLOWLIST = {
+    ("copy", "[agent][name]", "agent.hostname"),
+    ("copy", "[log][file][path]", "log.file.path"),
+}
 
 # #290 security-auditor follow-up: a stray apostrophe inside a multi-line
 # `code => '...'` ruby filter block — even just in a comment — closes the
@@ -468,19 +543,74 @@ class DetectionAsCodeTests(unittest.TestCase):
         # as a target. A future edit mirroring that existing source-side
         # idiom onto a rename's target side would reintroduce #328 with a
         # green build unless this checks both shapes.
-        blocks = _RENAME_BLOCK_RE.findall(CONF)
-        self.assertGreaterEqual(len(blocks), 2,
-                                "expected to find multiple rename blocks in configs/logstash.conf")
+        #
+        # #336: widened to also check copy blocks, not just rename - the
+        # identical footgun is live in this file's own `copy => {...}`
+        # block. Does NOT also check replace/update - see _RENAME_PAIR_RE's
+        # own comment above for why that premise doesn't apply to them.
+        # A naive widening would false-positive on 2 known, deliberately-
+        # dotted copy targets (dashboards depend on the literal dotted
+        # field name existing via ES's own dot-expansion, not on it being
+        # nested) - excluded via the explicit, keyword-tagged allowlist
+        # above, not a blanket "copy targets don't need checking" carve-
+        # out, so a THIRD dotted copy target (or the SAME pair reappearing
+        # as a rename, which removes the source field instead of keeping
+        # it) still fails loud unless someone deliberately adds it too.
+        tagged_pairs = (
+            [("rename", s, t) for block in _RENAME_BLOCK_RE.findall(CONF)
+             for s, t in _RENAME_PAIR_RE.findall(block)]
+            + [("copy", s, t) for block in _COPY_BLOCK_RE.findall(CONF)
+               for s, t in _RENAME_PAIR_RE.findall(block)]
+        )
+        self.assertGreaterEqual(len(tagged_pairs), 2,
+                                "expected to find multiple rename/copy field pairs "
+                                "in configs/logstash.conf")
         bad = []
-        for block in blocks:
-            for source, target in _RENAME_PAIR_RE.findall(block):
-                bracket_segments = re.findall(r"\[([^\]]*)\]", target)
-                bare_dotted = not target.startswith("[") and "." in target
-                dotted_inside_brackets = any("." in seg for seg in bracket_segments)
-                if bare_dotted or dotted_inside_brackets:
-                    bad.append((source, target))
+        for keyword, source, target in tagged_pairs:
+            if (keyword, source, target) in _RENAME_DOTTED_TARGET_ALLOWLIST:
+                continue
+            bracket_segments = re.findall(r"\[([^\]]*)\]", target)
+            bare_dotted = not target.startswith("[") and "." in target
+            dotted_inside_brackets = any("." in seg for seg in bracket_segments)
+            if bare_dotted or dotted_inside_brackets:
+                bad.append((keyword, source, target))
         self.assertEqual([], bad,
-                         f"dotted (non-bracket) rename targets create flat fields, not nested: {bad}")
+                         f"dotted (non-bracket) rename/copy targets create flat fields, not "
+                         f"nested (add to _RENAME_DOTTED_TARGET_ALLOWLIST only if deliberate "
+                         f"and verified, not just plausible): {bad}")
+
+    def test_allowlisted_dotted_targets_are_still_present_in_the_config(self):
+        # #336: the inverse check - an allowlist entry that no longer
+        # matches anything real (the copy block was edited/removed) would
+        # silently stop being exercised, so a REGRESSION to the allowlist
+        # itself (e.g. a typo introduced while editing it) could hide a
+        # real dotted-target bug behind a no-op exemption instead of
+        # actually filtering established real matches.
+        actual_pairs = set()
+        actual_pairs.update(("rename", s, t) for block in _RENAME_BLOCK_RE.findall(CONF)
+                             for s, t in _RENAME_PAIR_RE.findall(block))
+        actual_pairs.update(("copy", s, t) for block in _COPY_BLOCK_RE.findall(CONF)
+                             for s, t in _RENAME_PAIR_RE.findall(block))
+        missing = _RENAME_DOTTED_TARGET_ALLOWLIST - actual_pairs
+        self.assertEqual(set(), missing,
+                         f"allowlisted dotted target(s) {missing} no longer match anything in "
+                         f"configs/logstash.conf - remove them from the allowlist (the "
+                         f"copy/rename they exempted was edited or removed) rather than leaving "
+                         f"a stale, unexercised exemption")
+
+    def test_rename_pair_regex_matches_single_quoted_pairs_too(self):
+        # #336: Logstash allows single-quoted config strings
+        # ('[foo]' => '[bar]'), not just double-quoted ones
+        # ("[foo]" => "[bar]") - _RENAME_PAIR_RE previously only matched
+        # the latter, an invisible gap that would have silently let a
+        # single-quoted dotted-target footgun (the exact #328 bug shape)
+        # through every hygiene check in this file with a green build.
+        # Mutation-tested against the OLD double-quote-only pattern to
+        # confirm this is a real, previously-missed gap, not a
+        # theoretical one: re.compile(r'"([^"]+)"\s*=>\s*"([^"]+)"')
+        # finds zero matches on the synthetic text below.
+        synthetic = "'[foo][bar]' => 'foo.bar'"
+        self.assertEqual([("[foo][bar]", "foo.bar")], _RENAME_PAIR_RE.findall(synthetic))
 
     def test_no_apostrophe_inside_a_ruby_single_quoted_code_block(self):
         # #290 security-auditor follow-up: hit this live while adding that

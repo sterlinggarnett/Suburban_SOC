@@ -25,7 +25,7 @@ matching the M12/M13/M14 pattern.
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏸️ 6/8 closed, 2 not actionable (no actionable work left) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 8/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 9/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
@@ -38,8 +38,8 @@ this doc doesn't duplicate 37 issue bodies inline the way it narrates
 same way every prior milestone's issues were recorded below.
 
 M17 closed out 2026-08-17 (6/8, no actionable work left). **M18 is now the
-active queue** — 8/13 closed already (#344, #341, #342, #337, #370, #339,
-#338, #349), 5 remaining: #326, #336, #345, #347, #367 (#326 is not
+active queue** — 9/13 closed already (#344, #341, #342, #337, #370, #339,
+#338, #349, #347), 4 remaining: #326, #336, #345, #367 (#326 is not
 actionable — needs real Windows/PowerShell telemetry this environment
 doesn't have, same shape as M17's #283/#333). Same approach as M17:
 smallest/most-contained issue first, one at a time, each through the full
@@ -266,6 +266,29 @@ multi-issue runs. M19–M22 remain open calls after M18.
   Both reviewers also independently flagged the `network_logs` branch's
   tag name (`_zeek_undated`) as overclaiming Zeek-specific content —
   renamed to `_network_logs_undated`.
+- [x] **#347 (P3, tech-debt) — COMPLETE, MERGED** — #287's static
+  field-mapping drift checker (catches a Sigma rule selecting a field
+  `suburban-soc-ecs.yml` claims gets renamed, but `logstash.conf` never
+  actually renames — bit the corpus 4 times: #217, #232, #233/#234,
+  #228) was deliberately scoped to `product:zeek` only; Winlogbeat
+  channels were a known, out-of-scope gap. [PR #401](https://github.com/voltron-1/Suburban_SOC/pull/401)
+  merged 2026-08-17 (squash), auto-closing #347. M18 now 9/13 closed.
+  Extends it to Sysmon's `process_creation`/`file_event` renames — new
+  extractors mirroring the Zeek-side ones' assumption guards and
+  landmark tripwires; `find_mismatches()` reused completely unchanged.
+  Parallel security-auditor + code-reviewer review converged on the same
+  real MEDIUM: the category filter was an INCLUDE allowlist that would
+  silently exclude any future category-scoped transformation before it
+  ever reached the checker, with the test's own set-equality assertion
+  built from that same filter so it could never notice — fixed by
+  inverting to an EXCLUDE denylist (a future real transformation is
+  auto-discovered; a future identity-mapped category not added to the
+  denylist surfaces as a loud mismatch failure instead of a silent gap),
+  plus the Zeek side's own forward-looking corpus-glob test, mirrored
+  for Windows categories. Also fixed: a fail-silent normalizer tightened
+  to assert the exact expected bracket shape plus a key-collision guard;
+  a negative self-test that could never actually fail (mutation-tested
+  to confirm the fix works); two docstring accuracy nits.
 
 **M16 progress:**
 

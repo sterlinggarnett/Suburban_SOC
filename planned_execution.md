@@ -25,7 +25,7 @@ matching the M12/M13/M14 pattern.
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏸️ 6/8 closed, 2 not actionable (no actionable work left) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 11/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
@@ -37,16 +37,15 @@ this doc doesn't duplicate 37 issue bodies inline the way it narrates
 *completed* work. As each issue is picked up, gate and record it here the
 same way every prior milestone's issues were recorded below.
 
-M17 closed out 2026-08-17 (6/8, no actionable work left). **M18 is now the
-active queue** — 11/13 closed already (#344, #341, #342, #337, #370,
-#339, #338, #349, #347, #345, #336), 2 remaining: #326, #367 (#326 is
-not actionable — needs real Windows/PowerShell telemetry this
-environment doesn't have, same shape as M17's #283/#333). Same approach
-as M17:
-smallest/most-contained issue first, one at a time, each through the full
-implement → parallel security-auditor + code-reviewer review → live-verify
-→ PR → CI → merge → update this doc → commit+push cycle, no unattended
-multi-issue runs. M19–M22 remain open calls after M18.
+M17 closed out 2026-08-17 (6/8, no actionable work left). **M18 closed
+out 2026-08-17 too** (12/16, no actionable work left — #326 externally
+blocked on real telemetry, #396/#403/#405 are review-discovered
+follow-ups deliberately scoped out of the fixes that found them, not
+active gaps). M19–M22 remain open calls, not yet started. Same approach
+as M16/M17/M18 whenever the next one starts: smallest/most-contained
+issue first, one at a time, each through the full implement → parallel
+security-auditor + code-reviewer review → live-verify → PR → CI → merge
+→ update this doc → commit+push cycle, no unattended multi-issue runs.
 
 **M18 progress:**
 
@@ -342,6 +341,53 @@ multi-issue runs. M19–M22 remain open calls after M18.
   self-write, filed as [#403](https://github.com/voltron-1/Suburban_SOC/issues/403).
   #336 also asked for a Sysmon-vs-`suburban-soc-ecs.yml` cross-reference
   test — already fully covered by #347, not duplicated here.
+- [x] **#367 (security, tech-debt) — COMPLETE, MERGED** — `logstash.conf`'s
+  `long_fields` byte-clamp hash protects specific fields against a
+  Lucene whole-document-rejection bug; 2 entries (#344) are only
+  reachable via the `long_command_fields` dynamic_template's glob
+  match, not an explicit template property, so `CeilingConsistencyTests`
+  structurally cannot discover a future field reaching ES only through
+  that glob match. [PR #406](https://github.com/voltron-1/Suburban_SOC/pull/406)
+  merged 2026-08-17 (squash), auto-closing #367. M18 down to #326
+  (not actionable) plus 3 follow-ups filed during this milestone's own
+  review work (#396, #403, #405) — no more actionable M18 work.
+  Implements the narrower of #367's own two suggested fixes (a
+  benchmarked runtime rewrite of the ruby filter is real design +
+  performance work on an SLO-bound pipeline, out of scope without a
+  benchmark) — a static CI check deriving "every field this pipeline's
+  own configuration claims to produce" from `suburban-soc-ecs.yml`'s
+  mapping targets UNIONED with the real rename targets
+  `logstash.conf`/`filebeat.yml` actually produce (reusing #347's own
+  extractors), checked against the same 6 glob patterns the real
+  dynamic_template uses. Parallel security-auditor + code-reviewer
+  found 2 real gaps in the first draft: ceiling-blindness (the check
+  accepted a field listed at ANY tier, but the dynamic_template always
+  assigns CEILING for a glob match — a future field at the wrong tier
+  would have passed while remaining genuinely unclamped, fixed and
+  mutation-tested) and too-narrow a universe (checking only ecs.yml's
+  own claims misses a brand-new pipeline rename target with no ecs.yml
+  entry at all — fixed by unioning in real rename targets, confirmed
+  live to add 7 real fields ecs.yml never claims). Honest scope note,
+  documented rather than overclaimed: this still cannot catch
+  `network_parsed.uri`'s own shape — a field that reaches ES
+  specifically because it's deliberately never renamed and never
+  mapped: true permanent closure needs the benchmarked runtime sweep or
+  a full Sigma-rule-corpus parse, filed as
+  [#405](https://github.com/voltron-1/Suburban_SOC/issues/405) rather
+  than letting #367's own "close...permanently" title go silently
+  unaddressed.
+
+**M18 wrapped 2026-08-17** — 12/16 closed. Remaining: #326 (not
+actionable, needs real Windows/PowerShell telemetry this environment
+doesn't have) and 3 follow-ups filed during this milestone's own review
+cycles ([#396](https://github.com/voltron-1/Suburban_SOC/issues/396) —
+a companion detection rule for #370's local-spray blind spot;
+[#403](https://github.com/voltron-1/Suburban_SOC/issues/403) — remove a
+verified-redundant `log.file.path` self-copy;
+[#405](https://github.com/voltron-1/Suburban_SOC/issues/405) — full
+byte-clamp closure needs a benchmark or full rule-corpus parse), each
+deliberately scoped out of the fix that found it rather than bundled in
+unreviewed. No further M18 work is queued.
 
 **M16 progress:**
 

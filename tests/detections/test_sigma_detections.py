@@ -392,6 +392,46 @@ class SigmaDetectionTests(unittest.TestCase):
             "an `all` target list incorrectly fired when one target was "
             "satisfied by no element at all")
 
+    def test_match_one_rejects_all_modifier_combined_with_cidr_or_numeric(self):
+        # #386 (security-auditor, #351 review): the cidr branch always ORed
+        # across a target list regardless of `all`, and the numeric
+        # (gt/gte/lt/lte) branch accepted `all` syntactically without ever
+        # validating it - both silently diverged from Sigma's documented
+        # AND semantics instead of failing loudly the way this module
+        # already does for other unsupported modifier combinations (re +
+        # list target, text-field word-boundary). Zero rules in the corpus
+        # combine `all` with `cidr` or a numeric modifier (confirmed via
+        # corpus grep) - this pins the fail-loud contract for the day a
+        # rule author tries it.
+        from sigma_eval import _match_one
+        with self.assertRaises(ValueError):
+            _match_one("10.0.0.5", ["cidr", "all"], ["10.0.0.0/24", "192.168.0.0/24"], "field")
+        with self.assertRaises(ValueError):
+            _match_one("5", ["gt", "all"], "3", "field")
+        # A single-network cidr scalar (no `all`) still fires normally -
+        # proves the new guard is scoped to `all`, not a regression on the
+        # existing cidr path.
+        self.assertTrue(_match_one("10.0.0.5", ["cidr"], "10.0.0.0/24", "field"))
+        # code-reviewer follow-up (live-confirmed): `re` had the identical
+        # gap - issue #386's own title names it alongside cidr, but the
+        # first draft of this fix only guarded cidr/numeric.
+        with self.assertRaises(ValueError):
+            _match_one("foo", ["re", "all"], "foo", "field")
+        # security-auditor follow-up: the guard must also fire through the
+        # #351 multi-valued-EVENT-FIELD recursion path (event value is a
+        # list), not just the direct scalar-value call above - a future
+        # refactor of that recursion could silently reintroduce the bypass
+        # without failing CI if only the scalar path were pinned.
+        with self.assertRaises(ValueError):
+            _match_one(["10.0.0.5"], ["cidr", "all"], ["10.0.0.0/24", "192.168.0.0/24"], "field")
+        with self.assertRaises(ValueError):
+            _match_one(["5"], ["gt", "all"], "3", "field")
+        # security-auditor follow-up: an empty TARGET list against a
+        # multi-valued event field must not vacuously return True via
+        # all([]) without ever reaching the guards above.
+        with self.assertRaises(ValueError):
+            _match_one(["10.0.0.5"], ["contains", "all"], [], "field")
+
     def test_match_one_rejects_dict_shaped_values_and_validates_empty_list_shape(self):
         # #351: security-auditor findings.
         # (1) A dict-shaped value (the ECS-canonical dns.answers.data/type/

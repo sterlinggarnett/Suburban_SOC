@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 🚧 1/8 closed | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 🚧 2/8 closed | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 4/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -312,6 +312,63 @@ contained first.
   [#380](https://github.com/voltron-1/Suburban_SOC/issues/380) (README/SOP
   quote long-stale 37/9/35 coverage numbers) as follow-ups, all
   deliberately out of scope.
+- [x] **#365 (P3, low, detection) — COMPLETE, MERGED** — `net_zeek_
+  executable_download.yml`/`net_zeek_smtp_attachment_executable.yml`
+  never matched a downloaded shell script — Zeek reports
+  `text/x-shellscript`, not the `application/x-sh`/`application/x-
+  shellscript` strings the rules' `mime_type` list used.
+  [PR #385](https://github.com/voltron-1/Suburban_SOC/pull/385) merged
+  2026-08-17 (squash), auto-closing #365 — no GitHub-side human review,
+  same review-bypass basis as every prior session fix (17/17 CI green,
+  parallel security-auditor + code-reviewer sub-agent review).
+  The issue also asked to check the rest of the list for similar
+  staleness rather than assume it was accurate — live-verified all 9
+  original entries against the real pinned `zeek/zeek` image (real
+  payloads served over HTTP, captured to a real pcap, replayed through
+  the pinned image, `files.log`'s real `mime_type` read back). Found Zeek
+  does NOT use general-purpose libmagic at all for file-analysis MIME
+  detection — its own independent, much narrower signature engine
+  confirmed 5 of the 9 original entries are structurally dead (never
+  producible): `application/x-msdownload`, `application/vnd.microsoft.
+  portable-executable`, `application/x-elf`, `application/x-pie-
+  executable`, `application/x-sh`. Most notable: `application/x-pie-
+  executable` (#228) was added on general libmagic's behavior for PIE
+  executables, but Zeek's own detector can't distinguish a PIE executable
+  from a shared library and reports both as `application/x-sharedlib` —
+  #228's own test case was already covered the whole time; the dedicated
+  entry it added was dead weight, not a fix. Both rules cut from 9
+  entries to 4, all live-confirmed: `application/x-dosexec`,
+  `application/x-executable`, `application/x-sharedlib`, `text/x-
+  shellscript`.
+  security-auditor (working from static analysis only, no shell access in
+  that session) still found real gaps in the evidence: a citation to a
+  nonexistent `docker-compose.yml` zeek pin (fixed); a now-stale precedent
+  in the image-bump SOP still citing the disproven #228 addition (fixed);
+  a pre-existing false claim that an emulation script exercises this rule
+  when it fetches over HTTPS, invisible to Zeek (disclosed, filed as
+  [#383](https://github.com/voltron-1/Suburban_SOC/issues/383)); a
+  single-file grep insufficient to prove "never producible" (broadened to
+  the whole image tree, still zero matches); and — most substantively —
+  that the original PE test used a hand-crafted header rather than
+  genuine compiler output. Closed by re-testing against three REAL
+  Windows binaries pulled from this WSL host's own mounted `C:\Windows`
+  (notepad.exe, kernel32.dll, a genuine .NET assembly) — all three landed
+  `application/x-dosexec`, identically confirming the original finding.
+  code-reviewer independently found (and, via a reverted mutation test,
+  proved) that the new regression test omitted `application/x-
+  shellscript` itself — the exact original wrong string #365 was filed
+  over — from its dead-mime-type denylist; fixed and re-verified via the
+  same mutation. A late CI failure (`SIEM_KQL_Documentation.md` stale)
+  turned out to be the same still-open #330 unpinned-toolchain-drift class
+  this repo has hit before — my local `sigma-cli` bundled an older
+  `pysigma-backend-elasticsearch` than CI's unpinned install pulls;
+  regenerated against a venv replicating CI's exact install.
+  Filed [#382](https://github.com/voltron-1/Suburban_SOC/issues/382)
+  (SMTP-specific mime_type behavior inferred from HTTP testing, never
+  independently confirmed), #383 (above), and
+  [#384](https://github.com/voltron-1/Suburban_SOC/issues/384)
+  (Python/Perl/archive/container payload classes never covered by either
+  rule, old or new list) as follow-ups, all deliberately out of scope.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -2201,6 +2258,23 @@ are implemented in code; checked off with that one caveat noted inline.
   [#379](https://github.com/voltron-1/Suburban_SOC/issues/379), and
   [#380](https://github.com/voltron-1/Suburban_SOC/issues/380) as
   follow-ups. M17 now 1/8 closed; #365 in progress next.
+- **#365 closed (M17) — Zeek's `mime_type` list corrected to what Zeek
+  actually produces, not what general-purpose libmagic would.** Full
+  detail in NEXT UP's "M17 progress" above. [PR #385](https://github.com/voltron-1/Suburban_SOC/pull/385)
+  merged 2026-08-17 (squash), auto-closing #365, 17/17 CI green after a
+  toolchain-drift fix (same #330 class as before — regenerated
+  `SIEM_KQL_Documentation.md` against a venv matching CI's unpinned
+  install exactly). Live-verified all 9 original mime_type entries
+  against the real pinned zeek/zeek image; found Zeek uses its own
+  independent signature engine, not system libmagic, and that 5 of 9
+  entries were structurally dead. security-auditor (no shell access that
+  session) still found real evidence gaps via static analysis — closed by
+  broadening a single-file grep to the whole image tree and re-testing
+  against 3 genuine Windows binaries (pulled from this WSL host's own
+  mounted C:\Windows) instead of the original hand-crafted PE. code-
+  reviewer proved (via a reverted mutation test) the new regression test
+  was missing the exact original bug string. Filed #382, #383, #384 as
+  follow-ups. M17 now 2/8 closed.
 
 ---
 

@@ -219,10 +219,10 @@ transformations:
   #
   # SCOPE (review round 2): this invariant is only satisfied for the
   # logsources that HAVE a transformation (currently: files, dns, ssl, conn,
-  # http, smtp — six as of this batch, not the four this batch started
-  # with; update this count when the next one is added, don't let it go
-  # stale again). zeek/notice and zeek/conn's sibling zeek/intel have NO
-  # transformation at all — the two existing notice rules
+  # http, smtp, ssh — seven as of #332, six before it, not the four this
+  # batch started with; update this count when the next one is added,
+  # don't let it go stale again). zeek/notice and zeek/conn's sibling
+  # zeek/intel have NO transformation at all — the two existing notice rules
   # (net_zeek_port_scan.yml, net_zeek_ssh_bruteforce.yml) only select on
   # `note`, which Category 0 leaves untouched, so this is harmless today. It
   # stops being harmless the moment a notice-scoped rule adds a
@@ -356,6 +356,43 @@ transformations:
       - type: logsource
         product: zeek
         service: http
+
+  # #332: same unconditional 4-tuple + proto/service rename INVARIANT as
+  # every other zeek/* transformation above — net_zeek_ssh_session_
+  # cadence.yml doesn't select on source/destination itself today, but per
+  # this file's own "the point is the NEXT rule that scopes by source
+  # doesn't silently inherit a gap" convention (see field-mapping-zeek-smtp
+  # above), this is added when zeek/ssh's first rule is, not deferred.
+  # proto/service are included for consistency with every sibling
+  # transformation even though ssh.log itself never actually carries those
+  # keys (live-confirmed against a real captured session replayed through
+  # the pinned zeek/zeek:8.2.1 image) — logstash.conf's Category 0 rename
+  # is unconditional across every zeek stream regardless of whether a given
+  # stream populates the key, and a mutate.rename on an absent field is a
+  # harmless no-op, matching how every other transformation here already
+  # includes proto/service unconditionally too. security-auditor follow-up:
+  # this trades one gap direction for the opposite one on this specific
+  # logsource — a future zeek/ssh rule selecting `service` compiles fine
+  # against network.protocol, but that field is never actually populated
+  # for ssh.log, so it would be a silent no-op the OTHER way (mapped but
+  # never real, not unmapped-and-renamed like the INVARIANT above guards
+  # against). Consistency with every sibling transformation is still the
+  # right call; a future ssh-scoped rule selecting service/proto should
+  # verify against real data first, not assume this mapping means the
+  # field is populated.
+  - id: field-mapping-zeek-ssh
+    type: field_name_mapping
+    mapping:
+      id.orig_h: source.ip
+      id.resp_h: destination.ip
+      id.orig_p: source.port
+      id.resp_p: destination.port
+      proto: network.transport
+      service: network.protocol
+    rule_conditions:
+      - type: logsource
+        product: zeek
+        service: ssh
 
   # #291 (security-auditor, #228 round 2): two related problems, one fix.
   # (1) Performance — several zeek/* rules compile to a leading-wildcard or

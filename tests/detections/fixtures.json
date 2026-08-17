@@ -1846,5 +1846,21 @@
         "ScriptBlockText": "Get-ADUser -Filter *"
       }
     ]
+  },
+  "net_zeek_ssh_session_cadence.yml": {
+    "true_positive": {
+      "client": "SSH-2.0-OpenSSH_10.2"
+    },
+    "true_negatives": [
+      {
+        "client": "OpenSSH-2.0"
+      },
+      {
+        "client": "SSH2.0-OpenSSH"
+      },
+      {
+        "client": "unknown-banner-format"
+      }
+    ]
   }
 }

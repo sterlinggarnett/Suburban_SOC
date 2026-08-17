@@ -380,7 +380,10 @@ class FieldMappingDriftTests(unittest.TestCase):
         # can't be found missing anything — #228's own shape ("zero pipeline
         # transformations existed for zeek/dns/ssl/conn/http") on the
         # opposite side of the file.
-        self.assertEqual({"zeek.files", "zeek.dns", "zeek.ssl", "zeek.conn", "zeek.smtp", "zeek.http"},
+        # #332: field-mapping-zeek-ssh added (net_zeek_ssh_session_cadence.yml
+        # is the first zeek/ssh Sigma rule) — seven as of this issue.
+        self.assertEqual({"zeek.files", "zeek.dns", "zeek.ssl", "zeek.conn", "zeek.smtp",
+                          "zeek.http", "zeek.ssh"},
                          set(self.sigma_mappings),
                          "sigma field_name_mapping transformation set changed — either a real "
                          "suburban-soc-ecs.yml edit (update this set) or the parser mis-extracted one")

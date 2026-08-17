@@ -1,0 +1,141 @@
+title: SSH Session Cadence — Complementary Brute-Force Coverage Below detect-bruteforcing's Threshold
+id: eb0e9198-1e11-48d4-8ca3-b407ff14d52f
+status: experimental
+description: |
+    Single-event logic-of-record for the paired Elastic threshold rule
+    (rules/elastic/threshold/net-zeek-ssh-session-cadence.ndjson), which
+    alerts when a single source establishes 5+ SSH sessions (zeek.ssh) within
+    a 6-minute lookback (a 5-minute run interval with 1-minute overlap - the
+    real trigger is 5-in-6, not 5-in-5). #261 wired policy/protocols/ssh/
+    detect-bruteforcing into the real capture path (threshold: 30 failed
+    auths from one source in 30 minutes, both upstream Zeek defaults) and
+    fixed configs/logstash.conf's T1110 pipeline tag to key on its aggregated
+    SSH::Password_Guessing/Login_By_Password_Guesser notice. That default is
+    reasonable but leaves a real recall gap with no compensating control:
+    29 failed attempts from one source in 30 minutes produces zero T1110
+    signal anywhere in this pipeline.
+    HONEST FRAMING (security-auditor finding): 5-in-6-minutes and 30-in-30-
+    minutes are the SAME steady-state rate (~1 session/minute) - this rule
+    does NOT lower the sustained rate an attacker can stay under to evade
+    both rules indefinitely (e.g. one connection every 2 minutes = 15
+    sessions/30min, invisible to both). Its real value is detection LATENCY
+    for a burst-shaped attack (fires after ~5-6 minutes instead of needing
+    to reach 30 over 30) and independence from auth_success (see below), not
+    a lower rate floor - "well below 30" describes the attempt COUNT, not
+    the RATE. A genuinely lower-rate long-window companion (closing the
+    sustained low-and-slow gap this rule does not) is a distinct, separate
+    piece of work, filed as a follow-up rather than built here.
+    This rule reads a DIFFERENT Zeek dataset (zeek.ssh session records) than
+    the pipeline's T1110 tag (zeek.notice), so neither path can double-count
+    the same document - but a single high-volume attack can legitimately
+    trip BOTH paths at once (one real incident, two independent signals),
+    and metric_raw_alert_volume() in scripts/setup/ai_agent/slo_metrics.py
+    sums its zeek_notices and rule_hits sub-counts into a combined `value`
+    even though it keeps them separately visible - a before/after tuning
+    comparison on `value` alone will see a step change from this rule's
+    addition regardless of any real reduction in noise elsewhere.
+    Detection Engine alerts from this rule are NOT wired to SOAR dispatch
+    (configs/logstash.conf's /alert trigger gates on
+    [threat][technique][id]=="T1110", which Category 5 sets only from the
+    zeek.notice path) - do not "fix" that gap by tagging threat.technique.id
+    on zeek.ssh documents directly, which would fire the unrate-limited
+    /alert webhook once per real SSH session rather than once per aggregated
+    notice, reintroducing a variant of the exact defect #261 removed.
+    Deliberately does NOT key on auth_success, unlike a naive per-event
+    approach: live-verified against a real, wire-captured SSH session
+    (3 failed password attempts + 1 successful auth, client and server
+    containers on separate docker network namespaces connected over a
+    real bridge network — NOT loopback — replayed through the real pinned
+    zeek/zeek:8.2.1 image) that auth_success is entirely ABSENT — not
+    false — on every failed-auth ssh.log record; only auth_attempts:0 is
+    present. tests/anomaly_simulation/verify_detections.py's own comment
+    documents this same unreliability specifically OVER LOOPBACK (large
+    MTU defeats Zeek's packet-size auth-outcome heuristic); this rule's
+    own verification independently reproduced the identical
+    absent-auth_success symptom over a genuinely different topology (a
+    real bridge network, standard Ethernet MTU), extending rather than
+    just repeating that finding — though still not evidence it holds on
+    every possible production network path, only the two tested so far.
+    Either way, a rule keyed on auth_success would silently miss exactly
+    the failed attempts a brute-force detector most needs.
+    Selects on `client|startswith: 'SSH-'` instead — live-confirmed present
+    on 100% of real ssh.log records in the same capture (the RFC 4253
+    version-exchange banner Zeek only logs a row for once it has actually
+    parsed a genuine SSH protocol handshake), so this is effectively "count
+    every real SSH session" without depending on any auth-outcome field.
+    KNOWN LIMITATION (security-auditor finding): SSH::Info$client is
+    &optional in Zeek's own schema - a session where the analyzer attaches
+    but never observes the client's version-exchange banner (mid-stream
+    capture start, asymmetric visibility, packet loss on a lossy vantage
+    like the bat0 mesh capture) still writes an ssh.log row, with `client`
+    absent - silently dropped from this rule's count on exactly the kind of
+    degraded vantage where undercounting matters most. The live-verification
+    evidence above (100% of records had `client`) is from one clean
+    replayed capture, which by construction can't exhibit this failure
+    mode; event.dataset:zeek.ssh alone (no client clause at all) would
+    catch every session including these, at the cost of the compiled query
+    no longer having a real field-condition Sigma requires. Kept as-is
+    (client|startswith, not a bare dataset match) since Sigma needs a
+    selector and the gap is real but narrow, not a reason to weaken the
+    rule further.
+    version|gte was considered and rejected, though for a more precise
+    reason than "Zeek fields fall to strings_as_keyword": `version` has NO
+    explicit template property at all (unlike client/server, which are also
+    unmapped but never collide with anything else in this index) - its
+    dynamic type is decided by whichever stream's document happens to
+    create the field first in each new backing index, exactly the same
+    "first document decides the type" trap #275/#337 already document for
+    other unmapped fields in this corpus, and exactly why zeek.software
+    (configs/logstash.conf's WS2.4 fix) and zeek.ssl both actively remove
+    or rename their own `version` field rather than leave it unmapped.
+    A numeric range modifier against a field whose real ES type is
+    unpredictable is the risk, not a guaranteed keyword mapping —
+    client|startswith avoids the whole class by staying on a field with no
+    such ambiguity.
+    Same session-cadence signal tests/anomaly_simulation/verify_
+    detections.py's own fast local check already uses (5+ zeek.ssh sessions
+    from one source), and the exact same threshold sim_brute_ssh.sh's 5
+    simulated failed attempts already exercises — no new emulation script
+    needed.
+    KNOWN GAP this rule does NOT close (found during this same review,
+    explicitly out of scope for #332's own suggested fix): a per-source.ip
+    threshold, at any value, cannot catch a genuinely DISTRIBUTED attack —
+    many different source IPs each individually staying under the
+    threshold while collectively hammering one target. #332's own issue
+    text names this second scenario explicitly ("a distributed set of
+    sources each staying under 30") but its suggested fix only addresses
+    the single-source low-and-slow case; a cardinality-based rule bucketing
+    by destination with a distinct-source-count threshold (the same design
+    already used by rules/elastic/threshold/auth-win-bruteforce-source-
+    spray.ndjson for the Windows password-spray case) would be needed for
+    that gap and is a distinct, separate piece of work.
+    Deliberately status: experimental so deploy_detections.sh does not also
+    deploy this as a Detection Engine query rule (issue #192 pattern) —
+    the paired threshold rule is the deployed enforcement.
+references:
+    - https://attack.mitre.org/techniques/T1110/
+    - https://docs.zeek.org/en/master/scripts/policy/protocols/ssh/detect-bruteforcing.zeek.html
+author: Suburban-SOC
+date: 2026-08-17
+tags:
+    - attack.credential_access
+    - attack.t1110
+logsource:
+    product: zeek
+    service: ssh
+detection:
+    selection:
+        client|startswith: 'SSH-'
+    condition: selection
+falsepositives:
+    - An admin or automation tool (Ansible, deployment scripts, health
+      checks) establishing several sequential SSH connections to the same
+      host within a short window — legitimate session-reconnect patterns
+      can resemble low-volume brute-force cadence at this threshold.
+    - A jump host or bastion legitimately proxying multiple real users'
+      sessions from one apparent source IP.
+    - The operator's own workstation during interactive mesh/OpenWrt admin
+      work (this project's own established pattern of hopping between
+      several node SSH sessions in quick succession) — the single most
+      likely real-environment source of this rule's first firing.
+level: medium

@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 8/15 closed, resumed 2026-08-17 (project-board backfill retroactively assigned 7 more open follow-ups back to this milestone) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 9/15 closed, resumed 2026-08-17 (project-board backfill retroactively assigned 7 more open follow-ups back to this milestone) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -930,6 +930,57 @@ are real, working smallest/most-contained first: #386 → #387 → #382 →
   (both the `re` modifier and all four wildcard-path call sites).
   **M17 now 8/15 closed** (7 open remaining: #283/#333 not actionable, 5
   real follow-ups left) — #382 next (SMTP `mime_type` live verification).
+- [x] **#382 (P3, detection) — COMPLETE, MERGED** — #365's `mime_type`
+  live-verification for `net_zeek_executable_download.yml`/`net_zeek_smtp_
+  attachment_executable.yml` served every payload over HTTP; this rule's
+  own SMTP-specific behavior (source tagging, whether a declared
+  Content-Type header can influence detection when content-magic is
+  inconclusive) had never been independently confirmed.
+  [PR #412](https://github.com/voltron-1/Suburban_SOC/pull/412) merged
+  2026-08-17 (squash), auto-closing #382 — no GitHub-side human review,
+  same review-bypass basis as every prior session fix (13/13 CI green,
+  parallel security-auditor + code-reviewer sub-agent review).
+  Built a throwaway raw-socket SMTP client/server, captured a real pcap
+  (first attempt split tcpdump into a separate `--net=host` container and
+  captured 0 packets — this sandbox's shell network namespace is isolated
+  from a separate container's namespace; fixed by running capture+client
+  +server all inside one container), replayed through the same pinned
+  `zeek/zeek:8.2.1` image #365 used. 4 scenarios against a real Windows PE
+  binary (notepad.exe, pulled from this WSL host's own mounted
+  `C:\Windows`): full binary → `source:SMTP`, `mime_type:application/x-
+  dosexec` (identical to #365's HTTP result); 16-byte truncation → still
+  recognized (didn't reach the inconclusive case intended); 200 zero-bytes
+  → `mime_type` field entirely absent, not a declared-header fallback;
+  quoted-printable encoding → correctly decoded, still typed correctly
+  (not a bypass for this one alternate encoding). Confirms
+  `application/x-msdownload` stays correctly excluded from this rule's
+  list — no detection-logic changes needed.
+  Two review rounds found the first draft overclaimed and underdisclosed:
+  code-reviewer found "no declared-header fallback path exists" needed
+  scoping to the one all-zero-byte test actually run, and the failed
+  16-byte-truncation attempt needed disclosing (silently dropped in the
+  first draft) — both fixed. security-auditor (working this time — no
+  infra 500s) found the absent-`mime_type` result was framed only as
+  reassurance when it's itself a real, disclosed-nowhere evasion primitive
+  (archive/packed/script-interpreter payload classes, already tracked as
+  #384) — added a `fixtures.json` true_negative pinning the observed
+  shape and disclosed the gap explicitly; flagged only base64
+  Content-Transfer-Encoding was tested, prompting a 4th live scenario
+  (quoted-printable) with the existing harness before finalizing — came
+  back clean, a genuinely useful additional data point, not a box-check.
+  Full methodology, SHA-256 hashes, and raw `files.log` JSON records
+  preserved in `findings/20260817-382-smtp-mime-verification.md` (no raw
+  pcap committed, matching `evidence/README.md`'s hash-only convention).
+  Filed [#410](https://github.com/voltron-1/Suburban_SOC/issues/410) (the
+  STARTTLS-plaintext-only scope caveat is invisible in every downstream
+  rendering — generated docs, Kibana — move it into the rule title) and
+  [#411](https://github.com/voltron-1/Suburban_SOC/issues/411) (no
+  permanent CI regression owner for Zeek's own MIME-detection behavior,
+  unlike this repo's `test_live_fire.py`/`test_field_truncation.py`
+  precedent for this class of claim) as follow-ups, both deliberately out
+  of scope. **M17 now 9/15 closed** (6 open remaining: #283/#333 not
+  actionable, 4 real follow-ups left) — #383 next (false EXPLOITATION
+  emulation pairing).
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>

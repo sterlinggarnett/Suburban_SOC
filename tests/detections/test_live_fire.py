@@ -428,6 +428,49 @@ class NetworkLiveFireTests(LiveFireTestCase):
                       "indexed — #292's ignore_above:8191 fix is not actually applied "
                       "against a real index")
 
+    def test_dns_answers_over_new_8191_ceiling_is_dropped(self):
+        # #352 (security-auditor follow-up): mirror-image of the test above,
+        # for the CURRENT ceiling — proves the premise #352's Logstash
+        # visibility tag (pipeline.oversized_dns_answer) exists to surface:
+        # a dns.answers value over 8191 chars is silently unindexed by the
+        # real compiled query, exactly like the pre-#292 1024-char case,
+        # just at a higher bar. 9000 chars is comfortably over 8191.
+        #
+        # HONEST DISCLOSURE (tester-debugger, #352 review, live-verified
+        # against the real pinned zeek/zeek:8.2.1 image via a hand-crafted
+        # 40-chunk/10000-byte TXT resource record): Zeek's own DNS analyzer
+        # independently truncates a TXT record's joined answers[] string at
+        # ~4096 characters — well under 8191 — with NO truncation marker
+        # anywhere in dns.log, JSON or TSV. That means real TXT-sourced
+        # dns.answers values can never actually reach 8191 chars in
+        # practice; #352's Logstash-side check is structurally unreachable
+        # for its stated primary use case, not a live gap today. This test
+        # still has real value: it proves ES's ignore_above mechanics work
+        # exactly as assumed for ANY producer of dns.answers over 8191
+        # chars, which is what #352's tag is defense-in-depth against (a
+        # future non-Zeek producer, or a future Zeek version without this
+        # internal cap) — it does not claim TXT records can reach this
+        # ceiling today. Filed as #389 (Zeek's own silent, unmarked
+        # ~4096-char truncation — a more directly exploitable blind spot
+        # than the one #352 addressed, needing a Zeek-side fix).
+        rule_path = SIGMA_DIR / "net_zeek_dns_txt_answer_abuse.yml"
+        rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+        logsource = rule.get("logsource", {})
+        mapping = load_pipeline_field_mapping(logsource)
+        compiled = sigma_convert_one(rule_path)
+
+        long_answer = "aB3" * 3000  # 9000 chars, over the current 8191 ceiling
+        fixture = {"qtype_name": "TXT", "query": "1a2b3c.c2.example.com", "answers": long_answer}
+        self._index("over-8191-answer", translate_fixture(fixture, mapping, logsource))
+        self._refresh()
+
+        matched = self._matched_ids(compiled["query"])
+        self.assertNotIn("over-8191-answer", matched,
+                          "a dns.answers value over the current ignore_above:8191 ceiling "
+                          "WAS indexed — either the template ceiling regressed, or ES's "
+                          "ignore_above behavior no longer matches what #352's visibility "
+                          "tag assumes")
+
 
 class FieldCaseNormalizationLiveFireTests(LiveFireTestCase):
     """#290: dns.question.name/url.path/tls.validation_status/zeek.http.host

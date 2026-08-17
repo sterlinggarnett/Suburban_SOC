@@ -37,6 +37,12 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
                                                   multi-byte content had to be defensively
                                                   clamped to avoid a Lucene immense-term
                                                   whole-document rejection
+  Oversized DNS answer count       measured    — pipeline.oversized_dns_answer over the
+                                                  window (#352), no target — a nonzero count
+                                                  means a dns.answers value over 8191 chars
+                                                  was silently dropped from the index,
+                                                  possibly evading net_zeek_dns_txt_
+                                                  answer_abuse.yml's length-heuristic rule
   Capture-loss max %               <= 5   %    — max Zeek capture_loss.log percent_lost
                                                   over its own SLO_CAPTURE_LOSS_WINDOW (#288,
                                                   default now-1h — NOT the shared WINDOW
@@ -161,7 +167,8 @@ BREACH_IF_NA = {"ingest_lag_seconds"}
 # rather than just silencing it). Inventing an uncalibrated number here would be
 # worse than no threshold at all. Still participates in the errors/exit-3 path
 # below like every other metric — an unmeasurable value is never silently benign.
-NO_TARGET = {"raw_alert_volume", "field_truncation_count", "field_byte_clamp_count"}
+NO_TARGET = {"raw_alert_volume", "field_truncation_count", "field_byte_clamp_count",
+             "oversized_dns_answer_count"}
 
 
 # FAIL CLOSED (audit P1-2): verify TLS against the stack CA instead of verify=False.
@@ -819,6 +826,61 @@ def metric_field_byte_clamp_count():
                   {"bool": {"filter": [win, {"term": {"pipeline.byte_clamped": "true"}}]}})
 
 
+def metric_oversized_dns_answer_count():
+    """Count of pipeline.oversized_dns_answer:"true" docs in the window (#352).
+
+    dns.answers (Zeek's TXT-record DNS answers, #292) is mapped
+    ignore_above:8191 — unlike dns.question.name (protocol-capped at 253
+    bytes, structurally unable to reach even the old 1024 default), a Zeek
+    dns.log answers value has no such bound short of DNS's 65535-byte
+    RDLENGTH, so a value over 8191 chars is silently dropped from the index
+    with no error and (before #352) no visibility either.
+    configs/logstash.conf's ruby filter tags
+    pipeline.oversized_dns_answer="true" when it detects this (scalar or
+    array [dns][answers], either shape); this metric turns that tag into a
+    measured rate, matching field_truncation_count/field_byte_clamp_count's
+    own precedent (#252/#263) rather than leaving the tag write-only
+    (security-auditor follow-up to #352's first draft — a tag nothing
+    queries doesn't actually deliver the "visibility" #352 asked for).
+
+    A nonzero count here has a specific analyst meaning worth acting on
+    directly, unlike the two precedent metrics above: it means
+    net_zeek_dns_txt_answer_abuse.yml's length-heuristic rule may have been
+    evaded by an answer too long for its compiled query to ever match —
+    real TXT-based C2 tools chunk payload into ~250-byte answers (UDP
+    response-size limits), so an oversized answer is itself an anomaly, not
+    organic traffic shaped this way (see that rule's own description).
+
+    HONEST DISCLOSURE (tester-debugger, #352 review): a >8191-char
+    dns.answers value has been live-verified as structurally unreachable
+    for real TXT-record traffic today — Zeek's own DNS analyzer
+    independently truncates a TXT record's joined answers[] string at
+    ~4096 chars, with no marker, before Elasticsearch's ignore_above ever
+    gets a chance to matter (filed as #389, needs a Zeek-side fix, out of
+    scope for this pipeline). This metric should read 0 in production
+    right now; that is expected, not evidence the tag/metric are dead —
+    they remain defense-in-depth against a non-Zeek dns.answers producer —
+    NOT hypothetical, the unauthenticated :5514 HTTP input this pipeline
+    exposes on soc-mesh-net can write an arbitrary [dns][answers] shape
+    today (configs/logstash.conf's own Category 0 comment) — as well as a
+    future Zeek version without this cap, or #389 being fixed in a way
+    that raises real answer lengths past 8191. See the ruby
+    filter's own comment in configs/logstash.conf (right above the
+    `if [dns][answers]` block) for the paired half of this disclosure -
+    the two are meant to be read together, not each a complete account
+    on its own.
+
+    NO_TARGET (see below), matching field_truncation_count/
+    field_byte_clamp_count's own precedent: no real DNS telemetry volume
+    has been measured through this pipeline in this environment yet, so
+    there is no data to set a breach threshold against rather than a
+    guessed one.
+    """
+    win = {"range": {"@timestamp": {"gte": WINDOW}}}
+    return _count("logstash-security-*",
+                  {"bool": {"filter": [win, {"term": {"pipeline.oversized_dns_answer": "true"}}]}})
+
+
 def metric_capture_loss_percent():
     """Max Zeek capture_loss.log percent_lost in the window (#288).
 
@@ -1138,6 +1200,7 @@ def main():
         "raw_alert_volume": metric_raw_alert_volume,
         "field_truncation_count": metric_field_truncation_count,
         "field_byte_clamp_count": metric_field_byte_clamp_count,
+        "oversized_dns_answer_count": metric_oversized_dns_answer_count,
         "capture_loss_max_pct": metric_capture_loss_percent,
         "intel_feed_stale_heartbeats": metric_intel_feed_stale_heartbeats,
         "intel_indicator_count_drop_pct": metric_intel_indicator_count_drop_pct,

@@ -215,6 +215,30 @@ class DetectionAsCodeTests(unittest.TestCase):
         self.assertRegex(PIPELINE, r"Image:\s*process\.executable")
         self.assertRegex(PIPELINE, r"CommandLine:\s*process\.args")
 
+    def test_sysmon_hashes_extracts_sha256_not_the_raw_prefixed_string(self):
+        # #339: the Hashes rename (#328) only fixed the NESTING - without
+        # this grok, file.hash.sha256 holds Sysmon's raw algorithm-prefixed
+        # string ("SHA256=<hex>", or a composite "SHA1=...,MD5=...,
+        # SHA256=...,IMPHASH=..." string), which no IOC hunt on a bare
+        # hash value could ever match. A custom tag_on_failure (not the
+        # default _grokparsefailure) keeps a Hashes value with no SHA256
+        # component - a normal condition, not a pipeline error - out of
+        # the #169/NIST SC-24 parse-error-rate SLO.
+        block_start = CONF.index('"[winlog][event_data][Hashes]"            => "[file][hash][sha256]"')
+        following = CONF[block_start:block_start + 3000]
+        self.assertIn('match => { "[file][hash][sha256]" => "SHA256=', following,
+                       "Sysmon Hashes rename has no SHA256-extraction grok following it")
+        self.assertIn('overwrite => ["[file][hash][sha256]"]', following,
+                       "grok must overwrite the raw prefixed string with the extracted hash")
+        self.assertIn('tag_on_failure => ["_sysmon_hash_no_sha256"]', following,
+                       "grok must use a custom failure tag, not the default "
+                       "_grokparsefailure (would pollute the parse-error-rate SLO "
+                       "with a normal, expected condition)")
+        self.assertIn('remove_field => ["[file][hash][sha256]"]', following,
+                       "a Hashes value with no SHA256 component must clear the "
+                       "field, not leave the raw prefixed string mislabeled as "
+                       "a parsed hash")
+
     def test_network_detections_still_mapped(self):
         for tech in NETWORK_TECHNIQUES:
             self.assertIn(tech, self.mapped_ids,

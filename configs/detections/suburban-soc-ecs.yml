@@ -32,6 +32,14 @@ transformations:
       User: user.name
       TargetUserName: user.target.name
       TargetFilename: file.path
+      # #339: this is a field-NAME mapping only - pySigma does not touch the
+      # matched VALUE. logstash.conf extracts just the bare 64-hex SHA256
+      # value from Sysmon's raw "SHA256=<hex>" (or composite "SHA1=...,
+      # MD5=...,SHA256=...,IMPHASH=...") Hashes string; a Sigma rule must
+      # match the bare hash directly (Hashes: '<sha256>'), NOT the SigmaHQ
+      # convention of Hashes|contains: 'SHA256=<hex>' - that idiom assumes
+      # the raw prefixed string is still present and would compile to a
+      # permanently non-matching query against this pipeline's real data.
       Hashes: file.hash.sha256
     rule_conditions:
       - type: logsource

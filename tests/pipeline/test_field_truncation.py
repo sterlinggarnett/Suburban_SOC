@@ -60,10 +60,13 @@ import re
 import unittest
 from pathlib import Path
 
+import yaml
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 TEMPLATE_PATH = ROOT / "configs" / "elasticsearch" / "logstash-security-template.json"
 LOGSTASH_CONF_PATH = ROOT / "configs" / "logstash.conf"
+PIPELINE_ECS_PATH = ROOT / "configs" / "detections" / "suburban-soc-ecs.yml"
 
 CEILING = 32766
 BYTE_CEILING = 32000
@@ -1061,6 +1064,173 @@ class CeilingConsistencyTests(unittest.TestCase):
             f"tag at the wrong threshold. logstash: {logstash_lower_tier_pairs}, "
             f"python: {python_lower_tier_pairs}"
         )
+
+    def _logstash_long_fields_labels_all(self):
+        # code-reviewer follow-up: factored out of
+        # test_every_ceiling_field_has_a_byte_clamp_entry (which still
+        # computes this inline, left untouched to avoid touching working,
+        # heavily-reviewed code) so the new #367 test below can reuse it
+        # via the same "one true extraction" this class's other _logstash_*
+        # helpers already establish as the convention, rather than a third
+        # copy of the same two regexes silently drifting from the other two.
+        text = LOGSTASH_CONF_PATH.read_text(encoding="utf-8")
+        block = re.search(r"long_fields\s*=\s*\{(.*?)\n      \}", text, re.DOTALL)
+        self.assertIsNotNone(block, "could not find 'long_fields = {...}' in configs/logstash.conf")
+        return set(re.findall(r'=>\s*\[\s*"([^"]+)"', block.group(1)))
+
+    def test_every_ecs_yml_mapping_target_matching_the_command_glob_is_clamped(self):
+        # #367: narrows the class of bug test_every_ceiling_field_has_a_
+        # byte_clamp_entry's own docstring names but structurally cannot
+        # catch itself - that test only walks EXPLICIT template
+        # properties, so a field reaching Elasticsearch ONLY through the
+        # long_command_fields dynamic_template's glob match is invisible
+        # to it no matter how many such fields exist. #344 found and fixed
+        # 2 concrete instances (winlog.event_data.CommandLine, network_
+        # parsed.uri) by hand; nothing enforced that a THIRD one couldn't
+        # slip in the same way. NARROWS, not closes (security-auditor
+        # follow-up on an earlier draft's own docstring overclaim) - see
+        # the HONEST SCOPE NOTE below for exactly what remains open.
+        #
+        # Deliberately the NARROWER of #367's own two suggested fixes, not
+        # a rewrite of the ruby filter to sweep by glob at runtime (real
+        # design + performance work: a recursive walk of every event's
+        # full field tree on every single event, on a pipeline with its
+        # own ingest-lag SLO - #367's own text says this needs a benchmark
+        # against realistic event shapes/rates before committing to it,
+        # not a decision to make inside an unrelated CI-hygiene fix).
+        # Instead, derives "every field this pipeline's OWN configuration
+        # already claims to produce" from TWO sources, unioned:
+        #   (1) configs/detections/suburban-soc-ecs.yml's field_name_
+        #       mapping transformation targets (ALL of them - Zeek,
+        #       Sysmon, and the identity-mapped Windows service channels
+        #       alike, not just the families #347 built dedicated
+        #       extractors for);
+        #   (2) the REAL rename targets configs/logstash.conf/filebeat.yml
+        #       actually produce (test_field_mapping_drift.py's own
+        #       extract_pipeline_renames()/extract_sysmon_pipeline_
+        #       renames(), reused rather than reimplemented) - security-
+        #       auditor finding: (1) alone only catches drift on the
+        #       SIGMA-CLAIM side; a brand-new PIPELINE rename target
+        #       landing in glob territory with no ecs.yml entry at all
+        #       (exactly network_parsed.uri's own shape, just as a real
+        #       rename instead of a deliberate non-rename) would reach ES
+        #       unclamped while this test still passed on source (1) alone.
+        # Each candidate is checked against the SAME 6 glob patterns the
+        # real dynamic_template uses.
+        #
+        # security-auditor finding (ceiling-blindness): membership in
+        # long_fields at ANY tier is NOT sufficient - the dynamic_template
+        # always assigns ignore_above:CEILING to a glob match regardless
+        # of what a hand-maintained lower-tier entry might claim, so a
+        # future glob-matching field added at the WRONG (lower) tier would
+        # pass a bare "is it listed at all" check while remaining
+        # genuinely unclamped (field_ceiling*4 never exceeding ceiling at
+        # 8191/1024). Mirrors test_337_lower_ceiling_fields_match_reality's
+        # own established pattern: only an EXPLICIT template property may
+        # legitimately override the dynamic_template's ceiling for a
+        # glob-matching name (Elasticsearch's own explicit-beats-dynamic
+        # precedence) - anything else must be at CEILING specifically.
+        #
+        # HONEST SCOPE NOTE: even this widened union does NOT retroactively
+        # rediscover #344's own 2 instances if their long_fields entries
+        # were deleted - winlog.event_data.CommandLine is deliberately
+        # PRE-EMPTIVE hardening for an EventID (4688) not currently
+        # enabled anywhere (its own configs/logstash.conf comment says
+        # so), so nothing PRODUCES or CLAIMS it yet; network_parsed.uri is
+        # deliberately left UNRENAMED by Category 1 (a Sigma rule selects
+        # the raw Zeek field directly), so by definition no rename TARGET
+        # or ecs.yml mapping TARGET ever names it either - both are real,
+        # working protections for a field that reaches ES by NOT being
+        # renamed, the one shape neither "walk what gets renamed" nor
+        # "walk what gets mapped" can discover without also parsing the
+        # full Sigma rule corpus (the runtime-sweep alternative is the
+        # only way to close that specific shape - #367 stays open for it,
+        # this fix is a narrowing, not the "close the class permanently"
+        # its own title asks for). What this test DOES catch: any FUTURE
+        # field reaching ES through a real rename or a real ecs.yml claim
+        # whose target lands in glob-matched territory with the wrong (or
+        # no) clamp tier.
+        #
+        # ALSO NOTE (security-auditor): a byte-clamp entry for an
+        # ARRAY-valued field is a silent no-op (the ruby filter's clamp
+        # only ever operates on String values - see LONG_FIELDS/dns.
+        # answers's own established precedent for this exact trap) - if a
+        # future finding here is an ECS array field (e.g. another
+        # related.*-shaped one), verify its real type before assuming a
+        # plain long_fields entry actually protects it.
+        from test_field_mapping_drift import extract_pipeline_renames, extract_sysmon_pipeline_renames
+
+        pipeline = yaml.safe_load(PIPELINE_ECS_PATH.read_text(encoding="utf-8"))
+        candidate_targets = set()
+        for t in pipeline.get("transformations", []):
+            if t.get("type") != "field_name_mapping":
+                continue
+            candidate_targets.update(t.get("mapping", {}).values())
+        self.assertGreaterEqual(len(candidate_targets), 10,
+                                "expected to find multiple field_name_mapping targets in "
+                                "configs/detections/suburban-soc-ecs.yml")
+
+        zeek_renames = extract_pipeline_renames()
+        for scope_renames in zeek_renames.values():
+            candidate_targets.update(scope_renames.values())
+        sysmon_renames = extract_sysmon_pipeline_renames()
+        candidate_targets.update(sysmon_renames["*"].values())
+
+        template = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+        dynamic_templates = template["template"]["mappings"]["dynamic_templates"]
+        long_command_fields_globs = next(
+            dt["long_command_fields"]["path_match"]
+            for dt in dynamic_templates if "long_command_fields" in dt
+        )
+
+        logstash_labels_all = self._logstash_long_fields_labels_all()
+        logstash_labels_at_ceiling = {
+            label for label, ceiling_str in
+            re.findall(r'=>\s*\[\s*"([^"]+)"\s*,\s*(ceiling|\d+)\s*\]',
+                       LOGSTASH_CONF_PATH.read_text(encoding="utf-8"))
+            if ceiling_str == "ceiling"
+        }
+
+        missing = []
+        for target in sorted(candidate_targets):
+            # fnmatchcase, not fnmatch: Elasticsearch's path_match is
+            # case-sensitive; plain fnmatch applies the host OS's
+            # normcase, silently diverging from real ES behavior on a
+            # non-POSIX CI runner (same reasoning test_337_lower_ceiling_
+            # fields_match_reality already documents for this exact glob
+            # check above).
+            if not any(fnmatch.fnmatchcase(target, glob) for glob in long_command_fields_globs):
+                continue
+            explicit = self._explicit_ignore_above(target)
+            if explicit is not self._NO_SUCH_PROPERTY:
+                # An explicit template property legitimately overrides the
+                # dynamic_template's ceiling for this name - being listed
+                # at ANY tier (matching that explicit value) is correct,
+                # same as test_337_lower_ceiling_fields_match_reality's
+                # own precedent. Presence alone is checked here; the
+                # explicit-value-matches-LONG_FIELDS-tier cross-check
+                # already exists in test_337_lower_ceiling_fields_match_
+                # reality and test_template_ignore_above_fields_match_
+                # ceiling for the fields those tests know about by name.
+                if target not in logstash_labels_all and target not in LONG_FIELDS:
+                    missing.append(target)
+            elif target not in logstash_labels_at_ceiling and target not in {
+                    label for label, (_parts, c) in LONG_FIELDS.items() if c == CEILING}:
+                # NOT an explicit property - falls through to the dynamic_
+                # template, which ALWAYS assigns ignore_above:CEILING for a
+                # glob match. Must be clamped at CEILING specifically, not
+                # just listed at some tier.
+                missing.append(target)
+        self.assertEqual([], missing,
+                         f"field(s) {missing} are produced by this pipeline (a real rename target "
+                         f"or a suburban-soc-ecs.yml field_name_mapping claim) AND match a "
+                         f"long_command_fields glob ({long_command_fields_globs}) - they reach "
+                         f"Elasticsearch at ignore_above:{CEILING} with no byte-clamp entry at the "
+                         f"CORRECT tier, the same whole-document Lucene immense-term rejection risk "
+                         f"#344 fixed for winlog.event_data.CommandLine/network_parsed.uri. Add an "
+                         f"entry at ceiling to configs/logstash.conf's long_fields hash AND this "
+                         f"module's LONG_FIELDS (verify the field is a String, not an ECS array, "
+                         f"first - see this test's own ARRAY note)")
 
     def test_lower_tier_byte_clamp_guard_formula_matches_python_mirror(self):
         # #337 security-auditor follow-up: the byte-clamp gate

@@ -67,6 +67,12 @@ LOGSTASH_CONF_PATH = ROOT / "configs" / "logstash.conf"
 
 CEILING = 32766
 BYTE_CEILING = 32000
+# #352: dns.answers's own ignore_above (matches the template's dns.answers
+# property, #292) — deliberately NOT one of the LONG_FIELDS entries below,
+# since dns.answers is an ARRAY and that hash's byte-clamp mechanism only
+# ever operates on String values (see the module docstring's #337 note on
+# why an array field there would silently no-op).
+DNS_ANSWERS_CEILING = 8191
 # #337: values are (bracket_path_parts, field_ceiling) — byte-clamp only
 # ever applies when field_ceiling * 4 exceeds CEILING (32766, Lucene's
 # byte hard limit); 8191/1024 are structurally safe from the Lucene
@@ -99,6 +105,18 @@ def _nested_get(event: dict, path_parts):
             return None
         cur = cur.get(part)
     return cur
+
+
+def _flatten(value: list) -> list:
+    """Mirrors Ruby's Array#flatten (all levels, not just one) - used by
+    tag_oversized_dns_answer for the #352 nested-array fix."""
+    out = []
+    for item in value:
+        if isinstance(item, list):
+            out.extend(_flatten(item))
+        else:
+            out.append(item)
+    return out
 
 
 def _clamp_bytes(val: str, byte_ceiling: int) -> str:
@@ -142,6 +160,49 @@ def tag_truncation(event: dict):
         elif field_ceiling * 4 > CEILING and len(val.encode("utf-8")) > BYTE_CEILING:
             byte_hit.append(label)
     return char_hit, byte_hit
+
+
+def tag_oversized_dns_answer(event: dict) -> bool:
+    """Mirrors configs/logstash.conf's #352 ruby filter block. dns.answers
+    is a flat ARRAY in production (unlike every LONG_FIELDS entry above,
+    which are all scalar strings), so this is deliberately a separate
+    mechanism, not a LONG_FIELDS entry — same UTF-16 code-unit counting as
+    tag_truncation (see _utf16_length), same DNS_ANSWERS_CEILING as the
+    real template's dns.answers ignore_above (CeilingConsistencyTests pins
+    both). Pure visibility, no clamping: unlike tag_truncation/
+    ByteClampTaggingTests, this never mutates the value — #352's own issue
+    text is explicit that raising ignore_above or clamping dns.answers
+    isn't safe without first making the byte-clamp mechanism array-aware,
+    which is out of scope here.
+    security-auditor round 2 MEDIUM: a SCALAR dns.answers (this corpus's
+    own established fixture convention — #292's fixtures.json/test_live_
+    fire.py both model `answers` as scalar, and Elasticsearch indexes a
+    1-element array and a bare scalar IDENTICALLY) is checked the same as
+    an array element, not skipped — the first draft's `isinstance(answers,
+    list)` guard silently skipped exactly the shape #352's own
+    attacker-controllable ingest path (an unauthenticated :5514 POST)
+    actually produces."""
+    # code-reviewer follow-up: reuse the file's existing nested-traversal
+    # primitive instead of re-implementing it here — _nested_get already
+    # handles a "dns" key that exists but isn't a dict (returns None,
+    # confirmed live against the real pinned Logstash image to match
+    # Ruby's own event.get("[dns][answers]") behavior for the same
+    # malformed shape).
+    # security-auditor round 3: _flatten (not a bare isinstance ternary) -
+    # a NESTED array (e.g. [["<9000 chars>"]]) is silently unindexed past
+    # ignore_above:8191 exactly like a flat array element (live-confirmed
+    # against the real running Elasticsearch: it flattens arrays-of-arrays
+    # for a keyword-mapped field), but would otherwise never satisfy
+    # isinstance(a, str) below and skip the check entirely - same
+    # unauthenticated :5514 ingest path as the scalar case above, one
+    # extra bracket away from the flat shape that IS checked. Mirrors
+    # configs/logstash.conf's ruby elements = answers.is_a?(Array) ?
+    # answers.flatten : [answers].
+    answers = _nested_get(event, ["dns", "answers"])
+    if answers is None:
+        return False
+    elements = _flatten(answers) if isinstance(answers, list) else [answers]
+    return any(isinstance(a, str) and _utf16_length(a) > DNS_ANSWERS_CEILING for a in elements)
 
 
 class FieldTruncationTaggingTests(unittest.TestCase):
@@ -472,6 +533,125 @@ class ByteClampTaggingTests(unittest.TestCase):
         clamped.encode("utf-8").decode("utf-8")
 
 
+class OversizedDnsAnswerTaggingTests(unittest.TestCase):
+    """#352 (security-auditor follow-up to #292/#351): dns.answers is a
+    flat ARRAY, structurally excluded from LONG_FIELDS' string-only
+    byte-clamp mechanism (see that dict's own #337 comment on the
+    identical related.user trap). An individual answer over
+    DNS_ANSWERS_CEILING is silently unindexed by ES's ignore_above with no
+    error and no pipeline.truncated tag either way — this filter adds
+    visibility only (a boolean tag), deliberately no clamp/raise. Live-
+    verified (not just unit-tested) against the real pinned
+    docker.elastic.co/logstash/logstash:9.3.2 image: the exact ruby block
+    below, extracted verbatim from configs/logstash.conf and run through a
+    throwaway stdin/stdout pipeline, produced the identical
+    tag/no-tag result for every case in this class, including the 8191
+    vs. 8192 boundary and the second-element-only case.
+    HONEST DISCLOSURE (tester-debugger, #352 review): the >8191 threshold
+    these tests pin is live-verified as structurally unreachable for real
+    TXT-record traffic today — Zeek's own DNS analyzer independently
+    truncates a TXT record's joined answers[] string at ~4096 chars, with
+    no marker, before Elasticsearch's ignore_above ever gets a chance to
+    matter (filed as #389, needs a Zeek-side fix). These tests still
+    prove the FILTER LOGIC is correct for any value that does reach
+    8191+ chars (defense-in-depth against a future non-Zeek producer, a
+    future Zeek version without this cap, or #389 being fixed) - they do
+    not claim TXT records reach this ceiling in production right now."""
+
+    def test_short_array_not_tagged(self):
+        event = {"dns": {"answers": ["v=spf1 include:_spf.example.com ~all", "short"]}}
+        self.assertFalse(tag_oversized_dns_answer(event))
+
+    def test_exactly_at_ceiling_not_tagged(self):
+        event = {"dns": {"answers": ["A" * DNS_ANSWERS_CEILING]}}
+        self.assertFalse(tag_oversized_dns_answer(event))
+
+    def test_one_over_ceiling_tagged(self):
+        event = {"dns": {"answers": ["A" * (DNS_ANSWERS_CEILING + 1)]}}
+        self.assertTrue(tag_oversized_dns_answer(event))
+
+    def test_second_element_over_ceiling_still_tagged(self):
+        # Per-element check, not just the first array entry.
+        event = {"dns": {"answers": ["short-one", "B" * (DNS_ANSWERS_CEILING + 500)]}}
+        self.assertTrue(tag_oversized_dns_answer(event))
+
+    def test_nested_array_oversized_element_tagged(self):
+        # security-auditor round 3 MEDIUM: a NESTED array (one extra
+        # bracket beyond the flat shape) is silently unindexed by ES's
+        # ignore_above exactly like a flat array element - live-confirmed
+        # against a real running Elasticsearch (indexed [["<9000 chars>"]]
+        # into a real keyword-mapped dns.answers field: 0 hits on an exact
+        # term query for the value; a short nested value DID match,
+        # proving ES flattens arrays-of-arrays rather than rejecting or
+        # ignoring them outright). Reachable via the same unauthenticated
+        # :5514 POST already documented for the scalar case.
+        event = {"dns": {"answers": [["A" * (DNS_ANSWERS_CEILING + 1)]]}}
+        self.assertTrue(tag_oversized_dns_answer(event))
+
+    def test_nested_array_short_element_not_tagged(self):
+        event = {"dns": {"answers": [["short-nested-value"]]}}
+        self.assertFalse(tag_oversized_dns_answer(event))
+
+    def test_no_dns_field_no_crash_no_tag(self):
+        self.assertFalse(tag_oversized_dns_answer({"query": "example.com"}))
+
+    def test_no_answers_field_no_crash_no_tag(self):
+        self.assertFalse(tag_oversized_dns_answer({"dns": {}}))
+
+    def test_dns_field_not_a_dict_no_crash_no_tag(self):
+        # code-reviewer follow-up: malformed upstream data where "dns"
+        # itself isn't an object (a scalar or an array, not the expected
+        # {"answers": [...]} shape) - live-verified against the real
+        # pinned Logstash image that Ruby's event.get("[dns][answers]")
+        # returns nil for all of these shapes, matching this mirror's
+        # guarded None/False return on both sides, no crash either way.
+        for malformed_dns in ("not-a-dict", 12345, ["a", "b"]):
+            with self.subTest(dns=malformed_dns):
+                self.assertFalse(tag_oversized_dns_answer({"dns": malformed_dns}))
+
+    def test_oversized_scalar_answers_tagged(self):
+        # security-auditor round 2 MEDIUM: an earlier draft of this test
+        # asserted the OPPOSITE of what's correct here, with reasoning
+        # that doesn't hold up - "a lone scalar has always been correctly
+        # handled by ES's own ignore_above check" describes exactly the
+        # SILENT, UNTAGGED drop this whole filter exists to surface, not
+        # a reason to skip it. #292's own established fixture convention
+        # models `answers` as a scalar (fixtures.json, test_live_fire.py),
+        # and Elasticsearch indexes a 1-element array and a bare scalar
+        # IDENTICALLY (test_live_fire.py's own note) - so an oversized
+        # scalar is silently unindexed exactly the same way an oversized
+        # array element is, and must get the same tag.
+        event = {"dns": {"answers": "C" * (DNS_ANSWERS_CEILING + 500)}}
+        self.assertTrue(tag_oversized_dns_answer(event))
+
+    def test_short_scalar_answers_not_tagged(self):
+        event = {"dns": {"answers": "v=spf1 include:_spf.example.com ~all"}}
+        self.assertFalse(tag_oversized_dns_answer(event))
+
+    def test_non_string_scalar_answers_no_crash_no_tag(self):
+        # Malformed/mistyped upstream data (e.g. a numeric dns.answers)
+        # must not crash the filter - matches FieldTruncationTaggingTests.
+        # test_non_string_field_ignored's established convention.
+        event = {"dns": {"answers": 12345}}
+        self.assertFalse(tag_oversized_dns_answer(event))
+
+    def test_non_string_element_ignored_not_crash(self):
+        event = {"dns": {"answers": [12345, "A" * (DNS_ANSWERS_CEILING + 1)]}}
+        self.assertTrue(tag_oversized_dns_answer(event))
+
+    def test_astral_char_ceiling_boundary_utf16_units_not_code_points(self):
+        # Same astral-plane UTF-16-vs-code-point divergence as
+        # ByteClampTaggingTests.test_astral_char_ceiling_boundary_utf16_
+        # units_not_code_points, at the identical 8191 ceiling: 4095 emoji
+        # = 8190 UTF-16 units (under, not tagged), 4096 emoji = 8192 units
+        # (over, tagged). A code-point-based check would see 4095/4096
+        # code points, both comfortably under 8191, and never tag either.
+        under = {"dns": {"answers": ["\U0001F600" * 4095]}}
+        over = {"dns": {"answers": ["\U0001F600" * 4096]}}
+        self.assertFalse(tag_oversized_dns_answer(under))
+        self.assertTrue(tag_oversized_dns_answer(over))
+
+
 class CeilingConsistencyTests(unittest.TestCase):
     """#263 security-auditor MEDIUM: the "keep `ceiling` in lockstep with the
     template's ignore_above" invariant stated in configs/logstash.conf's
@@ -493,6 +673,105 @@ class CeilingConsistencyTests(unittest.TestCase):
         match = re.search(r"^\s*byte_ceiling\s*=\s*(\d+)\s*$", text, re.MULTILINE)
         self.assertIsNotNone(match, "could not find 'byte_ceiling = <N>' in configs/logstash.conf")
         return int(match.group(1))
+
+    def _logstash_dns_answers_block_text(self):
+        # #352: anchor every check below to text AFTER this marker, not
+        # the whole file - the original long_fields block above also
+        # contains a UTF-16LE...bytesize / 2 expression (on its own line,
+        # feeding a separate `if utf16_length > field_ceiling` check), and
+        # this file is explicitly one of the places that comparison could
+        # plausibly be reshaped in a future edit. Scoping prevents these
+        # tests from ever validating/finding the WRONG block instead of
+        # failing loudly if the #352 block's shape changes.
+        # security-auditor round 3 MEDIUM: the marker previously started at
+        # `answers = event.get(...)`, INSIDE the ruby block - the `if
+        # [dns][answers] {` Logstash-level guard and the `elements = ...`
+        # scalar/array/nested-array normalization line both sit ABOVE that
+        # point, so neither was ever in scope for any assertion below (a
+        # typo'd or deleted guard, or a reverted .flatten, would have
+        # stayed CI-green). Starting at the guard line covers both.
+        text = LOGSTASH_CONF_PATH.read_text(encoding="utf-8")
+        marker = "if [dns][answers] {"
+        marker_pos = text.find(marker)
+        self.assertGreater(
+            marker_pos, -1,
+            f"could not find {marker!r} in configs/logstash.conf - has the "
+            f"#352 oversized-dns-answer block been renamed or removed?")
+        return text[marker_pos:]
+
+    def _logstash_dns_answers_ceiling(self):
+        # #352: the oversized-dns-answer ruby block has no named variable
+        # (unlike ceiling/byte_ceiling above) - the literal is inline,
+        # TWICE: a.bytesize > N (the cheap short-circuit, security-auditor
+        # round 2) and (a.encode("UTF-16LE").bytesize / 2) > N (the real,
+        # semantically authoritative check). Both must agree with each
+        # other AND with DNS_ANSWERS_CEILING - a drift between the two
+        # inline literals (e.g. someone "optimizing" the short-circuit
+        # threshold without updating the real check, or vice versa) would
+        # silently break the short-circuit's own correctness proof (see
+        # that comment in configs/logstash.conf), not just this test's
+        # accuracy.
+        block = self._logstash_dns_answers_block_text()
+        match = re.search(
+            r"a\.bytesize\s*>\s*(\d+)\s*&&\s*\(a\.encode\(\"UTF-16LE\"\)\.bytesize\s*/\s*2\)\s*>\s*(\d+)",
+            block)
+        self.assertIsNotNone(
+            match, "could not find the #352 oversized-dns-answer ceiling "
+            "literals (bytesize short-circuit + UTF-16LE check) in "
+            "configs/logstash.conf")
+        byte_ceiling, utf16_ceiling = int(match.group(1)), int(match.group(2))
+        self.assertEqual(
+            byte_ceiling, utf16_ceiling,
+            "the #352 bytesize short-circuit ceiling and the real UTF-16LE "
+            "ceiling have drifted apart in configs/logstash.conf - the "
+            "short-circuit's own correctness proof requires them to match")
+        return utf16_ceiling
+
+    def test_logstash_dns_answers_ceiling_matches_this_modules_constant(self):
+        # #352: keeps the hardcoded ceiling in the ruby block's inline
+        # comparison in lockstep with DNS_ANSWERS_CEILING here - same
+        # drift risk the ceiling/byte_ceiling checks above already guard
+        # against for the other two constants.
+        self.assertEqual(self._logstash_dns_answers_ceiling(), DNS_ANSWERS_CEILING)
+
+    def test_logstash_dns_answers_block_field_and_tag_names_not_typoed(self):
+        # security-auditor round 2 MEDIUM: this repo has hit the "a nested-
+        # field-path or output-name typo ships CI-green and silently dead"
+        # failure class three times before (#263's flat "process.args" vs
+        # nested [process][args], #228's dead qtype_name/rcode_name
+        # renames, #217's ImagePath) - nothing previously asserted the
+        # #352 block's actual source field path, output field name, or tag
+        # name, so a one-character typo in any of the three would pass
+        # every OversizedDnsAnswerTaggingTests test (which only exercises
+        # the Python mirror) and the ceiling tests above (which only pin
+        # the numeric literal) while the real filter silently never fires
+        # or writes the wrong field.
+        # security-auditor round 3: also pins the Logstash-level guard and
+        # the .flatten normalization (the nested-array fix) - both sat
+        # outside this test's scope before the marker was corrected above.
+        block = self._logstash_dns_answers_block_text()
+        for literal in (
+                "if [dns][answers] {",
+                'event.get("[dns][answers]")',
+                "answers.is_a?(Array) ? answers.flatten : [answers]",
+                'event.set("[pipeline][oversized_dns_answer]", "true")',
+                'event.tag("pipeline_oversized_dns_answer")'):
+            with self.subTest(literal=literal):
+                self.assertIn(
+                    literal, block,
+                    f"configs/logstash.conf's #352 block no longer contains "
+                    f"{literal!r} - renamed, typoed, or removed?")
+
+    def test_dns_answers_ceiling_matches_real_template(self):
+        # #352: DNS_ANSWERS_CEILING must track the real template's
+        # dns.answers ignore_above (#292), not a value chosen independently
+        # - a future template change that raises/lowers it (e.g. once the
+        # byte-clamp is made array-aware, per this issue's own proposed
+        # fix note) must fail this test loudly rather than leave the
+        # visibility tag silently checking the wrong boundary.
+        template = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+        props = template["template"]["mappings"]["properties"]
+        self.assertEqual(props["dns"]["properties"]["answers"]["ignore_above"], DNS_ANSWERS_CEILING)
 
     def _template_ignore_above(self):
         template = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))

@@ -23,7 +23,7 @@ matching the M12/M13/M14 pattern.
 
 | Milestone | Issues | Theme |
 |---|---|---|
-| [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | 🚧 6/8 closed, 1 deferred | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
+| [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 8 | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 4/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
@@ -219,6 +219,57 @@ unit, no unattended multi-issue runs.
   history) as new M16-adjacent follow-ups, deliberately out of scope.
   M16 down to its 2 remaining issues: #358 (next up) and #265 (still
   deferred, gated on a real endpoint this environment doesn't have).
+- [x] **#358 (P3, low) — COMPLETE, MERGED** — two related threat-intel
+  pipeline gaps: no detection if `threat-intel-indicators` empties
+  unexpectedly, and `compact_threat_intel.py`'s `_delete_by_query` client
+  timeout doesn't cancel the server-side ES task if exceeded.
+  [PR #377](https://github.com/voltron-1/Suburban_SOC/pull/377) merged
+  2026-08-17 (squash), auto-closing #358 — same review-bypass basis as
+  every prior session fix (17/17 CI green, parallel security-auditor +
+  code-reviewer sub-agent review, plus a tester-debugger live-verification
+  pass against the real stack).
+  Root-cause finding that changed Part 1's shape: `rules/elastic_watcher/
+  intel_feed_stale.json` — the pre-existing Watcher this issue's own text
+  assumed was live — has **never actually fired** on this deployment.
+  Live-confirmed: `xpack.license.self_generated.type=basic`, and every
+  Watcher API call (including a brand-new trivial watch) is rejected with
+  `security_exception: current license is non-compliant for [watcher]`
+  (403) — `deploy_dashboards.sh`'s watcher-install step has silently
+  absorbed this since WS1.3. Confirmed with the repo owner: migrated
+  detection into `slo_metrics.py`'s SLO-metric framework (same proven
+  ntfy-alerting/indexed-history pipeline as #361's `vanished_claims`)
+  instead of adding a second, equally dead Watcher. Two new metrics:
+  `intel_feed_stale_heartbeats` (reimplements the retired Watcher's exact
+  condition) and `intel_indicator_count_drop_pct` (the actual new ask —
+  real index count vs. the latest heartbeat's belief). `intel_feed_stale.json`
+  retired the way #267 retired `soar_quarantine_alert.json`.
+  security-auditor found the wipe-detection metric itself could be
+  blinded by the exact credentials named in the issue's own threat model:
+  `threat_intel_compactor` holds `delete` on `threat-intel-meta` itself
+  (wiping every heartbeat silences the heartbeat-based comparison), and
+  `intel_writer` holds `index` on the same index (forging one
+  `indicator_count:0` heartbeat does the same). Closed by adding a second,
+  independent baseline — this run's real actual count persisted onto its
+  own `soc-slo-metrics` doc, which neither credential can write — and
+  taking the worse of the two comparisons. Also found and fixed:
+  `slo_metrics_reader` had no grant at all on either `threat-intel-*`
+  index (both new metrics would 403 in production despite passing every
+  mocked test — the same #275/#361 bug shape); `threat_intel_compactor`
+  had no `cluster:monitor` privilege (the new task-polling would 403 on
+  every scheduled run); a failed async delete task could report
+  `completed:true` with neither `response` nor `error`, silently read as
+  "0 deleted, clean success"; a single transient poll failure used to
+  abort the whole wait immediately without reconciliation guidance; a
+  non-numeric heartbeat field (`intel_writer`-forgeable) would have
+  crashed the entire metrics run. tester-debugger live-verified both
+  role-grant fixes (403→200), a real async delete + task-poll round trip
+  including two independently-reproduced real task failures, and the
+  worse-of-two-baselines fix against real persisted data.
+  Filed [#376](https://github.com/voltron-1/Suburban_SOC/issues/376)
+  (`compact_agent_checkpoints.py` has the identical async-delete gap) as a
+  new follow-up, deliberately out of scope.
+  **M16 down to just #265**, still deferred (gated on a real endpoint this
+  environment doesn't have) — no actionable work remains in this milestone.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -2069,6 +2120,29 @@ are implemented in code; checked off with that one caveat noted inline.
   [#374](https://github.com/voltron-1/Suburban_SOC/issues/374)
   (`soc_admin`'s `soc-*` wildcard) as new, deliberately out-of-scope
   follow-ups. M16 down to #358 (next up) and #265 (still deferred).
+- **#358 closed (M16) — threat-intel wipe detection now live; async
+  delete_by_query no longer orphans a server-side task on client
+  timeout.** Full detail in NEXT UP's "M16 progress" above.
+  [PR #377](https://github.com/voltron-1/Suburban_SOC/pull/377) merged
+  2026-08-17 (squash), auto-closing #358. Root-cause finding: the
+  pre-existing `intel_feed_stale.json` Watcher this issue's own text
+  assumed was live has never fired here (Watcher is unlicensed, Basic
+  license) — migrated detection into `slo_metrics.py`'s SLO-metric
+  framework instead of adding a second dead Watcher, confirmed with the
+  repo owner first. security-auditor found the resulting wipe-detection
+  metric could be blinded by the exact credentials the issue names —
+  closed with a second, credential-untouchable baseline persisted to
+  `soc-slo-metrics`, taking the worse of both comparisons. Also closed:
+  two missing ES role grants (`slo_metrics_reader` on `threat-intel-*`,
+  `threat_intel_compactor`'s missing `cluster:monitor`) that would have
+  403'd the whole fix in production despite every mocked test passing —
+  same #275/#361 bug shape, live-confirmed 403→200. tester-debugger
+  reproduced two real async-delete task failures against the live
+  cluster to validate the failure-handling path, not just the happy path.
+  Filed [#376](https://github.com/voltron-1/Suburban_SOC/issues/376)
+  (`compact_agent_checkpoints.py` has the identical async-delete gap) as
+  a new follow-up. **M16 down to just #265** (still deferred) — no
+  actionable work left in this milestone.
 
 ---
 

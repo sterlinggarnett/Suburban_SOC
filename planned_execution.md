@@ -25,7 +25,7 @@ matching the M12/M13/M14 pattern.
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏸️ 6/8 closed, 2 not actionable (no actionable work left) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 6/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 7/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
@@ -38,8 +38,8 @@ this doc doesn't duplicate 37 issue bodies inline the way it narrates
 same way every prior milestone's issues were recorded below.
 
 M17 closed out 2026-08-17 (6/8, no actionable work left). **M18 is now the
-active queue** — 6/13 closed already (#344, #341, #342, #337, #370, #339),
-7 remaining: #326, #336, #338, #345, #347, #349, #367 (#326 is not
+active queue** — 7/13 closed already (#344, #341, #342, #337, #370, #339,
+#338), 6 remaining: #326, #336, #345, #347, #349, #367 (#326 is not
 actionable — needs real Windows/PowerShell telemetry this environment
 doesn't have, same shape as M17's #283/#333). Same approach as M17:
 smallest/most-contained issue first, one at a time, each through the full
@@ -214,6 +214,32 @@ multi-issue runs. M19–M22 remain open calls after M18.
   `configs/detections/suburban-soc-ecs.yml`'s mapping comment updated so a
   future Sigma rule using the standard `Hashes|contains: 'SHA256=...'`
   idiom doesn't compile to a permanently non-matching query.
+- [x] **#338 (P2, bug) — COMPLETE, MERGED** — #328 fixed `[user][name]` to
+  actually populate from Sysmon's `User` field, which reaches this
+  pipeline Windows-formatted `DOMAIN\user` (e.g. `CONTOSO\bob`), while the
+  ABAC translate lookup keys `configs/lookups/abac-attributes.csv` on
+  bare usernames — every Sysmon event got `user.abac_attribute:
+  "unassigned"` (100% miss). [PR #399](https://github.com/voltron-1/Suburban_SOC/pull/399)
+  merged 2026-08-17 (squash), auto-closing #338. M18 now 7/13 closed.
+  Adds a ruby filter, scoped to the Sysmon branch only (not the SSH
+  auth-log's own attacker-controlled `[user][name]`), stripping the
+  domain prefix via `rpartition` before the ABAC lookup. Parallel
+  security-auditor + code-reviewer review, both with real findings
+  applied before shipping: code-reviewer found the original `92.chr`
+  workaround unnecessary — live-verified this file's own established
+  single-quoted `code => '...'` convention for multi-line ruby blocks
+  sidesteps the escaping problem entirely with standard Ruby escaping;
+  security-auditor (MEDIUM) found a plain rename would DESTROY the
+  domain, letting a local account sharing a bare username with a real
+  privileged CSV entry (e.g. a workstation's own local "tjlam") silently
+  inherit its ABAC attributes — now preserves the domain to its own field
+  (doesn't fully close the gap alone, since the lookup still keys on the
+  bare name until the CSV gains domain-qualified keys, which needs real
+  telemetry to know — but makes the ambiguity visible instead of
+  silent); plus a LOW empty-string guard for a degenerate (trailing/bare
+  backslash) value, and a strengthened regression test pinning the exact
+  `.last` call and the full SSH branch's negative-window span. Live-
+  verified the final logic against the real pinned image across 7 cases.
 
 **M16 progress:**
 

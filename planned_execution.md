@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | 🚧 5/8 closed | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏸️ 6/8 closed, 2 not actionable (no actionable work left) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | 🚧 In progress, 4/13 closed | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -539,6 +539,79 @@ is the last actionable candidate.
   **M17 now 5/8 closed** — #283 and #333 remain not actionable; #331
   (scan-detection.zeek's spoofable SYN-only Port_Scan) is the last
   actionable candidate.
+- [x] **#331 (detection metric) — COMPLETE, MERGED** — `metric_raw_alert_
+  volume()`'s `zeek_notices` sub-count is gameable: `scan-detection.zeek`'s
+  `Scan::Port_Scan` fires on the initial SYN alone (no completed
+  handshake), so a spoofed-source SYN sweep can generate one notice per
+  forged source with zero real network presence, inflating the count in a
+  way a before/after tuning comparison can't tell apart from real
+  activity. [PR #395](https://github.com/voltron-1/Suburban_SOC/pull/395)
+  merged 2026-08-17 (squash), auto-closing #331 — no GitHub-side human
+  review, same review-bypass basis as every prior session fix, 17/17 CI
+  green. Two full rounds of parallel security-auditor + code-reviewer,
+  spanning three complete design attempts.
+  Design 1 (rejected): moved TCP port-counting from `new_connection` to
+  `connection_established`/`connection_rejected` (only count once the
+  responder's reply was observed). security-auditor found this doesn't
+  actually defend against spoofing at THIS deployment's capture topology —
+  `zeek-host-capture.service` captures at the monitored host's OWN
+  interface, so that host's real reply to a spoofed SYN (RST or SYN-ACK,
+  sent to the forged address per standard TCP/IP behavior — the same
+  mechanism behind SYN-flood reflection attacks) is exactly as visible to
+  Zeek as a reply to a genuine one — and it cost real detection recall
+  (filtered-host scans and non-SYN scan types stopped counting entirely).
+  Design 2 (rejected): reverted to `new_connection` (full recall restored)
+  and added a global per-window notice-volume cap
+  (`port_scan_notice_budget`) plus a manual table-size cap
+  (`ports_per_src_cap`, since Zeek has no `&max_size` attribute — confirmed
+  via a genuine parser error against the pinned image). security-auditor
+  found this introduced TWO new silent denial-of-detection primitives: a
+  sub-second burst of spoofed sources exhausts the notice budget (blinding
+  the sensor to a real concurrent scan for the rest of the window, with
+  zero telemetry marking the loss), and an identical refuse-on-full policy
+  on the per-source tracking table — and 30/hour didn't even bound the
+  metric's real 7-day evaluation window. The reviewer's own recommendation
+  — fix the metric's interpretability instead of fighting the sensor —
+  became design 3.
+  Design 3 (shipped): `scan-detection.zeek` fully reverted to its exact
+  original, pre-#331 content (confirmed byte-identical, then re-verified
+  live against the pinned `zeek/zeek:8.2.1` image after a comment-only
+  history block was added). The actual fix lives entirely in
+  `slo_metrics.py`: a new `_cardinality()` helper runs an Elasticsearch
+  `cardinality` aggregation, and `metric_raw_alert_volume()` gained a
+  `zeek_notices_distinct_sources` field scoped to the identical query as
+  `zeek_notices` — a flood from many distinct (forged or real) sources now
+  reads differently from a few real repeat scanners, the exact
+  discrimination a sensor-side volume cap could never provide.
+  A third review round (this design) found it sound with no further
+  structural break, plus 3 MEDIUM/4 LOW findings, all fixed before merge:
+  `_cardinality()` silently undercounted on a partial shard failure (now
+  raises `MetricUnavailable` instead); the docstring's `precision_threshold`
+  claim was wrong (the issue's own ~15k-source scenario exceeds the
+  default 3000, making the aggregation approximate, not exact — harmless
+  in practice, ~1-2% error still separates 15k from 5); the new signal had
+  no documented consumer (added a "Known limitation" paragraph to the
+  docstring plus matching SOP-022/SOP-147 notes: a small, FIXED number of
+  forged sources sustained over the window can still evade this signal —
+  it catches wide floods, not narrow high-volume ones); `scan-detection.
+  zeek` carried zero record of this history (added a comment-only block);
+  and a missing non-200 test for `_cardinality()` (added, for parity with
+  `_count()`'s existing coverage). Also extracted the shared index-pattern
+  string into one local variable so the count/cardinality calls can't
+  structurally drift apart.
+  **Consequence recorded on the issue and here:** `plans/20260811-issue-
+  267-network-soar-trigger-coverage.md` framed T1046 staying out of live
+  SOAR dispatch as "deferred until #331 is resolved" — with #331 closed
+  via a metric-layer fix, that exclusion is now **permanent, not
+  deferred**; no source-authenticity signal exists for `Scan::Port_Scan`
+  at this deployment's capture vantage point, and two rounds of live
+  security review confirm that gap can't be closed without losing real
+  detection recall or introducing a new denial-of-detection primitive.
+  `docs/SOP-022-anomaly-validation-procedure.md` and `docs/SOP-147-
+  evidence-validation-procedure.md` both now say "indefinitely."
+  **M17 now 6/8 closed** — #283 (externally blocked) and #333
+  (speculative/deprioritized) are the only issues remaining, neither
+  currently actionable; no further M17 work is queued.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -2503,6 +2576,42 @@ are implemented in code; checked off with that one caveat noted inline.
   low-and-slow coverage) and #393 (threshold-rule test hardening) as
   follow-ups. **M17 now 5/8 closed; #331 next** (#283/#333 remain not
   actionable).
+
+---
+
+## LAST SESSION — 2026-08-17
+
+- **#331 closed (M17) — `metric_raw_alert_volume()`'s `zeek_notices`
+  sub-count was gameable by a spoofed-source SYN sweep (one notice per
+  forged source, zero real network presence).** [PR #395](https://github.com/voltron-1/Suburban_SOC/pull/395)
+  merged 2026-08-17 (squash), auto-closing #331, 17/17 CI green. Two full
+  rounds of parallel security-auditor + code-reviewer across three design
+  attempts. Design 1 (gate counting on `connection_established`/
+  `connection_rejected`) and design 2 (a global notice-volume cap) were
+  each found broken by live security review — neither actually defends
+  against spoofing at this deployment's host-based capture topology
+  (`zeek-host-capture.service` watches the monitored host's OWN interface,
+  so its real reply to a spoofed SYN is exactly as visible to Zeek as a
+  reply to a genuine one), and each cost real detection recall or
+  introduced its own silent denial-of-detection primitive. Design 3
+  (shipped): `scan-detection.zeek` fully reverted to its original,
+  unchanged form (plus a comment-only history block); the real fix is a
+  new `zeek_notices_distinct_sources` cardinality signal in
+  `slo_metrics.py`, scoped to the same query as `zeek_notices` — a
+  spoofed flood now reads as an interpretable metric anomaly instead of
+  being fought (unsuccessfully) at the sensor. A third review round on
+  this final design found it sound with no further structural break, plus
+  3 MEDIUM/4 LOW polish findings, all fixed before merge (shard-failure
+  detection in the new `_cardinality()` helper, a corrected
+  `precision_threshold` docstring claim, a documented known limitation, a
+  missing non-200 test, and the scan-detection.zeek history note).
+  Consequence recorded on the issue and in NEXT UP: T1046 staying out of
+  live SOAR dispatch — previously framed as "deferred until #331" — is now
+  permanent, not deferred; no source-authenticity signal exists for
+  `Scan::Port_Scan` at this deployment's vantage point.
+  **M17 now 6/8 closed** — #283 (externally blocked) and #333
+  (speculative/deprioritized) are the only issues remaining, neither
+  currently actionable. No further M17 work is queued.
 
 ---
 

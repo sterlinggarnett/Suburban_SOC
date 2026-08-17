@@ -471,6 +471,43 @@ class NetworkLiveFireTests(LiveFireTestCase):
                           "ignore_above behavior no longer matches what #352's visibility "
                           "tag assumes")
 
+    def test_dns_txt_answer_abuse_re_pattern_matches_dot_across_a_literal_newline(self):
+        # #387 (security-auditor, #351 review): sigma_eval.py's `re`
+        # modifier used Python's re.fullmatch with no DOTALL, so `.` could
+        # not consume a literal newline - untested against whether real
+        # Elasticsearch's compiled Lucene `regexp` query behaves the same
+        # way. DNS TXT records can legally carry embedded control
+        # characters including newlines, making dns.answers (#292/#351) the
+        # first field in this corpus where this divergence is plausible,
+        # not just theoretical.
+        #
+        # This value is constructed so a non-DOTALL match genuinely cannot
+        # reach a full match: two 60-char runs of the rule's own
+        # [a-zA-Z0-9+/=]{40,} charset separated by one literal `\n` - the
+        # character class excludes `\n`, so the middle {40,} run can only
+        # ever consume one contiguous side; the OTHER side's `.*` must
+        # cross the `\n` for a full-string match. If Lucene's `.` does NOT
+        # match newline, this fixture would NOT match the compiled query -
+        # confirming (or refuting) the same assumption sigma_eval.py's
+        # `re.fullmatch(..., re.DOTALL)` fix now encodes.
+        rule_path = SIGMA_DIR / "net_zeek_dns_txt_answer_abuse.yml"
+        rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+        logsource = rule.get("logsource", {})
+        mapping = load_pipeline_field_mapping(logsource)
+        compiled = sigma_convert_one(rule_path)
+
+        newline_answer = ("aB3" * 20) + "\n" + ("cD9" * 20)  # 121 chars, newline in the middle
+        fixture = {"qtype_name": "TXT", "query": "1a2b3c.c2.example.com", "answers": newline_answer}
+        self._index("newline-answer", translate_fixture(fixture, mapping, logsource))
+        self._refresh()
+
+        matched = self._matched_ids(compiled["query"])
+        self.assertIn("newline-answer", matched,
+                       "a newline-containing dns.answers value the compiled Lucene regexp "
+                       "query is expected to match (per live confirmation, 2026-08-17) did "
+                       "NOT match — either Lucene's `.` no longer matches newline, or "
+                       "sigma_eval.py's re.DOTALL fix no longer mirrors real backend behavior")
+
 
 class FieldCaseNormalizationLiveFireTests(LiveFireTestCase):
     """#290: dns.question.name/url.path/tls.validation_status/zeek.http.host

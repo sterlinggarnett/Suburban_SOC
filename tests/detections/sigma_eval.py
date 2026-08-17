@@ -30,7 +30,13 @@ test_sigma_detections.py, which fails if a rule introduces an unsupported featur
     real data (verified the anchor-then-realize trap firsthand while writing
     the #228 DNS rules - full-match semantics make anchors redundant, not
     optional). `all` combined with `re` raises ValueError (#386) - a single
-    regex target has nothing to AND against.
+    regex target has nothing to AND against. `.` matches a literal newline
+    (Python's `re.DOTALL`) - live-verified against a real running
+    Elasticsearch (#387) that Lucene's compiled `regexp` query behaves this
+    way with no DOTALL-equivalent toggle needed; a newline-containing value
+    (dns.answers, #292/#351, can legally carry embedded control characters)
+    previously reported "does not fire" here while the real deployed query
+    fired.
   * gt/gte/lt/lte: numeric comparison (#228), for Zeek count fields
     (orig_bytes, request_body_len, trans_depth) that have no string modifier
     equivalent - Sigma has no native "value is a number" type, so the target
@@ -276,6 +282,15 @@ def _match_one(value, mods, target, field: str = "") -> bool:
         # must be a plain string (Sigma's `re` modifier doesn't support list
         # values); a rule using `re|all`/`re` with a list is a rule-authoring
         # error, not something to silently OR/AND together.
+        # DOTALL (#387): live-verified against a real running Elasticsearch
+        # (this stack's pinned 9.3.2) that Lucene's compiled `regexp` query
+        # matches `.` against a literal newline in the field value - Python's
+        # `re` module does NOT do this by default. Without DOTALL, a
+        # newline-containing value (e.g. a DNS TXT answer, which can legally
+        # carry embedded control characters) could report "rule does not
+        # fire" here while the real deployed query fires - a CI-fidelity
+        # gap, not a production evasion path (production ES always behaved
+        # correctly; only this fixture-test reimplementation was wrong).
         if isinstance(target, list):
             raise ValueError("the re modifier does not support list values")
         if "all" in mods:
@@ -286,7 +301,7 @@ def _match_one(value, mods, target, field: str = "") -> bool:
             # title names `re` alongside `cidr`.
             raise ValueError("the re modifier does not support the all modifier")
         s = str(value if value is not None else "")
-        return re.fullmatch(target, s) is not None
+        return re.fullmatch(target, s, re.DOTALL) is not None
 
     s = str(value if value is not None else "")
     cased = "cased" in mods
@@ -309,12 +324,23 @@ def _match_one(value, mods, target, field: str = "") -> bool:
         # ops (the old `t in s` / `.endswith` / `.startswith` / `s == t`)
         # have no awareness of this Sigma-level escaping at all.
         pattern = _sigma_wildcard_to_regex(t)
+        # DOTALL (#387 follow-up, code-reviewer, live-verified): Sigma's own
+        # `*`/`?` wildcard syntax (see comment above) compiles to `.`/`.*`
+        # here exactly like the `re` modifier's pattern does, and has the
+        # identical newline-crossing gap - live-confirmed against the real
+        # dev-stack Elasticsearch that a Lucene wildcard query (`msg:ab?cd`/
+        # `msg:ab*cd`, the real compiled form of `contains`/`endswith`/
+        # `startswith`) matches across an embedded literal newline the same
+        # way the `regexp` query's `.` does. Currently latent (no rule in
+        # the corpus embeds a bare `*`/`?` in a contains/endswith/startswith/
+        # bare-equality target - confirmed via corpus grep), but the same
+        # bug class as #387's `re`-modifier fix, in the same file.
         if "contains" in mods:
-            return re.search(pattern, s) is not None
+            return re.search(pattern, s, re.DOTALL) is not None
         if "endswith" in mods:
-            return re.search(pattern + "$", s) is not None
+            return re.search(pattern + "$", s, re.DOTALL) is not None
         if "startswith" in mods:
-            return re.match(pattern, s) is not None
+            return re.match(pattern, s, re.DOTALL) is not None
         if not mods and field in _TEXT_MAPPED_FIELDS:
             # Word-boundary match, not whole-string equality - see
             # _TEXT_MAPPED_FIELDS' comment for why this field is different.
@@ -331,7 +357,7 @@ def _match_one(value, mods, target, field: str = "") -> bool:
                     f"it looks like it means - rephrase the target or add a "
                     f"cased/contains modifier instead")
             return re.search(rf"\b{re.escape(t)}\b", s) is not None
-        return re.fullmatch(pattern, s) is not None
+        return re.fullmatch(pattern, s, re.DOTALL) is not None
 
     if isinstance(target, list):
         return all(cmp(t) for t in target) if "all" in mods else any(cmp(t) for t in target)

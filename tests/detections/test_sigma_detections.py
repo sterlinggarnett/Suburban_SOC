@@ -492,6 +492,62 @@ class SigmaDetectionTests(unittest.TestCase):
             "net_zeek_dns_txt_answer_abuse.yml: an all-benign multi-element "
             "answers array fired - false positive")
 
+    def test_match_one_re_modifier_matches_dot_across_a_literal_newline(self):
+        # #387: live-verified against a real running Elasticsearch (this
+        # stack's pinned 9.3.2) that Lucene's compiled `regexp` query
+        # matches `.` against a literal newline with no DOTALL-equivalent
+        # toggle needed. The target string below is constructed so a
+        # non-DOTALL Python `.*` genuinely cannot reach a full match: two
+        # 60-char runs of the rule's own charset separated by one `\n` -
+        # the class excludes `\n`, so the middle `{40,}` run can only ever
+        # consume ONE side; the OTHER side's `.*` must cross the `\n` for
+        # `re.fullmatch` to consume the entire 121-char string. Confirmed
+        # empirically (live ES session, 2026-08-17): this exact string
+        # matched the real compiled query for net_zeek_dns_txt_answer_
+        # abuse.yml's `answers|re: '.*[a-zA-Z0-9+/=]{40,}.*'` pattern.
+        from sigma_eval import _match_one
+        newline_value = ("aB3" * 20) + "\n" + ("cD9" * 20)
+        pattern = ".*[a-zA-Z0-9+/=]{40,}.*"
+        self.assertTrue(
+            _match_one(newline_value, ["re"], pattern, "answers"),
+            "a newline-containing value that the real compiled Lucene regexp "
+            "query matches did not fire here - re.fullmatch is missing "
+            "re.DOTALL, or the DOTALL fix regressed")
+
+    def test_match_one_wildcard_translated_modifiers_match_dot_across_a_literal_newline(self):
+        # #387 follow-up (code-reviewer, live-verified): the identical
+        # DOTALL gap the test above pins for the `re` modifier also exists
+        # in cmp()'s contains/endswith/startswith/bare-equality paths, all
+        # of which build `.`/`.*` from Sigma's OWN `*`/`?` wildcard syntax
+        # via _sigma_wildcard_to_regex() (see that function's docstring) -
+        # a target embedding an unescaped `?`/`*` has the same newline-
+        # crossing question as the `re` modifier's pattern does. Live-
+        # verified against the real dev-stack Elasticsearch (2026-08-17):
+        # indexed {"msg": "ab\ncd"}, queried `msg:ab?cd` and `msg:ab*cd`
+        # (the real compiled form of contains/endswith/startswith) - both
+        # matched, confirming Lucene's wildcard automaton crosses an
+        # embedded newline the same way the `regexp` query's `.` does.
+        # Currently latent in the real corpus (no rule embeds a bare `*`/
+        # `?` in a contains/endswith/startswith/bare-equality target -
+        # confirmed via corpus grep), but the same bug class, same file,
+        # same PR.
+        from sigma_eval import _match_one
+        newline_value = "ab\ncd"
+        self.assertTrue(
+            _match_one(newline_value, ["contains"], "ab?cd", "msg"),
+            "contains: a newline-containing value that a `?`-wildcard "
+            "target should match (per live ES confirmation) did not fire - "
+            "the contains path is missing re.DOTALL, or the fix regressed")
+        self.assertTrue(
+            _match_one(newline_value, ["startswith"], "ab?cd", "msg"),
+            "startswith: same newline-crossing gap, startswith path")
+        self.assertTrue(
+            _match_one(newline_value, ["endswith"], "b?cd", "msg"),
+            "endswith: same newline-crossing gap, endswith path")
+        self.assertTrue(
+            _match_one(newline_value, [], "ab?cd", "msg"),
+            "bare equality: same newline-crossing gap, fullmatch path")
+
     def test_zeek_executable_and_smtp_rules_catch_every_live_verified_mime_type(self):
         # #365: fixtures.json's true_positive for both rules only exercises
         # application/x-dosexec — the OTHER 3 mime_type branches

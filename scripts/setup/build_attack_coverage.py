@@ -101,6 +101,25 @@ def logsource_label(rule_text: str) -> str:
     return "Sysmon/Winlogbeat (process_creation)"
 
 
+# #281 security-auditor finding: a title containing either character would
+# corrupt a downstream renderer that isn't expecting it — `|` breaks
+# markdown()'s table column structure (:238-239), `;` makes
+# _merged_comment()'s join ambiguous about where one rule's attribution
+# ends and the next begins. No current rule title contains either (verified
+# against the real corpus), so failing loudly here catches a future one at
+# authoring/CI time instead of silently corrupting a generated doc.
+_UNSAFE_TITLE_CHARS = ("|", ";")
+
+
+def _validate_title(title, source_label):
+    if any(c in title for c in _UNSAFE_TITLE_CHARS):
+        raise ValueError(
+            f"{source_label}: title {title!r} contains one of "
+            f"{_UNSAFE_TITLE_CHARS} — would corrupt the generated markdown "
+            f"table or merged Navigator comment; rename the rule/entry")
+    return title
+
+
 def harvest():
     rows = []  # each: technique, tactic, source, rule, test, title, status
     # --- Endpoint: Sigma rules -> Elastic Detection Engine ---
@@ -112,14 +131,29 @@ def harvest():
         status = re.search(r"^status:\s*(\S+)", t, re.M)
         if not tech:
             continue
-        tactic_name = TACTICS.get(tac.group(1).lower(), ("Unknown", "?"))[0] if tac else "Unknown"
+        # #281 security-auditor finding: silently falling back to "Unknown"
+        # (no TACTICS entry for the rule's own attack.<tactic> tag, or no
+        # tactic tag at all) produces a dead Navigator cell — "unknown"
+        # matches no real ATT&CK tactic column, so Navigator drops the
+        # annotation with no error, the exact silent-drop failure class
+        # #281 exists to eliminate, just via a different route (e.g. a typo
+        # like attack.privilege-escalation instead of the real
+        # attack.privilege_escalation). Fail loudly instead.
+        if not tac or tac.group(1).lower() not in TACTICS:
+            raise ValueError(
+                f"rules/sigma/{f.name}: has an attack.<technique> tag but no "
+                f"resolvable attack.<tactic> tag (found: "
+                f"{tac.group(1) if tac else None!r}) — every rule with a "
+                f"technique tag needs a matching tactic tag from TACTICS, "
+                f"or it silently renders as a dead Navigator cell")
+        tactic_name = TACTICS[tac.group(1).lower()][0]
         rows.append({
             "technique": tech.group(1).upper(),
             "tactic": tactic_name,
             "source": logsource_label(t),
             "rule": f"rules/sigma/{f.name}",
             "test": "Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)",
-            "title": title.group(1).strip() if title else f.stem,
+            "title": _validate_title(title.group(1).strip() if title else f.stem, f"rules/sigma/{f.name}"),
             "status": status.group(1) if status else "experimental",
         })
     # --- Network: Zeek detections classified in logstash.conf (Category 5) ---
@@ -135,25 +169,84 @@ def harvest():
             "source": "Zeek (notice / ssh)",
             "rule": "configs/logstash.conf (Category 5 framework enrichment)",
             "test": "tests/pipeline/test_framework_enrichment.py",
-            "title": name, "status": "stable",
+            "title": _validate_title(name, "configs/logstash.conf"), "status": "stable",
         })
     return rows
 
 
+def unique_technique_count(rows):
+    """Distinct ATT&CK technique IDs across `rows` — the number #281 exists
+    to report accurately, as opposed to `len(rows)` (rule-to-technique
+    mapping count) or `len(navigator_layer(rows)["techniques"])`
+    ((technique, tactic) pair count — one technique legitimately spanning
+    two tactics, e.g. T1078.003, counts once here but twice there).
+    code-reviewer finding: previously computed inline, identically, in both
+    markdown() and main() — extracted so the two can't silently drift."""
+    return len({r["technique"] for r in rows})
+
+
+def _merged_comment(group):
+    """Navigator tooltip text for a (technique, tactic) group's contributing
+    rules (#281). When every rule in the group shares the same `test`
+    value — the common case, e.g. every Sigma rule uses the same
+    Detections-CI fixture test — states it once instead of repeating the
+    identical "(test: ...)" suffix per rule (code-reviewer finding: a
+    5-rule merge, T1543.003, bloated to a 949-character tooltip otherwise,
+    the primary human-facing consumer of this field)."""
+    tests = {r["test"] for r in group}
+    titles_and_rules = "; ".join(f"{r['title']} — {r['rule']}" for r in group)
+    if len(tests) == 1:
+        return f"{titles_and_rules} (test: {group[0]['test']})"
+    return "; ".join(f"{r['title']} — {r['rule']} (test: {r['test']})" for r in group)
+
+
 def navigator_layer(rows):
-    techs = []
+    # #281: group by (techniqueID, tactic), NOT techniqueID alone. The
+    # issue's own suggested fix ("group by techniqueID") would silently
+    # break a genuine case already in this corpus: T1078.003 (Valid
+    # Accounts: Local Accounts) legitimately appears under BOTH Initial
+    # Access (auth_linux_ssh_root_login.yml — a root login IS external
+    # access) and Privilege Escalation (auth_linux_su_session_opened.yml —
+    # an su session IS local elevation) — two real, distinct MITRE ATT&CK
+    # tactic mappings for the same sub-technique, not a duplicate. ATT&CK
+    # Navigator's own layer schema supports exactly this: a techniqueID can
+    # appear more than once, once per `tactic` it's scored under (each
+    # entry already carries its own `tactic` field below), rendering once
+    # per matrix column that tactic occupies. Deduping on techniqueID alone
+    # would silently drop one of T1078.003's two legitimate tactic-column
+    # entries — the EXACT "Navigator typically renders only one, the other
+    # is silently dropped" failure #281 itself describes, just moved from
+    # "two rules, one tactic" to "one rule set, two tactics". The real
+    # invariant is uniqueness per (techniqueID, tactic) PAIR.
+    # Plain dict, no separate insertion-order list: pyproject.toml pins
+    # Python >=3.11, well past the 3.7 dict-insertion-order guarantee
+    # (code-reviewer simplification — the earlier `order` list duplicated
+    # what `grouped` already tracks for free).
+    grouped = {}
     for r in rows:
+        grouped.setdefault((r["technique"], r["tactic"]), []).append(r)
+
+    techs = []
+    for (tech, tactic), group in grouped.items():
         # audit P2-18: score reflects the VALIDATION TIER, not a blanket 100. Every
         # technique here is validated at the logic tier (Sigma->Lucene conversion +
         # fixture replay, or the framework-enrichment test) — but NOT yet by live-fire
         # replay against a running index, so 75 ("validated logic"), reserving 100 for
         # a future live-fire tier rather than overstating confidence.
         techs.append({
-            "techniqueID": r["technique"],
-            "tactic": r["tactic"].lower().replace(" ", "-"),
+            "techniqueID": tech,
+            "tactic": tactic.lower().replace(" ", "-"),
             "score": 75,
             "color": "#2ca02c",
-            "comment": f"{r['title']} — {r['rule']} (test: {r['test']})",
+            # #281: merge every contributing rule's comment into one entry
+            # instead of emitting a second, silently-overwritten techniqueID
+            # object per rule sharing this exact (technique, tactic) pair.
+            # code-reviewer finding: repeating the identical "(test: ...)"
+            # suffix per rule bloated a 5-rule merge (T1543.003) to a
+            # 949-character tooltip — state it once when every contributing
+            # rule shares the same test, which is the common case (most
+            # rules in one merge group share the same Detections CI test).
+            "comment": _merged_comment(group),
             "enabled": True,
         })
     return {
@@ -169,6 +262,10 @@ def navigator_layer(rows):
         "gradient": {"colors": ["#ffffff", "#2ca02c"], "minValue": 0, "maxValue": 100},
         "legendItems": [{"label": "Detection deployed", "color": "#2ca02c"}],
         "metadata": [
+            # Deliberately the raw rule-to-technique mapping count, NOT
+            # deduped — "detections" means how many rules/mappings
+            # contributed, a different (and both legitimate) count from
+            # markdown()'s deduped technique total below.
             {"name": "detections", "value": str(len(rows))},
             {"name": "source", "value": "rules/sigma/*.yml + configs/logstash.conf"},
         ],
@@ -187,7 +284,11 @@ def markdown(rows):
         "Import `attack-coverage.json` at "
         "<https://mitre-attack.github.io/attack-navigator/> for the heatmap.",
         "",
-        f"**Coverage:** {len(rows)} techniques across {len(by_tactic)} tactics.",
+        # #281: unique technique IDs, not rule-to-technique mapping rows —
+        # several techniques (e.g. T1543.003) have 5 rules mapped to them,
+        # which used to inflate this count by 4 each.
+        f"**Coverage:** {unique_technique_count(rows)} techniques "
+        f"across {len(by_tactic)} tactics.",
         "",
         "## Matrix — data source → technique → rule → test",
         "",
@@ -229,6 +330,9 @@ def main():
     rows = harvest()
     layer = json.dumps(navigator_layer(rows), indent=2) + "\n"
     md = markdown(rows)
+    # #281: unique technique count for console output too, matching
+    # markdown()'s own fix — same rule-mapping-vs-technique distinction.
+    unique_techniques = unique_technique_count(rows)
     check = "--check" in sys.argv[1:]
     if check:
         cur_json = OUT_JSON.read_text(encoding="utf-8") if OUT_JSON.exists() else ""
@@ -237,13 +341,13 @@ def main():
             print("DRIFT: attack-coverage.{json,md} are stale. Re-run "
                   "scripts/setup/build_attack_coverage.py and commit.", file=sys.stderr)
             sys.exit(1)
-        print(f"OK: ATT&CK coverage matrix in sync ({len(rows)} techniques).")
+        print(f"OK: ATT&CK coverage matrix in sync ({unique_techniques} techniques).")
         return
     OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     OUT_JSON.write_text(layer, encoding="utf-8")
     OUT_MD.write_text(md, encoding="utf-8")
     print(f"Wrote {OUT_JSON.relative_to(ROOT)} and {OUT_MD.relative_to(ROOT)} "
-          f"({len(rows)} techniques).")
+          f"({unique_techniques} techniques).")
 
 
 if __name__ == "__main__":

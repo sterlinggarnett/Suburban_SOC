@@ -81,6 +81,19 @@ jobs:
           # process.command_line (this stack uses process.args).
           ! grep -q "process.command_line" converted.ndjson || { echo "::error::rule queries process.command_line; pipeline mapping is wrong"; exit 1; }
 
+      - name: Setup-script unit tests (#281 — ATT&CK coverage Navigator-layer dedup)
+        # security-auditor finding: tests/setup/test_build_attack_coverage.py
+        # (#281's own regression guard) was never wired into any workflow —
+        # a regression back to the issue's own wrong suggested fix
+        # (dedup by techniqueID alone, which drops a real multi-tactic
+        # Navigator cell) would merge green with the guard never running.
+        # Directory glob, same reasoning as the tests/pipeline/tests/dashboards
+        # steps above — also picks up tests/setup/test_systemd_environment_
+        # no_expansion.py, itself not run anywhere before this. Runs BEFORE
+        # --check below so a real logic regression fails on the assertion,
+        # not on a confusing "DRIFT, re-run and commit" message.
+        run: python -m pytest tests/setup -q
+
       - name: ATT&CK coverage matrix is in sync with the rules (WS1.5)
         run: python scripts/setup/build_attack_coverage.py --check
 

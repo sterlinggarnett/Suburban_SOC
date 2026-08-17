@@ -326,6 +326,132 @@ class SigmaDetectionTests(unittest.TestCase):
         self.assertTrue(detection_matches(det, status_field),
                          "disabled-account rule regressed: Status-field branch no longer fires")
 
+    def test_match_one_evaluates_multi_valued_fields_per_element(self):
+        # #351: code-reviewer finding - the rule-level test below
+        # (test_dns_txt_answer_abuse_matches_multi_element_answers_array_
+        # per_element) does NOT actually pin this regression. That rule's
+        # pattern is `.*[a-zA-Z0-9+/=]{40,}.*` under re.fullmatch - the
+        # wrapping `.*` on both sides absorbs a Python list's str() repr
+        # punctuation (brackets/quotes/comma), so a single element 40+
+        # chars long still satisfies a full-string match against the OLD,
+        # buggy str(the_whole_list) blob too. Empirically confirmed: with
+        # #351's _match_one list branch reverted, that rule-level test
+        # stays green. Bare equality has no such blind spot - the target
+        # must equal the ENTIRE stringified value under the old code, which
+        # a multi-element list's repr never does, so it's what actually
+        # discriminates old vs. new behavior. Calls _match_one() directly
+        # (not detection_matches against a rule) so the proof doesn't
+        # depend on any particular rule's regex shape happening to
+        # discriminate.
+        from sigma_eval import _match_one
+        self.assertTrue(
+            _match_one(["zzz-benign-first-element", "exact-target"], [], "exact-target", "field"),
+            "a bare-equality target matching the SECOND element of a "
+            "multi-value field did not fire - per-element OR semantics "
+            "regressed, or a list value is being stringified as one blob "
+            "again")
+        self.assertFalse(
+            _match_one(["zzz-benign-first", "zzz-benign-second"], [], "exact-target", "field"),
+            "a bare-equality target matching NEITHER element incorrectly fired")
+
+    def test_match_one_all_modifier_ands_across_targets_not_within_one_element(self):
+        # #351: security-auditor finding - a naive
+        # any(_match_one(v, mods, target, field) for v in value) gets `all`
+        # backwards for a multi-valued field. Elasticsearch compiles
+        # `field|all: [a, b]` to `field:a AND field:b`, two clauses
+        # independently evaluated per-element against the SAME field - a
+        # document matches if element X equals a and a DIFFERENT element Y
+        # equals b, not requiring one element to equal both.
+        # tester-debugger finding: an earlier draft of this test used
+        # `contains`, whose substring search happens to ALSO pass against
+        # the real (not hypothetical) pre-#351 code, which has no list
+        # handling at all and stringifies the whole list to one blob (e.g.
+        # str(["has-alpha-only", "has-bravo-only"])) - both target
+        # substrings are trivially present somewhere in that blob
+        # regardless of which element they came from, so `contains` cannot
+        # tell old code from fixed code here. Bare equality (fullmatch)
+        # doesn't have this blind spot: the pre-#351 whole-list-repr blob
+        # (with its brackets/quotes/comma) can never exactly equal a bare
+        # target word, so old code returns False for EVERY target
+        # regardless of element content - empirically confirmed by
+        # reverting the fix and re-running this test, which then failed as
+        # expected. Only the fixed AND-over-targets(OR-over-elements) shape
+        # can return True here.
+        from sigma_eval import _match_one
+        self.assertTrue(
+            _match_one(["exact-alpha", "exact-bravo"], ["all"],
+                       ["exact-alpha", "exact-bravo"], "field"),
+            "an `all` target list against a multi-valued field, where each "
+            "target is satisfied by a DIFFERENT element, did not fire - "
+            "Elasticsearch ANDs across elements, not within one")
+        # True negative: "exact-charlie" is satisfied by no element at all -
+        # AND must still fail even though the other target is satisfied.
+        self.assertFalse(
+            _match_one(["exact-alpha", "exact-bravo"], ["all"],
+                       ["exact-alpha", "exact-charlie"], "field"),
+            "an `all` target list incorrectly fired when one target was "
+            "satisfied by no element at all")
+
+    def test_match_one_rejects_dict_shaped_values_and_validates_empty_list_shape(self):
+        # #351: security-auditor findings.
+        # (1) A dict-shaped value (the ECS-canonical dns.answers.data/type/
+        # ttl object shape, which this evaluator deliberately does not
+        # model - see module docstring) must fail loudly, not silently
+        # regex-match its Python repr the same way a bare list used to
+        # before #351's own fix.
+        # (2) An EMPTY list value must not bypass this evaluator's
+        # rule-authoring shape guards (e.g. `re` with a list target) just
+        # because any([]) is vacuously False - a malformed rule should
+        # fail the same way regardless of what a specific event's field
+        # happens to contain.
+        from sigma_eval import _match_one
+        with self.assertRaises(TypeError):
+            _match_one({"data": "1.2.3.4", "type": "A", "ttl": 300}, [], "1.2.3.4", "field")
+        with self.assertRaises(ValueError):
+            _match_one([], ["re"], ["a", "b"], "field")
+        self.assertFalse(_match_one([], [], "exact-target", "field"))
+
+    def test_dns_txt_answer_abuse_matches_multi_element_answers_array_per_element(self):
+        # #351: fixtures.json's true_positive/true_negatives all model
+        # `answers` as a scalar (matching this repo's established fixture
+        # convention) - Zeek's real `answers` field is a JSON array. This is
+        # an end-to-end smoke check that the real rule evaluates a genuine
+        # multi-element array without crashing and without an obvious
+        # false positive/negative; the actual regression pin for the old
+        # str(list)-stringify bug is test_match_one_evaluates_multi_valued_
+        # fields_per_element above (code-reviewer finding: this rule's own
+        # `.*pattern.*` shape doesn't discriminate old vs. new behavior).
+        det = load_rule(SIGMA_DIR / "net_zeek_dns_txt_answer_abuse.yml")["detection"]
+        true_positive = {
+            "qtype_name": "TXT",
+            "query": "1a2b3c.c2.example.com",
+            "answers": [
+                "v=spf1 include:_spf.example.com ~all",
+                "dGhpcyBpcyBhIHNpbXVsYXRlZCBlbmNvZGVkIEMyIHBheWxvYWQgY2h1bmsgMTIzNDU=",
+            ],
+        }
+        self.assertTrue(
+            detection_matches(det, true_positive),
+            "net_zeek_dns_txt_answer_abuse.yml: a multi-element answers array "
+            "with one genuinely long encoded element did not fire - #351's fix "
+            "regressed, or the array is being matched as a single stringified "
+            "blob again")
+
+        # True negative: every element benign - must NOT fire just because
+        # the field is a (non-empty) list.
+        true_negative = {
+            "qtype_name": "TXT",
+            "query": "example.com",
+            "answers": [
+                "v=spf1 include:_spf.example.com ~all",
+                "v=spf1 include:_spf.google.com include:mailgun.org ip4:203.0.113.0/24 -all",
+            ],
+        }
+        self.assertFalse(
+            detection_matches(det, true_negative),
+            "net_zeek_dns_txt_answer_abuse.yml: an all-benign multi-element "
+            "answers array fired - false positive")
+
     def test_zeek_executable_and_smtp_rules_catch_every_live_verified_mime_type(self):
         # #365: fixtures.json's true_positive for both rules only exercises
         # application/x-dosexec — the OTHER 3 mime_type branches

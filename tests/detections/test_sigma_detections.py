@@ -326,6 +326,79 @@ class SigmaDetectionTests(unittest.TestCase):
         self.assertTrue(detection_matches(det, status_field),
                          "disabled-account rule regressed: Status-field branch no longer fires")
 
+    def test_zeek_executable_and_smtp_rules_catch_every_live_verified_mime_type(self):
+        # #365: fixtures.json's true_positive for both rules only exercises
+        # application/x-dosexec — the OTHER 3 mime_type branches
+        # (application/x-executable, application/x-sharedlib,
+        # text/x-shellscript, all live-verified against the real pinned
+        # zeek/zeek image, see net_zeek_executable_download.yml's own
+        # description) had zero fixture coverage. application/x-dosexec is
+        # included here too (security-auditor finding) so this test is
+        # self-contained proof of every live-verified value, not dependent
+        # on fixtures.json separately covering the 4th. text/x-shellscript in
+        # particular is the exact regression #365 was filed over — a typo
+        # or an accidental revert back to application/x-shellscript (which
+        # Zeek never actually produces) must fail this test, not silently
+        # pass CI. One targeted assertion set per rule, not fixture entries
+        # — the schema only carries one true_positive per rule.
+        for rule_name, source in (
+                ("net_zeek_executable_download.yml", "HTTP"),
+                ("net_zeek_smtp_attachment_executable.yml", "SMTP")):
+            det = load_rule(SIGMA_DIR / rule_name)["detection"]
+            for mime_type in ("application/x-dosexec", "application/x-executable",
+                              "application/x-sharedlib", "text/x-shellscript"):
+                with self.subTest(rule=rule_name, mime_type=mime_type):
+                    self.assertTrue(
+                        detection_matches(det, {"source": source, "mime_type": mime_type}),
+                        f"{rule_name} regressed: {mime_type!r} (source={source}) no longer fires")
+
+    def test_zeek_executable_and_smtp_rules_share_the_exact_same_mime_type_list(self):
+        # security-auditor finding: both rules' descriptions claim their
+        # mime_type lists are "kept in sync", but nothing enforced that
+        # claim — a future edit to only ONE of the two rules would drift
+        # silently. Asserts the exact 4-element list, in the same order,
+        # on both rules at once.
+        expected = ['application/x-dosexec', 'application/x-executable',
+                    'application/x-sharedlib', 'text/x-shellscript']
+        for rule_name in ("net_zeek_executable_download.yml",
+                          "net_zeek_smtp_attachment_executable.yml"):
+            det = load_rule(SIGMA_DIR / rule_name)["detection"]
+            self.assertEqual(
+                det["selection_payload"]["mime_type"], expected,
+                f"{rule_name}: mime_type list no longer matches its sibling rule's "
+                f"list exactly — both rules' descriptions claim they're kept in sync")
+
+    def test_zeek_executable_and_smtp_rules_no_longer_match_the_dead_mime_types(self):
+        # #365: application/x-msdownload, application/vnd.microsoft.
+        # portable-executable, application/x-elf, application/x-pie-
+        # executable, application/x-sh, and application/x-shellscript were
+        # REMOVED — confirmed live against the real pinned zeek/zeek image
+        # that Zeek's own (non-libmagic) file-analysis signature engine
+        # never produces any of them, so they provided zero real detection
+        # value. Pins the removal so a well-meaning "restore the fuller
+        # list" edit doesn't silently reintroduce dead entries.
+        # code-reviewer finding: application/x-shellscript (the ORIGINAL
+        # wrong string #365 was filed over — distinct from application/x-sh
+        # above) was missing from this tuple, empirically confirmed by
+        # reintroducing it and observing this test still pass. It's the
+        # single most likely typo a future edit would reintroduce (it
+        # differs from the correct text/x-shellscript only by the type
+        # prefix), so it belongs here more than any other entry.
+        for rule_name, source in (
+                ("net_zeek_executable_download.yml", "HTTP"),
+                ("net_zeek_smtp_attachment_executable.yml", "SMTP")):
+            det = load_rule(SIGMA_DIR / rule_name)["detection"]
+            for dead_mime_type in ("application/x-msdownload",
+                                   "application/vnd.microsoft.portable-executable",
+                                   "application/x-elf", "application/x-pie-executable",
+                                   "application/x-sh", "application/x-shellscript"):
+                with self.subTest(rule=rule_name, mime_type=dead_mime_type):
+                    self.assertFalse(
+                        detection_matches(det, {"source": source, "mime_type": dead_mime_type}),
+                        f"{rule_name}: {dead_mime_type!r} was removed as confirmed-dead on "
+                        f"real Zeek (#365) — if it's back, either it was reintroduced by "
+                        f"accident, or new evidence means this test itself needs updating")
+
 
 def coverage_report():
     rows = []

@@ -135,6 +135,32 @@ def _parse_rename_pairs(rename_block_text: str) -> dict:
     }
 
 
+_SYSMON_RAW_SOURCE_RE = re.compile(r"^\[winlog\]\[event_data\]\[([^\]]+)\]$")
+
+
+def _normalize_sysmon_raw(bracket_key: str) -> str:
+    """A Sysmon rename SOURCE is nested bracket notation
+    ("[winlog][event_data][Image]"), unlike Zeek's flat single-bracket-pair
+    keys _normalize_raw handles (#347) — Sigma's own raw Sysmon field name
+    is just the LAST segment ("Image"), matching how Sigma/pySigma see
+    Sysmon's logical field name before any pipeline mapping is applied.
+
+    security-auditor follow-up: _normalize_raw's own docstring says a
+    strict shape assertion exists specifically so a genuinely-unexpected
+    source fails LOUD instead of silently mis-slicing into a corrupted
+    key that surfaces later as a confusing spurious drift mismatch — the
+    original "at least one segment" check here was weaker than that
+    precedent (e.g. a hypothetical over-nested
+    "[winlog][event_data][Hashes][SHA256]" source would silently
+    normalize to "SHA256", not fail). Anchored to the EXACT shape every
+    real Sysmon rename source has today instead."""
+    m = _SYSMON_RAW_SOURCE_RE.match(bracket_key.strip())
+    assert m, (
+        f"Sysmon rename source {bracket_key!r} is not [winlog][event_data][<field>] — "
+        f"_normalize_sysmon_raw's exact-shape assumption no longer holds")
+    return m.group(1)
+
+
 def extract_pipeline_renames(conf_text: Optional[str] = None, filebeat_text: Optional[str] = None) -> dict:
     """{dataset_scope: {raw_field: target_field}}. "*" applies to every
     zeek_logs event: the unconditional Category 0 rename block, plus the
@@ -232,6 +258,131 @@ def extract_pipeline_renames(conf_text: Optional[str] = None, filebeat_text: Opt
             "unbalanced brace inside a comment/string reshaped the span")
 
     return renames
+
+
+def extract_sysmon_pipeline_renames(conf_text: Optional[str] = None) -> dict:
+    """{"*": {raw_field: target_field}} for configs/logstash.conf's Sysmon
+    mutate.rename block (#347). That block applies channel-wide — every
+    Sysmon EventID, not just process_creation's EventID 1 — so unlike
+    extract_pipeline_renames's Zeek dataset sub-scoping, there is no
+    per-category scoping on the pipeline side at all: Sigma's process_
+    creation/file_event category split is a rule_conditions concept, not
+    a pipeline one. Returned under the same {"*": ...} shape
+    find_mismatches already expects, so it needs no changes — reused
+    unchanged, not reimplemented.
+
+    conf_text defaults to the real repo file but is injectable (matching
+    extract_pipeline_renames's own precedent) so this parser's own
+    correctness can be regression-tested against synthetic config text —
+    see SysmonExtractPipelineRenamesSelfTests below."""
+    if conf_text is None:
+        conf_text = CONF
+
+    start = conf_text.index('if [winlog][channel] == "Microsoft-Windows-Sysmon/Operational"')
+    block_open = conf_text.index("{", start)
+    block_close = _matching_brace(conf_text, block_open)
+    sysmon_block = conf_text[block_open:block_close + 1]
+
+    renames: dict = {"*": {}}
+    for m in re.finditer(r"rename\s*=>\s*\{", sysmon_block):
+        pair_open = sysmon_block.index("{", m.end() - 1)
+        pair_close = _matching_brace(sysmon_block, pair_open)
+        for raw, target in re.findall(
+                r'"(\[[^"]+\])"\s*=>\s*"(\[[^"]+\])"', sysmon_block[pair_open + 1:pair_close]):
+            raw_key = _normalize_sysmon_raw(raw)
+            # security-auditor follow-up: two distinct sources collapsing
+            # to the same last-segment key would otherwise silently
+            # overwrite one mapping with the other via plain dict
+            # assignment — not reachable today (all 9 real sources are
+            # distinct [winlog][event_data][X] fields), but fail loud
+            # rather than silently drop a rename if that ever changes.
+            assert raw_key not in renames["*"], (
+                f"Sysmon rename source {raw!r} normalizes to {raw_key!r}, which a "
+                f"different rename source already claimed — "
+                f"_normalize_sysmon_raw's last-segment-is-unique assumption no longer holds")
+            renames["*"][raw_key] = _normalize_target(target)
+
+    # Same _matching_brace tripwire precedent as extract_pipeline_renames
+    # above — the real Sysmon block is immediately followed by a
+    # "Component 3: Windows Security events" comment, so if a future
+    # comment's unbalanced brace silently reshaped the span, this fails
+    # loud instead of the block silently growing/shrinking.
+    if conf_text is CONF:
+        assert "Component 3" in conf_text[block_close:block_close + 500], (
+            "Sysmon block span extraction landed somewhere unexpected — "
+            "configs/logstash.conf structure may have drifted, or an "
+            "unbalanced brace inside a comment/string reshaped the span")
+
+    return renames
+
+
+_SYSMON_IDENTITY_MAPPING_CATEGORIES = {
+    # Sysmon CreateRemoteThread (EventID 8) — this transformation's own
+    # comment says none of its fields are in logstash.conf's Sysmon
+    # rename list (paraphrased here, not quoted — see
+    # configs/detections/suburban-soc-ecs.yml's field-mapping-sysmon-
+    # create-remote-thread comment for its exact wording), the identical
+    # identity-mapping shape service-scoped Windows channels have.
+    "create_remote_thread",
+}
+
+
+def extract_sigma_sysmon_mappings() -> dict:
+    """{category: {raw_field: target_field}} for every product:windows,
+    category-scoped field_name_mapping transformation in suburban-soc-
+    ecs.yml (#347), EXCEPT _SYSMON_IDENTITY_MAPPING_CATEGORIES above —
+    mirrors extract_sigma_zeek_mappings's structure and the same two
+    assumption guards (at most one matching logsource rule_condition per
+    transformation, at most one transformation per category).
+
+    security-auditor finding: an INCLUDE-allowlist of {process_creation,
+    file_event} would be self-fulfilling — a future category-scoped
+    transformation added to suburban-soc-ecs.yml would be silently
+    filtered out before ever reaching sigma_mappings, and
+    test_sigma_sysmon_mappings_extracted's own set-equality assertion is
+    built from this same function's output, so it could never notice the
+    category went missing either. Collecting every category and
+    EXCLUDING only the known identity-mapping denylist means a future
+    real rename transformation under a brand-new category is
+    automatically picked up and cross-checked; a future genuinely-
+    identity-mapped category that's NOT added to the denylist instead
+    surfaces as a loud find_mismatches failure (every one of its fields
+    reported as "never renamed"), not a silent gap.
+
+    Deliberately does NOT generalize to product:windows transformations
+    scoped by `service` instead of `category` at all (field-mapping-
+    windows-security/-system/-wmi/-powershell) — those are deliberately-
+    identity mappings onto raw Winlogbeat field names (the file-level
+    module docstring says logstash.conf performs no rename at all for
+    those channels; the Security and System transformations' own
+    per-block comments say so too, though the WMI/PowerShell ones don't
+    repeat it — the module docstring is the source of truth there), so
+    applying this same "a mapping entry implies a real rename is
+    expected" premise to them would produce ~30 false positives. This
+    function never even looks at `service`-scoped conditions, so a
+    future service-scoped addition can't accidentally slip through this
+    category-only filter either way."""
+    pipeline = yaml.safe_load(PIPELINE_PATH.read_text(encoding="utf-8"))
+    out = {}
+    for t in pipeline.get("transformations", []):
+        if t.get("type") != "field_name_mapping":
+            continue
+        win_conditions = [c for c in t.get("rule_conditions", [])
+                           if c.get("type") == "logsource" and c.get("product") == "windows"
+                           and c.get("category")]
+        assert len(win_conditions) <= 1, (
+            f"transformation {t.get('id')!r} has multiple matching product:windows "
+            f"logsource rule_conditions — this parser's single-condition assumption no longer holds")
+        for cond in win_conditions:
+            category = cond["category"]
+            if category in _SYSMON_IDENTITY_MAPPING_CATEGORIES:
+                continue
+            assert category not in out, (
+                f"multiple field_name_mapping transformations scoped to category "
+                f"{category!r} — the second ({t.get('id')!r}) would silently overwrite "
+                f"the first, and its fields would never be cross-checked")
+            out[category] = dict(t.get("mapping", {}))
+    return out
 
 
 def extract_sigma_zeek_mappings() -> dict:
@@ -430,6 +581,85 @@ class FieldMappingDriftTests(unittest.TestCase):
                          "against real telemetry:\n" + "\n".join(mismatches))
 
 
+class SysmonFieldMappingDriftTests(unittest.TestCase):
+    """#347: extends #287's Zeek-only drift checker to the Sysmon process_
+    creation/file_event renames — the exact shape of the #233/#234 bug
+    (suburban-soc-ecs.yml claims a rename logstash.conf never performs)
+    this file already exists to catch, just never extended to Winlogbeat
+    channels. Deliberately does NOT generalize to the identity-mapping
+    Windows channels (Security/System/WMI/PowerShell, create_remote_
+    thread) — see extract_sigma_sysmon_mappings's own docstring for why."""
+
+    def setUp(self):
+        self.pipeline_renames = extract_sysmon_pipeline_renames()
+        self.sigma_mappings = extract_sigma_sysmon_mappings()
+
+    def test_sysmon_pipeline_renames_extracted(self):
+        # Pin the exact set + specific known entries, not a bare size
+        # floor — same rigor bar test_pipeline_renames_extracted already
+        # established for the Zeek side, for the same reason (a floor
+        # lets a real entry silently vanish without any test noticing).
+        self.assertEqual(
+            {"Image", "OriginalFileName", "CommandLine", "ParentImage",
+             "ParentCommandLine", "User", "TargetUserName", "TargetFilename", "Hashes"},
+            set(self.pipeline_renames["*"]),
+            "Sysmon pipeline rename set changed — either a real edit to "
+            "configs/logstash.conf's Sysmon mutate.rename block (update this "
+            "set, and re-verify create_remote_thread's identity-mapping "
+            "assumption still holds, since the rename block is channel-wide) "
+            "or the parser mis-extracted it")
+        self.assertEqual("process.executable", self.pipeline_renames["*"]["Image"])
+        self.assertEqual("file.hash.sha256", self.pipeline_renames["*"]["Hashes"])
+
+    def test_sigma_sysmon_mappings_extracted(self):
+        self.assertEqual({"process_creation", "file_event"}, set(self.sigma_mappings),
+                         "sigma sysmon field_name_mapping category set changed — either a "
+                         "real suburban-soc-ecs.yml edit (update this set) or the parser "
+                         "mis-extracted one")
+        self.assertIn("Hashes", self.sigma_mappings["process_creation"])
+        self.assertIn("TargetFilename", self.sigma_mappings["file_event"])
+
+    def test_every_windows_category_rule_has_a_mapping_or_is_allowlisted(self):
+        # code-reviewer follow-up: mirrors the Zeek side's own
+        # test_every_zeek_rule_logsource_service_has_a_mapping — closes
+        # the forward-looking half of the gap extract_sigma_sysmon_
+        # mappings's include/exclude redesign already closed on the
+        # extraction side. Globs the REAL rule corpus for every
+        # product:windows logsource CATEGORY actually in use (not
+        # `service`, which #347 deliberately never covers — see
+        # extract_sigma_sysmon_mappings's own docstring), and asserts
+        # each one either has a field_name_mapping transformation or is
+        # explicitly in _SYSMON_IDENTITY_MAPPING_CATEGORIES — catching a
+        # brand-new category appearing on a future rule with neither a
+        # real mapping nor a documented identity-mapping exemption.
+        categories_in_use = set()
+        for rule_path in sorted((ROOT / "rules" / "sigma").glob("*.yml")):
+            rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+            logsource = rule.get("logsource", {})
+            if logsource.get("product") == "windows" and logsource.get("category"):
+                categories_in_use.add(logsource["category"])
+        unaccounted = categories_in_use - set(self.sigma_mappings) - _SYSMON_IDENTITY_MAPPING_CATEGORIES
+        self.assertEqual(set(), unaccounted,
+                         f"Sigma rule(s) use product:windows category(s) {unaccounted} with "
+                         f"neither a field_name_mapping transformation in suburban-soc-ecs.yml "
+                         f"nor a documented identity-mapping exemption in "
+                         f"_SYSMON_IDENTITY_MAPPING_CATEGORIES — any field beyond the raw "
+                         f"untouched ones compiles against a name real data may never have")
+
+    def test_sigma_sysmon_field_mappings_match_pipeline_renames(self):
+        # #347: the real files, cross-referenced against each other —
+        # find_mismatches reused entirely unchanged, already generic
+        # over scope (it doesn't know or care whether a scope key is a
+        # "zeek.<service>" dataset or a Sigma category name).
+        mismatches = find_mismatches(self.pipeline_renames, self.sigma_mappings)
+        self.assertEqual([], mismatches,
+                         "field-mapping drift between logstash.conf's Sysmon rename block "
+                         "and suburban-soc-ecs.yml's process_creation/file_event mappings — "
+                         "a Sigma rule selecting one of these fields compiles fine and "
+                         "passes its fixture test but is a silent no-op against real "
+                         "telemetry:\n" + "\n".join(mismatches))
+
+
 class FindMismatchesSelfTests(unittest.TestCase):
     """code-reviewer follow-up: the tests above only prove the two real
     files currently agree — they say nothing about whether find_mismatches
@@ -544,6 +774,61 @@ class ExtractPipelineRenamesSelfTests(unittest.TestCase):
         renames = extract_pipeline_renames(conf_text=_SYNTHETIC_CONF, filebeat_text=_SYNTHETIC_FILEBEAT)
         self.assertEqual("zeek.http.synthetic_host", renames["zeek.http"]["synthetic_host"])
         self.assertNotIn("synthetic_host", renames["*"])
+
+
+_SYNTHETIC_SYSMON_CONF = '''
+filter {
+  if [winlog][channel] == "Microsoft-Windows-Sysmon/Operational" {
+    mutate {
+      rename => {
+        "[winlog][event_data][Image]" => "[process][executable]"
+        "[winlog][event_data][Hashes]" => "[file][hash][sha256]"
+      }
+    }
+  }
+
+  # Component 3: Windows Security events (4624/4625 login tracking)
+  if [winlog][channel] == "Security" {
+    mutate { replace => { "[event][outcome]" => "failure" } }
+    mutate {
+      rename => {
+        "[winlog][event_data][TargetUserName]" => "[user][target][name]"
+      }
+    }
+  }
+}
+'''
+
+
+class SysmonExtractPipelineRenamesSelfTests(unittest.TestCase):
+    """#347, mirroring ExtractPipelineRenamesSelfTests's own precedent —
+    regression-tests the PARSER (extract_sysmon_pipeline_renames) against
+    synthetic config text, not just current real-file agreement."""
+
+    def test_sysmon_renames_extracted_under_unconditional_scope(self):
+        renames = extract_sysmon_pipeline_renames(conf_text=_SYNTHETIC_SYSMON_CONF)
+        self.assertEqual("process.executable", renames["*"]["Image"])
+        self.assertEqual("file.hash.sha256", renames["*"]["Hashes"])
+
+    def test_nested_bracket_source_resolves_to_its_last_segment(self):
+        # The exact shape difference from Zeek's flat single-bracket-pair
+        # sources that motivated a separate normalizer in the first place.
+        renames = extract_sysmon_pipeline_renames(conf_text=_SYNTHETIC_SYSMON_CONF)
+        self.assertNotIn("[winlog][event_data][Image]", renames["*"])
+        self.assertNotIn("winlog.event_data.Image", renames["*"])
+
+    def test_security_channel_block_is_not_swept_into_sysmon_scope(self):
+        # The Security-channel block sits immediately after the Sysmon
+        # block in the synthetic text (matching the real file's layout)
+        # and, deliberately, contains its OWN rename => {...} on a raw
+        # key ("TargetUserName") the real Sysmon block also renames —
+        # security-auditor follow-up: without a genuine rename block
+        # here, nothing could ever leak regardless of whether the span
+        # boundary was correct, so this test could never actually fail.
+        # Confirms _matching_brace's depth-counted span stops at the
+        # Sysmon block's own closing brace, not the next unrelated block.
+        renames = extract_sysmon_pipeline_renames(conf_text=_SYNTHETIC_SYSMON_CONF)
+        self.assertEqual({"Image", "Hashes"}, set(renames["*"]))
 
 
 if __name__ == "__main__":

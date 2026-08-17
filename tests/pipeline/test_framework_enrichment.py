@@ -239,6 +239,59 @@ class DetectionAsCodeTests(unittest.TestCase):
                        "field, not leave the raw prefixed string mislabeled as "
                        "a parsed hash")
 
+    def test_sysmon_user_name_strips_domain_prefix_before_abac_lookup(self):
+        # #338: #328 fixed [user][name] to actually populate from Sysmon's
+        # User field, but that field is Windows-formatted DOMAIN\user
+        # (e.g. CONTOSO\bob) while configs/lookups/abac-attributes.csv is
+        # keyed on bare usernames - every Sysmon event got
+        # user.abac_attribute:"unassigned" (100% miss) until normalized.
+        # Must be scoped to the Sysmon branch only - the SSH auth-log
+        # grok's own [user][name] can carry an attacker-controlled
+        # "invalid user <string>" value that must NOT be silently
+        # truncated at a backslash.
+        sysmon_start = CONF.index('if [winlog][channel] == "Microsoft-Windows-Sysmon/Operational"')
+        sysmon_end = CONF.index("WS1.2: Sigma detection logic", sysmon_start)
+        sysmon_block = CONF[sysmon_start:sysmon_end]
+        self.assertIn("rpartition", sysmon_block,
+                       "Sysmon branch has no domain-prefix-stripping normalization "
+                       "for [user][name] ahead of the ABAC translate lookup")
+        # Pin the exact call, not just "rpartition" appearing somewhere - a
+        # .first/.last inversion (silently keeping the DOMAIN half instead
+        # of the username, breaking the ABAC lookup this fix exists for)
+        # would still contain the bare word "rpartition".
+        self.assertIn('parts.last', sysmon_block,
+                       "must read the username (rpartition's LAST component), "
+                       "not the domain - a .first/.last inversion would break "
+                       "the ABAC lookup silently")
+        # security-auditor finding (MEDIUM): a rename (not copy) would
+        # DESTROY the domain, letting a same-named LOCAL account collide
+        # with a real domain-qualified CSV entry's ABAC attributes.
+        # Preserving it doesn't fully close that gap (the lookup below
+        # still keys on the bare name alone), but makes the ambiguity
+        # visible instead of silent.
+        self.assertIn('[user][domain]', sysmon_block,
+                       "the domain component must be preserved to a separate "
+                       "field, not discarded - a same-named local account "
+                       "would otherwise silently collide with a real "
+                       "domain-qualified ABAC entry with no way to tell them "
+                       "apart after ingest")
+        self.assertIn('empty?', sysmon_block,
+                       "must guard a degenerate value (a trailing or bare "
+                       "backslash) rather than index a blank user.name or "
+                       "user.domain")
+        # The SSH auth-log grok's [user][name] must stay untouched - it's
+        # outside the Sysmon branch entirely. Spans the FULL SSH branch
+        # (grok through its closing brace, just before the ABAC translate
+        # block both branches converge into), not just a fixed char count
+        # past the grok line - a fixed window either misses real drift or
+        # false-negatives on an unrelated future edit.
+        ssh_start = CONF.index('and "sshd[" in [message]')
+        ssh_end = CONF.index("Category 2.5: ABAC Contextual Data Enrichment", ssh_start)
+        ssh_block = CONF[ssh_start:ssh_end]
+        self.assertNotIn("rpartition", ssh_block,
+                          "domain-prefix stripping must not run on the SSH "
+                          "auth-log's attacker-controlled [user][name] value")
+
     def test_network_detections_still_mapped(self):
         for tech in NETWORK_TECHNIQUES:
             self.assertIn(tech, self.mapped_ids,

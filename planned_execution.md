@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏸️ 6/8 closed, 2 not actionable (no actionable work left) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 7/15 closed, resumed 2026-08-17 (project-board backfill retroactively assigned 7 more open follow-ups back to this milestone) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -37,15 +37,21 @@ this doc doesn't duplicate 37 issue bodies inline the way it narrates
 *completed* work. As each issue is picked up, gate and record it here the
 same way every prior milestone's issues were recorded below.
 
-M17 closed out 2026-08-17 (6/8, no actionable work left). **M18 closed
-out 2026-08-17 too** (12/16, no actionable work left — #326 externally
-blocked on real telemetry, #396/#403/#405 are review-discovered
-follow-ups deliberately scoped out of the fixes that found them, not
-active gaps). M19–M22 remain open calls, not yet started. Same approach
-as M16/M17/M18 whenever the next one starts: smallest/most-contained
-issue first, one at a time, each through the full implement → parallel
-security-auditor + code-reviewer review → live-verify → PR → CI → merge
-→ update this doc → commit+push cycle, no unattended multi-issue runs.
+M17 closed out 2026-08-17 (6/8, no actionable work left) — **then resumed
+the same day**: the project-board milestone-backfill audit found 7 more
+open issues that had been filed as M17 review follow-ups without a
+milestone and retroactively assigned them back to M17, so "no actionable
+work left" was true only against an incomplete view of the milestone.
+Working the corrected 15-issue set now, smallest/most-contained first
+(see M17 progress below). **M18 closed out 2026-08-17 too** (12/16, no
+actionable work left — #326 externally blocked on real telemetry,
+#396/#403/#405 are review-discovered follow-ups deliberately scoped out
+of the fixes that found them, not active gaps). M19–M22 remain open
+calls, not yet started. Same approach as M16/M17/M18 whenever the next
+one starts: smallest/most-contained issue first, one at a time, each
+through the full implement → parallel security-auditor + code-reviewer
+review → live-verify → PR → CI → merge → update this doc → commit+push
+cycle, no unattended multi-issue runs.
 
 **M18 progress:**
 
@@ -833,6 +839,56 @@ is the last actionable candidate.
   **M17 now 6/8 closed** — #283 (externally blocked) and #333
   (speculative/deprioritized) are the only issues remaining, neither
   currently actionable; no further M17 work is queued.
+
+**M17 resumed 2026-08-17** — the "no further work queued" note above was
+written before the project-board milestone-backfill audit (see the audit
+entry above NEXT UP) retroactively assigned 7 review-discovered follow-up
+issues back to M17 that had been filed without a milestone during M17's
+own review cycles: #382, #383, #384, #386, #387, #392, #393. M17 is
+actually **9 open, not 2** — #283/#333 remain not actionable; the other 7
+are real, working smallest/most-contained first: #386 → #387 → #382 →
+#383 → #384 → #392 → #393.
+
+- [x] **#386 (P3, tech-debt, detection) — COMPLETE, MERGED** — `sigma_eval.py`'s
+  `_match_one()` accepted the `all` modifier in `_SUPPORTED_MODS` for every
+  modifier but only the string/contains/endswith/startswith path actually
+  branched on it — `cidr` always ORed across a target list regardless of
+  `all` (Sigma's documented semantics are AND), and a numeric modifier
+  accepted `all` syntactically without ever validating it.
+  [PR #408](https://github.com/voltron-1/Suburban_SOC/pull/408) merged
+  2026-08-17 (squash), auto-closing #386 — no GitHub-side human review,
+  same review-bypass basis as every prior session fix (13/13 CI green,
+  parallel security-auditor + code-reviewer sub-agent review).
+  Fixed by raising `ValueError` for both combinations rather than
+  implementing real AND-cidr semantics — matches this module's established
+  fail-loudly convention, and (security-auditor) every other semantic
+  branch this file implements under real confidence cites a live probe
+  against real Elasticsearch/`sigma convert`, which doesn't exist yet for
+  `cidr|all`. code-reviewer live-confirmed the issue's own title
+  ("re/cidr modifiers") was right and the first draft was incomplete: `re`
+  had the identical gap for a scalar target, missed entirely in the first
+  pass — added a third matching guard. security-auditor found a related
+  vacuous-truth bypass: an empty target list against a multi-valued event
+  field made the #351 list-value-recursion path's `all([])` return `True`
+  without ever reaching any of the three new guards — fixed with the same
+  "malformed rule shape fails loudly" precedent `_block_match` already
+  uses for an empty selection block. Every new guard mutation-tested
+  individually (stashed the fix, confirmed each assertion fails; restored,
+  confirmed all pass), including through the #351 list-value recursion
+  path specifically, not just the direct scalar-value call.
+  security-auditor's two remaining MEDIUM findings — modifier-combination
+  validation happens at evaluation time inside `_block_match`'s
+  first-failing-key short-circuit rather than load time (a malformed key
+  can go unvalidated depending on fixture/key order), and the same
+  "modifier silently dropped by branch precedence" root cause exists for
+  other cross-branch combos this issue didn't ask about (`contains+gt`,
+  `re+cidr`) — are real but pre-existing properties of this evaluator, not
+  introduced by this fix; filed
+  [#407](https://github.com/voltron-1/Suburban_SOC/issues/407) rather than
+  expanding this fix's scope. Zero live corpus impact (confirmed via grep:
+  no rule combines `all` with `cidr`/numeric/`re` today) — a CI-fidelity
+  fix, not a production behavior change. **M17 now 7/15 closed** (8 open
+  remaining: #283/#333 not actionable, 6 real follow-ups left) — #387 next.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>

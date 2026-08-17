@@ -383,6 +383,276 @@ class MetricFunctionTests(unittest.TestCase):
         self.assertEqual(mget_body["docs"],
                           [{"_index": "agent-checkpoints-home-smith", "_id": "abc123"}])
 
+    # #361: agent_checkpoints_compactor (live since #357) can delete a CLAIMED
+    # doc directly, bypassing checkpoints.py's own phase-transition-only API.
+    # metric_vanished_claims() diffs the PRIOR sample's claimed_snapshot
+    # (persisted by _claimed_snapshot()/main()) against a fresh _mget — a
+    # doc that's gone now (found: false) is the tamper signature; a doc
+    # that's still there, just resolved (found: true), is normal operation.
+    #
+    # security-auditor + code-reviewer review (both independently converged
+    # on the same root cause): Elasticsearch's `exists` query does not match
+    # a field indexed as `[]`, so keying the prior-sample lookup on
+    # claimed_snapshot itself silently skipped every quiet run — fixed by
+    # keying on the always-non-empty claimed_snapshot_at instead, age-bounded
+    # both directions (not too old, not future-dated) against forging.
+
+    def test_vanished_claims_raises_on_prior_sample_search_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_vanished_claims()
+
+    def test_vanished_claims_raises_on_prior_sample_search_non_200(self):
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(503)):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_vanished_claims()
+
+    def test_vanished_claims_returns_zero_on_first_run_no_prior_doc(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})) as mock_es:
+            self.assertEqual(slo_metrics.metric_vanished_claims(), 0)
+        # No prior snapshot means nothing to _mget — one round-trip only.
+        self.assertEqual(mock_es.call_count, 1)
+
+    def test_vanished_claims_returns_zero_when_prior_snapshot_was_genuinely_empty(self):
+        # A prior doc DOES exist (claimed_snapshot_at makes it visible to the
+        # exists filter) but its claimed_snapshot array is empty — a quiet
+        # run with nothing open, not a missing baseline.
+        prior_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"claimed_snapshot": []}},
+        ]}})
+        with mock.patch.object(slo_metrics, "es", return_value=prior_resp) as mock_es:
+            self.assertEqual(slo_metrics.metric_vanished_claims(), 0)
+        self.assertEqual(mock_es.call_count, 1)
+
+    def test_vanished_claims_counts_a_doc_that_no_longer_exists(self):
+        prior_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"claimed_snapshot": [
+                {"index": "agent-checkpoints-home-smith", "id": "abc123.claim"},
+            ]}},
+        ]}})
+        mget_resp = _FakeResponse(200, {"docs": [{"found": False}]})
+        with mock.patch.object(slo_metrics, "es", side_effect=[prior_resp, mget_resp]):
+            self.assertEqual(slo_metrics.metric_vanished_claims(), 1)
+
+    def test_vanished_claims_does_not_count_a_doc_that_still_exists(self):
+        # Still exists = resolved in place (RESOLVED/RELEASED) or still
+        # CLAIMED — either way, checkpoints.py's own API never deletes it.
+        prior_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"claimed_snapshot": [
+                {"index": "agent-checkpoints-home-smith", "id": "abc123.claim"},
+            ]}},
+        ]}})
+        mget_resp = _FakeResponse(200, {"docs": [{"found": True}]})
+        with mock.patch.object(slo_metrics, "es", side_effect=[prior_resp, mget_resp]):
+            self.assertEqual(slo_metrics.metric_vanished_claims(), 0)
+
+    def test_vanished_claims_mget_targets_derived_from_prior_snapshot(self):
+        prior_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"claimed_snapshot": [
+                {"index": "agent-checkpoints-home-smith", "id": "abc123.claim"},
+                {"index": "agent-checkpoints-home-jones", "id": "def456.claim"},
+            ]}},
+        ]}})
+        mget_resp = _FakeResponse(200, {"docs": [{"found": False}, {"found": False}]})
+        with mock.patch.object(slo_metrics, "es",
+                               side_effect=[prior_resp, mget_resp]) as mock_es:
+            self.assertEqual(slo_metrics.metric_vanished_claims(), 2)
+        mget_body = mock_es.call_args_list[1][0][2]
+        self.assertEqual(mget_body["docs"], [
+            {"_index": "agent-checkpoints-home-smith", "_id": "abc123.claim"},
+            {"_index": "agent-checkpoints-home-jones", "_id": "def456.claim"},
+        ])
+
+    def test_vanished_claims_raises_on_mget_non_200(self):
+        prior_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"claimed_snapshot": [
+                {"index": "agent-checkpoints-home-smith", "id": "abc123.claim"},
+            ]}},
+        ]}})
+        with mock.patch.object(slo_metrics, "es", side_effect=[prior_resp, _FakeResponse(500)]):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_vanished_claims()
+
+    def test_vanished_claims_raises_on_mget_failure(self):
+        prior_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"claimed_snapshot": [
+                {"index": "agent-checkpoints-home-smith", "id": "abc123.claim"},
+            ]}},
+        ]}})
+        with mock.patch.object(slo_metrics, "es",
+                               side_effect=[prior_resp, ConnectionError("refused")]):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_vanished_claims()
+
+    def test_vanished_claims_raises_not_counts_on_per_doc_mget_error(self):
+        # security-auditor MEDIUM: a whole tenant index gone (or otherwise
+        # unreadable) surfaces as an `error` object with no `found` key on
+        # that _mget entry — "could not determine" must not silently count
+        # as "confirmed vanished".
+        prior_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"claimed_snapshot": [
+                {"index": "agent-checkpoints-home-smith", "id": "abc123.claim"},
+            ]}},
+        ]}})
+        mget_resp = _FakeResponse(200, {"docs": [
+            {"error": {"type": "index_not_found_exception"}},
+        ]})
+        with mock.patch.object(slo_metrics, "es", side_effect=[prior_resp, mget_resp]):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_vanished_claims()
+
+    def test_vanished_claims_prior_sample_query_shape(self):
+        with mock.patch.object(
+                slo_metrics, "es",
+                return_value=_FakeResponse(200, {"hits": {"hits": []}})) as mock_es:
+            slo_metrics.metric_vanished_claims()
+        path = mock_es.call_args[0][1]
+        body = mock_es.call_args[0][2]
+        self.assertIn("soc-slo-metrics", path)
+        self.assertIn("ignore_unavailable=true", path)
+        filters = body["query"]["bool"]["filter"]
+        self.assertIn({"exists": {"field": "claimed_snapshot_at"}}, filters)
+        self.assertTrue(any(
+            "range" in f and "claimed_snapshot_at" in f["range"] for f in filters))
+        range_filter = next(f["range"]["claimed_snapshot_at"] for f in filters if "range" in f)
+        self.assertEqual(range_filter.get("lte"), "now")
+        self.assertIn("gte", range_filter)
+        self.assertEqual(body["sort"], [{"@timestamp": "desc"}])
+        self.assertEqual(body["size"], 1)
+
+    def test_vanished_claims_baseline_window_is_configurable(self):
+        with mock.patch.object(
+                slo_metrics, "es",
+                return_value=_FakeResponse(200, {"hits": {"hits": []}})) as mock_es, \
+             mock.patch.object(slo_metrics, "SLO_VANISHED_CLAIM_BASELINE_MAX_AGE_MIN", 60.0):
+            slo_metrics.metric_vanished_claims()
+        body = mock_es.call_args[0][2]
+        filters = body["query"]["bool"]["filter"]
+        range_filter = next(f["range"]["claimed_snapshot_at"] for f in filters if "range" in f)
+        self.assertEqual(range_filter["gte"], "now-60m")
+
+    def test_vanished_claims_drops_malformed_prior_entries_before_mget(self):
+        # security-auditor MEDIUM (baseline poisoning): a soc-slo-metrics
+        # writer other than the compactor (slo_metrics_reader's own `create`
+        # grant, or soc_admin) could shape claimed_snapshot arbitrarily —
+        # only entries matching exactly what _claimed_snapshot() itself
+        # produces may reach a real _mget request body.
+        prior_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"claimed_snapshot": [
+                {"index": "agent-checkpoints-home-smith", "id": "abc123.claim"},  # valid
+                {"index": "agent-checkpoints-home-smith", "id": "abc123"},  # no .claim suffix
+                {"index": "some-other-index", "id": "abc123.claim"},  # wrong index namespace
+                {"index": "agent-checkpoints-home-smith", "id": "abc123.claim",
+                 "routing": "attacker-controlled"},  # extra key
+                "not-a-dict",
+                {"id": "abc123.claim"},  # missing index
+            ]}},
+        ]}})
+        mget_resp = _FakeResponse(200, {"docs": [{"found": False}]})
+        with mock.patch.object(slo_metrics, "es",
+                               side_effect=[prior_resp, mget_resp]) as mock_es:
+            self.assertEqual(slo_metrics.metric_vanished_claims(), 1)
+        mget_body = mock_es.call_args_list[1][0][2]
+        self.assertEqual(mget_body["docs"],
+                          [{"_index": "agent-checkpoints-home-smith", "_id": "abc123.claim"}])
+
+    # _claimed_snapshot() now runs TWO independent searches (CLAIMED
+    # asc-sorted, then RESOLVED desc-sorted — see its docstring on why the
+    # sort orders differ) and concatenates their hits. Tests below use
+    # side_effect=[claimed_resp, resolved_resp] to target each call
+    # individually; call_args_list[0]/[1] correspond to CLAIMED/RESOLVED
+    # respectively, matching the function's own call order.
+
+    def test_claimed_snapshot_raises_if_claimed_search_fails(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._claimed_snapshot()
+
+    def test_claimed_snapshot_raises_if_claimed_search_non_200(self):
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(503)):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._claimed_snapshot()
+
+    def test_claimed_snapshot_raises_if_resolved_search_fails(self):
+        # The CLAIMED leg succeeds; only the second (RESOLVED) call fails —
+        # must still surface as MetricUnavailable, not a partial result.
+        claimed_resp = _FakeResponse(200, {"hits": {"hits": []}})
+        with mock.patch.object(slo_metrics, "es",
+                               side_effect=[claimed_resp, ConnectionError("refused")]):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._claimed_snapshot()
+
+    def test_claimed_snapshot_raises_if_resolved_search_non_200(self):
+        claimed_resp = _FakeResponse(200, {"hits": {"hits": []}})
+        with mock.patch.object(slo_metrics, "es",
+                               side_effect=[claimed_resp, _FakeResponse(503)]):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._claimed_snapshot()
+
+    def test_claimed_snapshot_combines_claimed_and_resolved_hits(self):
+        claimed_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_index": "agent-checkpoints-home-smith", "_id": "abc123.claim",
+             "_source": {"alert_id": "abc123", "tenant": {"id": "home-smith"}}},
+        ]}})
+        resolved_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_index": "agent-checkpoints-home-jones", "_id": "def456.claim"},
+        ]}})
+        with mock.patch.object(slo_metrics, "es",
+                               side_effect=[claimed_resp, resolved_resp]) as mock_es:
+            result = slo_metrics._claimed_snapshot()
+        # Deliberately "index"/"id", not "_index"/"_id" — see the
+        # function's own docstring on why (ES metadata-field-name risk).
+        self.assertEqual(result, [
+            {"index": "agent-checkpoints-home-smith", "id": "abc123.claim"},
+            {"index": "agent-checkpoints-home-jones", "id": "def456.claim"},
+        ])
+        claimed_body = mock_es.call_args_list[0][0][2]
+        resolved_body = mock_es.call_args_list[1][0][2]
+        self.assertEqual(claimed_body["query"],
+                          {"bool": {"filter": [{"term": {"phase": "CLAIMED"}}]}})
+        self.assertEqual(resolved_body["query"],
+                          {"bool": {"filter": [{"term": {"phase": "RESOLVED"}}]}})
+        self.assertEqual(claimed_body.get("_source"), False)
+        self.assertEqual(resolved_body.get("_source"), False)
+
+    def test_claimed_snapshot_returns_empty_list_when_nothing_open_or_resolved(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})):
+            self.assertEqual(slo_metrics._claimed_snapshot(), [])
+
+    def test_claimed_snapshot_query_shape_and_opposite_sort_orders(self):
+        with mock.patch.object(
+                slo_metrics, "es",
+                return_value=_FakeResponse(200, {"hits": {"hits": []}})) as mock_es:
+            slo_metrics._claimed_snapshot()
+        self.assertEqual(mock_es.call_count, 2)
+        claimed_index, claimed_body = mock_es.call_args_list[0][0][1], mock_es.call_args_list[0][0][2]
+        resolved_index, resolved_body = mock_es.call_args_list[1][0][1], mock_es.call_args_list[1][0][2]
+        self.assertIn("agent-checkpoints-*", claimed_index)
+        self.assertIn("agent-checkpoints-*", resolved_index)
+        self.assertEqual(claimed_body["size"], 200)
+        self.assertEqual(resolved_body["size"], 200)
+        # CLAIMED: oldest-first (a long-open claim is the suspicious one to
+        # keep). RESOLVED: newest-first (that population never shrinks, so
+        # oldest-first would starve out newly-resolved coverage — see the
+        # function's own docstring).
+        self.assertEqual(claimed_body["sort"],
+                          [{"@timestamp": {"order": "asc", "unmapped_type": "date"}}])
+        self.assertEqual(resolved_body["sort"],
+                          [{"@timestamp": {"order": "desc", "unmapped_type": "date"}}])
+
+    def test_claimed_snapshot_skips_hits_missing_index_or_id_metadata(self):
+        claimed_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_id": "abc123.claim"},  # missing _index
+            {"_index": "agent-checkpoints-home-smith"},  # missing _id
+            {"_index": "agent-checkpoints-home-smith", "_id": "def456.claim"},
+        ]}})
+        resolved_resp = _FakeResponse(200, {"hits": {"hits": []}})
+        with mock.patch.object(slo_metrics, "es", side_effect=[claimed_resp, resolved_resp]):
+            result = slo_metrics._claimed_snapshot()
+        self.assertEqual(result, [{"index": "agent-checkpoints-home-smith", "id": "def456.claim"}])
+
     def test_raw_alert_volume_raises_on_es_failure(self):
         with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
             with self.assertRaises(slo_metrics.MetricUnavailable):
@@ -645,7 +915,7 @@ class MainExitCodeTests(unittest.TestCase):
 
     def _mock_all_metrics(self, mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                            ingest_lag=10.0, parse_err=0.0, audit_write_failures=0.0,
-                           orphaned_claims=0.0, raw_alert_volume=None,
+                           orphaned_claims=0.0, vanished_claims=0.0, raw_alert_volume=None,
                            field_truncation_count=0, field_byte_clamp_count=0,
                            capture_loss_max_pct=0.0):
         if raw_alert_volume is None:
@@ -661,6 +931,8 @@ class MainExitCodeTests(unittest.TestCase):
                                return_value=audit_write_failures),
             mock.patch.object(slo_metrics, "metric_orphaned_claims",
                                return_value=orphaned_claims),
+            mock.patch.object(slo_metrics, "metric_vanished_claims",
+                               return_value=vanished_claims),
             mock.patch.object(slo_metrics, "metric_raw_alert_volume",
                                return_value=raw_alert_volume),
             mock.patch.object(slo_metrics, "metric_field_truncation_count",
@@ -699,6 +971,20 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("orphaned_claims", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_vanished_claims_breach_exits_2_and_sends_ntfy(self):
+        # Regression guard for #361: metric_vanished_claims must actually be
+        # wired into main()'s metric_fns dict, not just defined — same bug
+        # shape #216/#247/#257/#288 already guard other metrics against.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in self._mock_all_metrics(vanished_claims=1.0):
+                stack.enter_context(p)
+            code = self._run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        ntfy_post.assert_called_once()
+        self.assertIn("vanished_claims", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_audit_write_failures_below_threshold_does_not_breach(self):
         # coverage pinned to the real env's SLO_COVERAGE_MIN (105-rule
@@ -880,12 +1166,32 @@ class SloMetricsReaderRoleGrantTests(unittest.TestCase):
         role = json.loads(self.ROLE_PATH.read_text(encoding="utf-8"))
         return {name for entry in role["indices"] for name in entry["names"]}
 
+    def _granted_privileges(self, pattern: str) -> set:
+        role = json.loads(self.ROLE_PATH.read_text(encoding="utf-8"))
+        for entry in role["indices"]:
+            if pattern in entry["names"]:
+                return set(entry["privileges"])
+        return set()
+
     def test_role_file_grants_soc_agent_health(self):
         self.assertIn("soc-agent-health-*", self._granted_patterns(),
                        "slo_metrics_reader.json is missing the soc-agent-health-* "
                        "read grant metric_audit_write_failures() needs (#275 "
                        "regression: this bug produces no runtime error, only a "
                        "silently-wrong healthy reading)")
+
+    def test_role_file_grants_read_on_soc_slo_metrics(self):
+        # #361 security-auditor finding: soc-slo-metrics was write-only
+        # (create_index/create) by design until metric_vanished_claims()
+        # started _search-ing it for the prior sample — pattern PRESENCE
+        # alone (already covered by test_role_file_grants_soc_agent_health's
+        # sibling checks) isn't enough; a role entry can list a pattern with
+        # the wrong privileges and this class's other tests wouldn't notice.
+        self.assertIn("read", self._granted_privileges("soc-slo-metrics"),
+                       "slo_metrics_reader.json's soc-slo-metrics entry is missing "
+                       "'read' — metric_vanished_claims()'s prior-sample _search "
+                       "against soc-slo-metrics will 403 under the real slo_metrics "
+                       "service account (#361)")
 
     def test_compose_inline_copy_matches_role_file(self):
         # The compose file's inline PUT body must stay byte-for-byte in sync

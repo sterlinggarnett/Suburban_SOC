@@ -21,6 +21,13 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
   Orphaned claims                  == 0        — CLAIMED claims older than 10 min
                                                   with no paired phase checkpoint,
                                                   the claim-squatting signature (#257)
+  Vanished claims                  == 0        — a CLAIMED claim doc from the
+                                                  prior sample that no longer
+                                                  exists at all (deleted, not
+                                                  resolved) — the tamper
+                                                  signature #357's now-live
+                                                  delete-capable credential
+                                                  makes possible (#361)
   Field truncation count           measured    — pipeline.truncated over the window
                                                   (#252), no target — baseline for
                                                   whether ScriptBlockText's 32766
@@ -92,6 +99,11 @@ TARGETS = {
     # before the real alert intake ever runs, so a legitimate /approve 409s
     # "already claimed" and containment silently never happens) — target 0.
     "orphaned_claims": float(os.environ.get("SLO_ORPHANED_CLAIM_MAX", "0")),
+    # #361: checkpoints.py never deletes a `.claim` doc through its own API —
+    # only ever transitions its `phase` field in place — so ANY vanished
+    # CLAIMED doc is itself the anomaly; target is 0, same as the two
+    # claim-integrity metrics above.
+    "vanished_claims": float(os.environ.get("SLO_VANISHED_CLAIM_MAX", "0")),
     # #288: no target was calibrated against real traffic in this environment
     # (same caveat as field_truncation_count/field_byte_clamp_count below) —
     # 5% is a conservative, overridable starting point, not an
@@ -103,7 +115,7 @@ LOWER_BETTER = {
     "mttd_minutes": True, "mttr_minutes": True, "coverage_techniques": False,
     "false_positive_pct": True, "ingest_lag_seconds": True, "parse_error_pct": True,
     "audit_write_failures": True, "stuck_approval_claims": True,
-    "orphaned_claims": True, "capture_loss_max_pct": True,
+    "orphaned_claims": True, "vanished_claims": True, "capture_loss_max_pct": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
 # not a benign "n/a". A dead/unreachable pipeline produces no fresh docs, so
@@ -442,6 +454,240 @@ def metric_orphaned_claims():
     return sum(1 for d in results if not d.get("found"))
 
 
+# #361: how far back metric_vanished_claims() will trust a persisted
+# claimed_snapshot as a comparison baseline. Wide enough to tolerate a
+# missed run or a stretch of host downtime (slo-metrics.timer's
+# Persistent=true catches up after a reboot); far short of
+# compact_agent_checkpoints.py's DEFAULT_RETENTION_DAYS=90 for RELEASED
+# claims, so a stale baseline can never reach into a doc the compactor was
+# always going to delete anyway (see metric_vanished_claims()'s docstring).
+SLO_VANISHED_CLAIM_BASELINE_MAX_AGE_MIN = float(
+    os.environ.get("SLO_VANISHED_CLAIM_BASELINE_MAX_AGE_MIN", str(2 * 24 * 60)))
+
+
+def _claimed_snapshot(size=200):
+    """Hit metadata for every claim doc whose disappearance would itself be
+    anomalous — the baseline `metric_vanished_claims()` diffs the NEXT run
+    against (#361). Returns `index`/`id` (deliberately NOT `_index`/`_id` —
+    see the note below), never `_source`.
+
+    Covers TWO phases, not just CLAIMED (tester-debugger live-verification
+    finding during #361's own review): `claim_approval()`'s `op_type=create`
+    reclaim path (checkpoints.py) only checks whether the `.claim` doc
+    EXISTS, not what phase it was in before — `_transition_claim()`'s
+    conditional-PUT reclaim only fires on a 409 (doc still there), so it
+    only ever guards a doc that's still present. Deleting a doc outright
+    bypasses that guard entirely regardless of its last phase, exactly like
+    deleting a CLAIMED one does.
+      - CLAIMED: the case #361 was filed for — a live, in-flight claim.
+      - RESOLVED: `resolve_claim()`'s own docstring is explicit that a
+        RESOLVED doc must "always lose the race" against a fresh claim —
+        deleting one instead of merely reading it lets `op_type=create`
+        grant a brand-new claim for an alert that ALREADY, confirmedly,
+        successfully executed. That's a real second dispatch of a
+        completed containment action, not just a reopened approval gate —
+        arguably worse than the CLAIMED case, and this metric had zero
+        visibility into it before this addition (a doc leaves every future
+        snapshot the instant it stops being CLAIMED).
+      - RELEASED is DELIBERATELY excluded, unlike the two above:
+        `compact_agent_checkpoints.py`'s own `TERMINAL_CLAIM_PHASES`
+        already deletes RELEASED docs routinely (`DEFAULT_RETENTION_DAYS`
+        =90) — its docstring's own reasoning is that this is safe because
+        `claim_approval()`'s conditional-PUT reclaim path already treats a
+        RELEASED doc as freely re-winnable BY DESIGN, so an early/malicious
+        deletion "changes nothing that function wouldn't already do."
+        Tracking RELEASED here would just reproduce, for RELEASED docs
+        specifically, the exact stale-baseline false-positive class this
+        file's freshness window already exists to avoid for CLAIMED — for
+        zero actual security benefit, since RELEASED's own reclaim
+        semantics don't distinguish "doc deleted" from "doc still there."
+
+    Two INDEPENDENT, independently-sorted, independently-capped searches,
+    not one combined query — RESOLVED and CLAIMED have opposite growth
+    profiles, so a shared sort order would silently starve one of them:
+      - CLAIMED: oldest-first (same precedent as `metric_orphaned_claims()`)
+        — a claim resolves within seconds under normal operation, so a
+        long-open one is the more suspicious one to keep visible under the
+        cap.
+      - RESOLVED: newest-first. Unlike CLAIMED, RESOLVED docs are NEVER
+        intentionally deleted (see above) — this population only grows,
+        without bound, for the system's entire operational lifetime.
+        Sorting it oldest-first the way CLAIMED is sorted would mean the
+        cap fills with ancient resolutions almost immediately and never
+        makes room for a newly-resolved doc again — silently blinding this
+        metric to the operationally relevant window (an attacker erasing a
+        JUST-resolved claim before anyone double-checks it) in favor of
+        protecting incidents closed months or years ago.
+
+    Key naming: `_index`/`_id` are Elasticsearch metadata-field names: some
+    versions reject (or ambiguously handle) a user document containing a
+    nested object with sub-fields of those exact literal names. Persisting
+    plain `index`/`id` instead sidesteps that entirely; `metric_vanished_
+    claims()` maps them back to `_index`/`_id` only when building the real
+    `_mget` request body.
+
+    Deliberately a plain search, not folded into `metric_vanished_claims()`
+    itself: this call captures THIS run's state for the NEXT run to compare
+    against, not a value this run reports on its own.
+    """
+    def _search(phase, order):
+        r = es("POST", "/agent-checkpoints-*/_search",
+               {"query": {"bool": {"filter": [{"term": {"phase": phase}}]}},
+                "size": size, "_source": False,
+                "sort": [{"@timestamp": {"order": order, "unmapped_type": "date"}}]})
+        if r.status_code != 200:
+            raise MetricUnavailable(
+                f"claimed-snapshot {phase} search returned HTTP {r.status_code}")
+        return r.json().get("hits", {}).get("hits", [])
+
+    try:
+        hits = _search("CLAIMED", "asc") + _search("RESOLVED", "desc")
+        return [{"index": h["_index"], "id": h["_id"]} for h in hits if "_index" in h and "_id" in h]
+    except MetricUnavailable:
+        raise
+    except Exception as e:
+        raise MetricUnavailable(f"claimed-snapshot search failed: {e}") from e
+
+
+def metric_vanished_claims():
+    """Count of CLAIMED-or-RESOLVED claim docs from the PRIOR sample that no
+    longer exist at all (#361, follow-up from #357's security-auditor
+    review; RESOLVED coverage added after a tester-debugger live-
+    verification finding during this same issue's review).
+
+    #357 made `agent_checkpoints_compactor` (read+delete on
+    `agent-checkpoints-*`, no document-level restriction under this stack's
+    Basic license) live for the first time on any host that installs
+    `checkpoints-compact.service`. checkpoints.py's own CLAIMED/RESOLVED/
+    RELEASED protection is enforced only inside the Python layer
+    (`_transition_claim()`, an ES `_update` — the doc's `_id` never
+    changes, only its `phase` field does; see `resolve_claim()`/
+    `release_claim()`). Nothing stops that credential from
+    `_delete_by_query`-ing a live claim doc directly — see
+    `_claimed_snapshot()`'s docstring for exactly which phases that's
+    dangerous for (CLAIMED and RESOLVED; deliberately not RELEASED) and
+    why: `claim_approval()`'s `op_type=create` only checks whether the doc
+    EXISTS, not what phase it last held, so deleting either one grants a
+    fresh claim unconditionally, reopening the at-most-once execution gate
+    #214/#247 exist to close.
+
+    `metric_stuck_approval_claims()`/`metric_orphaned_claims()` both count
+    CLAIMED docs going UP as the sign of trouble; this is deliberately the
+    mirror case — deleting a CLAIMED OR RESOLVED doc drives both of THOSE
+    metrics down (RESOLVED docs were never in their scope to begin with),
+    making the dashboard read healthier exactly when something is wrong.
+    This metric is the one that goes up instead.
+
+    The join key is the prior sample's hit metadata (`index`/`id`), never
+    `_source` — captured by an EARLIER run before any tampering could
+    target it, so it can't be retroactively forged through the doc it
+    describes. It CAN still be forged by writing a NEW `soc-slo-metrics`
+    document: `slo_metrics_reader` itself holds `create` on this index (it
+    has to, to persist its own runs), and `soc_admin` holds `all` on
+    `soc-*` — `agent_checkpoints_compactor` does NOT (zero grants outside
+    `agent-checkpoints-*`), so that specific credential can't blind this
+    detection, but a credential that CAN write here is a strictly different
+    (and on this host, co-located: every service credential in this repo
+    is read from the same `scripts/setup/.env`) trust boundary than the one
+    this metric defends. The freshness window below narrows, but does not
+    eliminate, that surface — see the prior-sample query.
+
+    Prior-sample lookup: `_claimed_snapshot()` unconditionally stamps every
+    run's own persisted doc with `claimed_snapshot_at` (see `main()`),
+    including when zero claims were open — Elasticsearch's `exists` query
+    does NOT match a field indexed as `[]`, so keying the lookup on
+    `claimed_snapshot` itself would silently skip every quiet run and reach
+    arbitrarily far back for a non-empty one. `claimed_snapshot_at` is
+    always a non-empty scalar, so `exists` on IT is reliable regardless of
+    how many claims were open. The accompanying `range` bounds that lookup
+    to `SLO_VANISHED_CLAIM_BASELINE_MAX_AGE_MIN` in the past AND rejects
+    anything timestamped in the future (`lte: now`) — the latter closes a
+    forged-baseline doc pinning the search forever via a bogus future
+    `@timestamp`/`claimed_snapshot_at`, the sharper version of this
+    metric's own known residual gap below.
+
+    No prior sample within the freshness window (first run, a fresh/empty
+    index — searched with `ignore_unavailable=true` so a not-yet-created
+    `soc-slo-metrics` 404s into an empty result instead of an error, or
+    every run in that window genuinely had nothing open) is a real
+    "nothing to compare against" — 0, not an error.
+
+    `_mget` per-doc errors (e.g. a tenant's whole `agent-checkpoints-*`
+    index gone, not just one doc) are NOT counted as vanished — that is
+    "could not determine," not "confirmed gone," and this file's own
+    standard (`MetricUnavailable` over a silently-wrong value) applies.
+
+    KNOWN RESIDUAL GAP, deliberately not fixed here: if a deleted claim's
+    `alert_id` gets a legitimate NEW claim before the next sample runs
+    (`op_type=create` succeeds again once the old doc is gone), the _mget
+    below finds a doc again (a fresh CLAIMED document under the SAME `_id`
+    — `_mget` only checks existence, not content) and this specific
+    vanish-then-recreate race won't register, for either phase this metric
+    tracks. Narrowing the SLO run cadence below the claim lifecycle would
+    help but is a deployment/tuning decision, not a code change this
+    metric's addition should make unilaterally.
+
+    Coverage is asymmetric between the two phases it tracks, by nature of
+    what each phase means: a CLAIMED claim only sits in ANY snapshot while
+    it's genuinely open — "a normal run resolves it within seconds" (see
+    `metric_stuck_approval_claims()`) — so in practice this mostly catches
+    stuck/long-lived CLAIMED claims, not fast resolve-in-seconds ones. A
+    RESOLVED claim, once it exists, keeps appearing in every snapshot
+    (subject to `_claimed_snapshot()`'s own newest-first cap) until it's
+    overtaken by newer resolutions — so RESOLVED coverage is closer to
+    continuous, bounded mainly by that cap under high claim volume, not by
+    sampling timing. Real, partial coverage either way, not full coverage.
+    """
+    try:
+        r = es("POST", "/soc-slo-metrics/_search?ignore_unavailable=true",
+               {"size": 1, "sort": [{"@timestamp": "desc"}],
+                "query": {"bool": {"filter": [
+                    {"exists": {"field": "claimed_snapshot_at"}},
+                    {"range": {"claimed_snapshot_at": {
+                        "gte": f"now-{SLO_VANISHED_CLAIM_BASELINE_MAX_AGE_MIN:g}m",
+                        "lte": "now"}}},
+                ]}},
+                "_source": ["claimed_snapshot"]})
+        if r.status_code != 200:
+            raise MetricUnavailable(f"vanished-claims prior-sample search returned HTTP {r.status_code}")
+        hits = r.json().get("hits", {}).get("hits", [])
+    except MetricUnavailable:
+        raise
+    except Exception as e:
+        raise MetricUnavailable(f"vanished-claims prior-sample search failed: {e}") from e
+
+    raw_prior = hits[0]["_source"].get("claimed_snapshot", []) if hits else []
+    # Trust boundary (see docstring): only accept the exact shape
+    # _claimed_snapshot() produces. Anything else — wrong types, extra
+    # keys that could smuggle _mget request options like `routing`, an
+    # `_index` outside this pipeline's own namespace — is dropped, not
+    # passed through to a real ES request body.
+    prior = [{"_index": entry["index"], "_id": entry["id"]} for entry in raw_prior
+             if isinstance(entry, dict) and set(entry) == {"index", "id"}
+             and isinstance(entry.get("index"), str) and isinstance(entry.get("id"), str)
+             and entry["index"].startswith("agent-checkpoints-")
+             and entry["id"].endswith(".claim")]
+    if not prior:
+        return 0
+
+    try:
+        r = es("POST", "/_mget", {"docs": prior})
+        if r.status_code != 200:
+            raise MetricUnavailable(f"vanished-claims mget returned HTTP {r.status_code}")
+        results = r.json().get("docs", [])
+    except MetricUnavailable:
+        raise
+    except Exception as e:
+        raise MetricUnavailable(f"vanished-claims mget failed: {e}") from e
+
+    errored = [d for d in results if "error" in d]
+    if errored:
+        raise MetricUnavailable(
+            f"vanished-claims mget: {len(errored)} doc(s) unreadable, "
+            f"first: {errored[0].get('error')}")
+    return sum(1 for d in results if not d.get("found"))
+
+
 def metric_raw_alert_volume():
     """Raw detection signal volume in the window, independent of whether a case
     was ever opened (#216) — metric_false_positive_pct() only sees analyst-
@@ -667,6 +913,7 @@ def main():
         "audit_write_failures": metric_audit_write_failures,
         "stuck_approval_claims": metric_stuck_approval_claims,
         "orphaned_claims": metric_orphaned_claims,
+        "vanished_claims": metric_vanished_claims,
         "raw_alert_volume": metric_raw_alert_volume,
         "field_truncation_count": metric_field_truncation_count,
         "field_byte_clamp_count": metric_field_byte_clamp_count,
@@ -729,6 +976,25 @@ def main():
     # persisted status — a run with any unmeasurable metric must never
     # persist "ok", even if every metric that DOES have a target is healthy.
     doc["status"] = "error" if errors else ("breach" if breaches else "ok")
+
+    # #361: this run's own CLAIMED-doc snapshot, persisted for
+    # metric_vanished_claims() to diff the NEXT run against. Top-level, not
+    # under "slo" — it isn't a value/target/breach dashboard entry, it's
+    # state for this metric's own future comparison. claimed_snapshot_at is
+    # stamped UNCONDITIONALLY, even when the snapshot itself is empty — see
+    # metric_vanished_claims()'s docstring for why the prior-sample lookup
+    # depends on that (Elasticsearch's `exists` query does not match `[]`).
+    # Best-effort: a capture failure here means the NEXT run either compares
+    # against an older baseline still inside its freshness window, or (once
+    # that window elapses) gets a clean "no prior sample" 0 — either way,
+    # not a reason to fail this run's own otherwise-successful metrics.
+    try:
+        doc["claimed_snapshot"] = _claimed_snapshot()
+        doc["claimed_snapshot_at"] = now
+    except MetricUnavailable as e:
+        print(f"  -> claimed-snapshot capture failed (next vanished_claims "
+              f"check will compare against an older baseline, if still "
+              f"within its freshness window): {e}", file=sys.stderr)
 
     # Index for the SLO dashboard.
     index_failed = False

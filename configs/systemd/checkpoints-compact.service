@@ -30,6 +30,16 @@ User=tjlam
 # execution gate (#214/#247). agent_checkpoints_compactor holds read+delete
 # on agent-checkpoints-* ONLY, used by nothing else.
 #
+# #361: this split does NOT mean agent_checkpoints_compactor itself is safe
+# to lose — the role has no document-level restriction (Basic license, no
+# DLS), so this credential's own compromise (or misuse) CAN still delete a
+# live CLAIMED doc directly, bypassing checkpoints.py's Python-layer
+# protection entirely. That's explicitly out of this split's threat model,
+# not a gap in it. slo_metrics.py's vanished_claims SLO is the compensating
+# detection: checkpoints.py never deletes a `.claim` doc through its own
+# API (only transitions its phase in place), so a CLAIMED doc that simply
+# stops existing between two samples is the tamper signature.
+#
 # #357 (security-auditor review, #271; empirically re-confirmed live via
 # `systemd-run --user` against a throwaway unit on this exact host):
 # systemd's Environment= directive does NOT perform ${VAR} expansion — per

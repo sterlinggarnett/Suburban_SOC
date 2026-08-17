@@ -5,7 +5,19 @@ Two lanes, 22 emulation->detection pairs. `[x]` = wiring validated by `validate_
 ## Network / Linux lane (Zeek)
 
 - [x] **RECONNAISSANCE** (T1046) — `sim_portscan.sh` -> `net_zeek_port_scan.yml`
-- [x] **EXPLOITATION** (T1105) — `sim_malware_download.sh` -> `net_zeek_executable_download.yml`
+- [x] ⚠️ **EXPLOITATION_UNVERIFIED** (T1105) — `sim_malware_download.sh` -> `net_zeek_executable_download.yml`
+      ⚠️ **#383: structurally wired, confirmed NOT to produce matching telemetry.**
+      `[x]` above means `validate_emulation_map.py`'s file-existence/tag-match
+      check passes — it does not mean this loop live-fires. The default sample
+      (EICAR over HTTPS) never reaches Zeek's file-analysis framework at all,
+      and its documented plaintext-HTTP fallback types as `application/zip`,
+      which this rule's `mime_type` list has never included. The RULE itself
+      is verified (tests/detections/test_live_fire.py fires it against a real
+      ES; #365 live-verified every mime_type against the pinned Zeek image) —
+      only the emulation payload is wrong. See
+      `net_zeek_executable_download.yml`'s own description and
+      `configs/detections/emulation_telemetry.map`'s EXPLOITATION_UNVERIFIED
+      section.
 - [x] **CREDENTIAL_ACCESS_SSH** (T1110) — `sim_brute_ssh.sh` -> `net_zeek_ssh_bruteforce.yml`
 
 Operational to-dos (Linux lane):

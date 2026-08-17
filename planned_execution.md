@@ -37,12 +37,13 @@ this doc doesn't duplicate 37 issue bodies inline the way it narrates
 *completed* work. As each issue is picked up, gate and record it here the
 same way every prior milestone's issues were recorded below.
 
-No cross-milestone priority order is set yet — M17/M18 are the largest
-(detection- and pipeline-correctness debt, the same theme M15 was just
-about, so a natural continuation) and M19 has the most security-labeled
-issues, but which to start is an open call, not yet a recommendation.
-Multi-phase execution gating still applies: each issue is its own gated
-unit, no unattended multi-issue runs.
+M17 closed out 2026-08-17 (6/8, no actionable work left). **M18 is now the
+active queue** — 4/13 closed already (#344, #341, #342, #337), 9 remaining:
+#326, #336, #338, #339, #345, #347, #349, #367, #370. Same approach as M17:
+smallest/most-contained issue first, one at a time, each through the full
+implement → parallel security-auditor + code-reviewer review → live-verify
+→ PR → CI → merge → update this doc → commit+push cycle, no unattended
+multi-issue runs. M19–M22 remain open calls after M18.
 
 **M18 progress:**
 

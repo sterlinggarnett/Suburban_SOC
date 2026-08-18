@@ -29,7 +29,7 @@ matching the M12/M13/M14 pattern.
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
-| [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 3 | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
+| [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -3164,6 +3164,22 @@ are implemented in code; checked off with that one caveat noted inline.
   detail in `findings/20260818-430-network-tactic-validation.md`. **M17
   now 18/34 closed** (14 real follow-ups open, 2 not actionable) —
   continuing the resumed run.
+- **Full open-issue validity audit run, all 45 open issues** (per direct
+  request, not milestone-sequenced work). 6 parallel sub-agents each
+  verified every claim in their batch against the current code at HEAD
+  and git history, not just the issue text. Result: 39 VALID and
+  actionable now, 4 VALID BUT DEFERRED (#265/#326/#374 explicitly wait on
+  an external event or policy decision; #312 needs a decision but isn't
+  externally blocked, kept as plain VALID), 1 UNCERTAIN (#333 — needs live
+  traffic testing to confirm/deny an OpenSSH-client-version claim, not
+  resolvable via static review), and exactly **1 INVALID: #289** (M22) —
+  closed `not planned`. Its core claim (SOP-012/COMPLIANCE_MATRIX citing
+  dead `configs/zeek/local.zeek` as a live control) was already fixed by
+  commit `1d33b54` (PR #313, an unrelated #286 fix) rewriting both
+  citations to `configs/intel/config.zeek` with an explicit "NOT
+  local.zeek" disclaimer — independently re-verified before closing.
+  **M22 now 5 open** (was 6). No other issue closed or edited by this
+  audit.
 
 ---
 

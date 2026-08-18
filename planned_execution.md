@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 10/15 closed, resumed 2026-08-17 (project-board backfill retroactively assigned 7 more open follow-ups back to this milestone) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 11/15 closed, resumed 2026-08-17 (project-board backfill retroactively assigned 7 more open follow-ups back to this milestone) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -1017,6 +1017,64 @@ are real, working smallest/most-contained first: #386 → #387 → #382 →
   open remaining: #283/#333 not actionable, 3 real follow-ups left) —
   #384 next (mime_type coverage expansion for script interpreters/
   archives/containers).
+- [x] **#384 (P3, detection) — COMPLETE, MERGED** — live-measured every
+  "unconfirmed" mime_type class the issue asked about (Python/Perl/Ruby
+  scripts, batch, PowerShell/VBScript/JS/WSF, HTA, ISO/archives, LNK
+  shortcuts, MSI installers, Mach-O binaries) for `net_zeek_executable_
+  download.yml`/`net_zeek_smtp_attachment_executable.yml`.
+  [PR #419](https://github.com/voltron-1/Suburban_SOC/pull/419) merged
+  2026-08-18 (squash), auto-closing #384 — no GitHub-side human review,
+  same review-bypass basis as every prior session fix (13/13 CI green,
+  parallel security-auditor + code-reviewer sub-agent review).
+  13 real payloads (real genisoimage/msitools/clang output where a real
+  tool exists, spec-accurate hand-built structures only where none does)
+  over real plaintext HTTP, captured to a real pcap, replayed through
+  the pinned zeek/zeek:8.2.1 image, cross-checked against Zeek's own
+  signature source. Added 6 new confirmed entries to both rules, kept in
+  sync: text/x-python, text/x-perl, text/x-ruby, text/x-msdos-batch,
+  application/x-ms-shortcut, application/x-mach-o-executable.
+  Deliberately did NOT add text/plain (too broad, what 4 of the asked-
+  about classes plus text/html all produce) or application/msword (what
+  a real MSI produces, per Zeek's own signature comment "non-specific
+  and terrible" — filed #417). Both exclusions pinned by a new negative
+  regression test.
+  code-reviewer approved clean; security-auditor found 1 HIGH + 6 MEDIUM
+  in the first draft's evidence chain, each closed with more live-fire
+  work, not just wording: Mach-O only tested a thin binary (fat/
+  universal, the dominant modern macOS form, has a separate signature) —
+  built a REAL universal binary via `llvm-lipo` combining genuine
+  arm64+x86_64 clang objects and live-confirmed the same mime_type;
+  only 4 of 6 new values were spot-checked against real Elasticsearch —
+  closed perl/ruby too; the batch-signature disclosure had an uncited
+  prevalence claim contradicted by real evasions (`@setlocal` misses
+  `@set ` by one space, leading whitespace/labels) — rewritten with the
+  actual counterexamples; the shebang-gating for Python/Perl/Ruby and
+  the .hta/text/html gap weren't disclosed at parity with the batch
+  caveat, and the ".hta already covered" claim was checked and found
+  wrong (`proc_creation_win_mshta_remote.yml` requires a CommandLine
+  argument this delivery chain doesn't produce) — both fixed; the LNK
+  entry's "dominant vector" framing contradicted the same description's
+  own archive-gap paragraph (the dominant LNK chain wraps it in an ISO,
+  which produces no mime_type at all) — now says it only covers the
+  non-dominant bare-file case; falsepositives lists were stale and
+  ATT&CK tags had no recorded non-change rationale — both fixed.
+  Self-inflicted bug caught during this same pass: an earlier
+  description draft's prose literally contained the string
+  "attack.t1059.003", which `build_attack_coverage.py`'s whole-file
+  regex scan (not a strict tags: parse) picked up as a real tag,
+  silently reassigning this rule's coverage-doc technique from T1105 —
+  caught by re-running the doc build before finalizing, not shipped.
+  Full methodology, SHA-256 hashes, raw files.log records, and verbatim
+  signature-source grep transcripts in
+  `findings/20260817-384-mime-type-coverage.md`.
+  Filed [#417](https://github.com/voltron-1/Suburban_SOC/issues/417)
+  (MSI/Word ambiguity, security-relevant, needs its own solution) and
+  [#418](https://github.com/voltron-1/Suburban_SOC/issues/418) (flat
+  severity across a 10-value OR-block spanning very different real-
+  world base rates) as follow-ups, both milestoned, both deliberately
+  out of scope. **M17 now 11/15 closed** (4 open remaining: #283/#333
+  not actionable, 2 real follow-ups left) — #392 next (long-window SSH
+  cadence companion).
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>

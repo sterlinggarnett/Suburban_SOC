@@ -101,22 +101,53 @@ def logsource_label(rule_text: str) -> str:
     return "Sysmon/Winlogbeat (process_creation)"
 
 
-# #281 security-auditor finding: a title containing either character would
-# corrupt a downstream renderer that isn't expecting it — `|` breaks
-# markdown()'s table column structure (:238-239), `;` makes
+# #425 security-auditor finding: _UNSAFE_TITLE_CHARS previously listed
+# "::" as an independent literal, uncoupled from _merged_comment()'s own
+# actual delimiter strings below — exactly the kind of decoupling that
+# let the ORIGINAL bug (the delimiter was "—", a character several
+# shipped titles legitimately contain) go unnoticed through #281, #410,
+# and #426 before finally being caught. Defining the delimiters once
+# here and deriving the guard from them means a future delimiter change
+# can't silently stop being enforced.
+_TITLE_RULE_DELIM = " :: "
+_GROUP_DELIM = "; "
+
+# #281 security-auditor finding: a title containing any of these
+# characters would corrupt a downstream renderer that isn't expecting it
+# — `|` breaks markdown()'s table column structure, `;` makes
 # _merged_comment()'s join ambiguous about where one rule's attribution
-# ends and the next begins. No current rule title contains either (verified
-# against the real corpus), so failing loudly here catches a future one at
-# authoring/CI time instead of silently corrupting a generated doc.
-_UNSAFE_TITLE_CHARS = ("|", ";")
+# ends and the next begins. No current rule title contains any of these
+# (verified against the real corpus), so failing loudly here catches a
+# future one at authoring/CI time instead of silently corrupting a
+# generated doc. The stripped _TITLE_RULE_DELIM entry guards
+# _merged_comment()'s own title<->rule delimiter (#425, security-auditor
+# finding): an em-dash title collided with the ORIGINAL " — " delimiter
+# in a live, shipped Navigator tooltip (T1110, a 5-rule group with 2
+# em-dash titles) before this fix — "—" itself can't be banned
+# retroactively (7+ rule titles already ship with one), so the delimiter
+# moved to a character no title uses instead, and that character is now
+# enforced the same way "|"/";" already were.
+_UNSAFE_TITLE_CHARS = ("|", _GROUP_DELIM.strip(), _TITLE_RULE_DELIM.strip())
 
 
 def _validate_title(title, source_label):
-    if any(c in title for c in _UNSAFE_TITLE_CHARS):
+    # security-auditor finding (#425): this corpus is unusually "::"-dense
+    # in DESCRIPTIONS and detection blocks (Zeek notice names like
+    # SSH::Password_Guessing, Mimikatz module syntax like sekurlsa::,
+    # lsadump::), so a future TITLE hitting this ban is a realistic
+    # authoring mistake, not a hypothetical — name the offending
+    # character and the safe scope explicitly rather than a bare
+    # "rename it" that doesn't say why.
+    hit = next((c for c in _UNSAFE_TITLE_CHARS if c in title), None)
+    if hit:
         raise ValueError(
-            f"{source_label}: title {title!r} contains one of "
-            f"{_UNSAFE_TITLE_CHARS} — would corrupt the generated markdown "
-            f"table or merged Navigator comment; rename the rule/entry")
+            f"{source_label}: title {title!r} contains {hit!r}, which "
+            f"this generator uses as a delimiter ({_UNSAFE_TITLE_CHARS} "
+            f"are all reserved) — would corrupt the generated markdown "
+            f"table or merged Navigator comment. This restriction is on "
+            f"the rule's title only; {hit!r} is fine in its description "
+            f"or detection block. Use a different character in the "
+            f"title instead.")
     return title
 
 
@@ -192,12 +223,37 @@ def _merged_comment(group):
     Detections-CI fixture test — states it once instead of repeating the
     identical "(test: ...)" suffix per rule (code-reviewer finding: a
     5-rule merge, T1543.003, bloated to a 949-character tooltip otherwise,
-    the primary human-facing consumer of this field)."""
+    the primary human-facing consumer of this field).
+
+    Uses "::" (not "—") as the title<->rule delimiter (#425, security-
+    auditor finding): an em-dash title made this boundary genuinely
+    ambiguous in a live, shipped multi-rule group (T1110 — 5 rules, 2 of
+    which carry an em-dash title) before this fix. "::" is enforced via
+    _UNSAFE_TITLE_CHARS above so a future title can't reintroduce the
+    same ambiguity.
+
+    security-auditor finding (#425): _validate_title() only ever runs on
+    `title` at harvest() time, at the two current row-construction call
+    sites — this function has no way to know that happened, and `rule`/
+    `test` are never validated at all. Asserted directly here instead of
+    trusting the caller, so a third future ingest path (or a `rule`/
+    `test` value that happens to contain a delimiter) fails loudly at
+    generation time rather than silently reproducing the exact ambiguity
+    this fix exists to close."""
+    for r in group:
+        assert _TITLE_RULE_DELIM.strip() not in r["title"] and _GROUP_DELIM.strip() not in r["title"], (
+            f"{r['rule']}: title {r['title']!r} contains a comment delimiter — "
+            f"should have been caught by _validate_title() at harvest() time")
+        assert _TITLE_RULE_DELIM.strip() not in r["rule"] and _GROUP_DELIM.strip() not in r["rule"], (
+            f"{r['rule']!r}: rule path itself contains a comment delimiter")
+        assert _TITLE_RULE_DELIM.strip() not in r["test"] and _GROUP_DELIM.strip() not in r["test"], (
+            f"{r['rule']}: test description {r['test']!r} contains a comment delimiter")
     tests = {r["test"] for r in group}
-    titles_and_rules = "; ".join(f"{r['title']} — {r['rule']}" for r in group)
+    titles_and_rules = _GROUP_DELIM.join(f"{r['title']}{_TITLE_RULE_DELIM}{r['rule']}" for r in group)
     if len(tests) == 1:
         return f"{titles_and_rules} (test: {group[0]['test']})"
-    return "; ".join(f"{r['title']} — {r['rule']} (test: {r['test']})" for r in group)
+    return _GROUP_DELIM.join(
+        f"{r['title']}{_TITLE_RULE_DELIM}{r['rule']} (test: {r['test']})" for r in group)
 
 
 def navigator_layer(rows):

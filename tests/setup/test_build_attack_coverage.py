@@ -203,8 +203,8 @@ class MergedCommentTests(unittest.TestCase):
         ]
         comment = bac._merged_comment(group)
         self.assertEqual(comment.count("(test:"), 1)
-        self.assertIn("A — rules/sigma/a.yml", comment)
-        self.assertIn("B — rules/sigma/b.yml", comment)
+        self.assertIn("A :: rules/sigma/a.yml", comment)
+        self.assertIn("B :: rules/sigma/b.yml", comment)
 
     def test_states_each_test_separately_when_they_differ(self):
         group = [
@@ -218,7 +218,74 @@ class MergedCommentTests(unittest.TestCase):
 
     def test_single_rule_group_is_unaffected(self):
         group = [_row("T1046", "Discovery", title="A", test="test-a")]
-        self.assertEqual(bac._merged_comment(group), "A — rules/sigma/x.yml (test: test-a)")
+        self.assertEqual(bac._merged_comment(group), "A :: rules/sigma/x.yml (test: test-a)")
+
+    def test_em_dash_title_does_not_collide_with_the_delimiter(self):
+        """#425/#426, security-auditor finding: the ORIGINAL " — " delimiter
+        collided with an em-dash-containing title in a real, shipped
+        multi-rule group (T1110) — the title<->rule boundary became
+        ambiguous by inspection. Uses the real corpus title verbatim
+        (net_zeek_ssh_session_cadence.yml) and gives the two rows
+        different `test` values (code-reviewer finding: an earlier draft
+        of this test used the shared-test-value default, which only
+        exercises _merged_comment()'s len(tests)==1 short path — the
+        REAL T1110 group spans two distinct test values, hitting the
+        `else` branch instead, which is the branch this exact bug lived
+        in; a fix applied to only one of the two branches would have
+        passed this test silently otherwise)."""
+        group = [
+            _row("T1110", "Credential Access", rule="rules/sigma/net_zeek_ssh_session_cadence.yml",
+                 title="SSH Session Cadence — Complementary Brute-Force Coverage Below "
+                       "detect-bruteforcing's Threshold",
+                 test="Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)"),
+            _row("T1110", "Credential Access", rule="configs/logstash.conf",
+                 title="B", test="tests/pipeline/test_framework_enrichment.py"),
+        ]
+        comment = bac._merged_comment(group)
+        self.assertIn(
+            "SSH Session Cadence — Complementary Brute-Force Coverage Below "
+            "detect-bruteforcing's Threshold :: rules/sigma/net_zeek_ssh_session_cadence.yml",
+            comment)
+        self.assertIn("B :: configs/logstash.conf", comment)
+
+    def test_output_structurally_decomposes_back_to_one_segment_per_rule(self):
+        """security-auditor finding: the sibling tests above (including
+        test_em_dash_title_does_not_collide_with_the_delimiter) all assert
+        a literal delimiter STRING — they'd re-pass trivially if the
+        delimiter changed again to something else that merely doesn't
+        happen to appear in this particular test's fixture titles, without
+        actually proving the general non-ambiguity property. This test
+        checks the STRUCTURAL invariant instead: splitting the output on
+        _GROUP_DELIM must yield exactly one segment per input rule, and
+        each segment must contain exactly one _TITLE_RULE_DELIM — so ANY
+        future delimiter choice that collides with real title/rule/test
+        content fails here, not just a reversion to the one delimiter
+        already fixed."""
+        group = [
+            _row("T1110", "Credential Access", rule="rules/sigma/net_zeek_ssh_session_cadence.yml",
+                 title="SSH Session Cadence — Complementary Brute-Force Coverage Below "
+                       "detect-bruteforcing's Threshold"),
+            _row("T1110", "Credential Access", rule="rules/sigma/net_zeek_ssh_session_cadence_sustained.yml",
+                 title="Sustained Low-and-Slow SSH Session Cadence — Below detect-bruteforcing "
+                       "AND net_zeek_ssh_session_cadence's Own Rate Floor"),
+            _row("T1110", "Credential Access", rule="configs/logstash.conf", title="Brute Force"),
+        ]
+        comment = bac._merged_comment(group)
+        segments = comment.split(bac._GROUP_DELIM)
+        self.assertEqual(len(segments), len(group))
+        for segment in segments:
+            self.assertEqual(segment.count(bac._TITLE_RULE_DELIM), 1)
+
+    def test_no_real_title_rule_or_test_contains_a_comment_delimiter(self):
+        """security-auditor finding: guards the invariant _merged_comment()
+        actually depends on directly against the real corpus, rather than
+        only against synthetic fixtures — harvest() reads the real
+        rules/sigma/*.yml + configs/logstash.conf, same as
+        RealCorpusRegressionTests elsewhere in this file."""
+        for r in bac.harvest():
+            for field in ("title", "rule", "test"):
+                self.assertNotIn(bac._TITLE_RULE_DELIM.strip(), r[field])
+                self.assertNotIn(bac._GROUP_DELIM.strip(), r[field])
 
 
 class ValidateTitleTests(unittest.TestCase):
@@ -234,6 +301,13 @@ class ValidateTitleTests(unittest.TestCase):
     def test_rejects_a_semicolon(self):
         with self.assertRaises(ValueError):
             bac._validate_title("Bad; Title", "rules/sigma/x.yml")
+
+    def test_rejects_a_double_colon(self):
+        # #425: guards _merged_comment()'s own "::" title<->rule delimiter
+        # the same way "|"/";" already guard the markdown table/Navigator
+        # merge delimiters.
+        with self.assertRaises(ValueError):
+            bac._validate_title("Bad :: Title", "rules/sigma/x.yml")
 
 
 class HarvestFailsLoudlyOnBadInputTests(unittest.TestCase):

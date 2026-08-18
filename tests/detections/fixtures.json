@@ -1596,6 +1596,10 @@
       },
       {
         "source": "SMTP"
+      },
+      {
+        "source": "SMTP",
+        "mime_type": "text/html"
       }
     ]
   },

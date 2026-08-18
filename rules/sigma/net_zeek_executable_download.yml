@@ -71,6 +71,139 @@ description: |
     "value moved under an upstream rebuild" case — it never did).
     application/x-executable (kept) matches both static and non-PIE
     dynamically-linked ELF binaries.
+    #384 (live-verified, 2026-08-17; full methodology, SHA-256 hashes and
+    raw files.log records in findings/20260817-384-mime-type-coverage.md):
+    #365 confirmed the 4-entry list had no regression, but the review also
+    surfaced real pre-existing coverage gaps the old and new lists both
+    shared — payload/delivery classes real attackers commonly use that
+    neither list has ever covered. Live-tested 13 real payloads (real
+    genisoimage/msitools/clang output where a real tool exists, spec-
+    accurate hand-built structures only where none does — never an
+    arbitrary byte blob) over real plaintext HTTP, captured to a real
+    pcap, replayed through the same pinned zeek/zeek:8.2.1 image #365
+    used, AND cross-checked every result against Zeek's own signature
+    source (base/frameworks/files/magic/*.sig inside the image) so this
+    isn't pcap-replay alone. 6 new entries added, each independently
+    confirmed both ways:
+    - text/x-python, text/x-perl, text/x-ruby: shebang-anchored
+      signatures (`^#![^\n]{1,15}bin/(env )?python|perl|ruby`, priority
+      60) - a Python/Perl/Ruby dropper is the identical bug class #365
+      was filed over (a shell-script gap), just for three more
+      interpreters. SHEBANG-GATED, same narrowness class as the batch
+      entry below: a `.py`/`.pl`/`.rb` payload with no shebang line at
+      all (the normal case for `python stage2.py` or an
+      `exec(open(...).read())`-style invocation), or an `env -S`
+      shebang (breaks the `(env )?` adjacency), types `text/plain` and
+      is NOT covered. Interpreter paths longer than 15 characters
+      between `#!` and `bin/` (e.g. a Homebrew-style
+      `/opt/homebrew/opt/python@3.11/bin/python3`) also miss.
+    - text/x-msdos-batch: THREE distinct signatures, all content-based,
+      not extension-based - the payload must literally START with
+      `@echo off`, `@rem`, or `@set ` (case-insensitive) to match; a
+      batch file starting with a label or a plain command is invisible
+      to this signature and falls through to text/plain instead. This
+      is a one-keystroke-wide net, not just a narrow one -
+      security-auditor review (#384): `@setlocal ...` (a genuinely
+      common real first line) misses `@set ` by exactly one missing
+      space; a leading blank line, leading whitespace, or a UTF-8 BOM
+      before `@echo off` defeats the `^` anchor with zero behavioral
+      change to the batch file; `:: comment` or `:LABEL` as line 1 is
+      routine in real droppers and also misses. Treat this entry as
+      opportunistic coverage of one common authoring style, not as
+      T1059.003 coverage - the T1059.003 ATT&CK tag is deliberately NOT
+      in this rule's tags below; keep it that way.
+    - application/x-ms-shortcut (T1204.002): signature is a fixed
+      20-byte magic
+      (`^\x4c\x00\x00\x00\x01\x14\x02\x00\x00\x00\x00\x00\xc0\x00\x00\x00
+      \x00\x00\x00\x46` - HeaderSize + LinkCLSID per MS-SHLLINK 2.1),
+      confirmed with a minimal-but-spec-accurate 76-byte header (no
+      optional LinkTargetIDList/LinkInfo/StringData structures, valid
+      per their own presence-bit flags) - matches the exact signature
+      bytes, not a hand-wavy guess. Covers a BARE .lnk on the wire only
+      - security-auditor review (#384): the LNK delivery chain widely
+      considered dominant specifically WRAPS the shortcut in an
+      .iso/.img/.zip to defeat mail-gateway extension filtering and
+      MOTW propagation, which (see the archive gap below) produces NO
+      mime_type at all. This entry does not cover that dominant
+      variant, only the less-common bare-file case.
+    - application/x-mach-o-executable (T1105, macOS cross-platform):
+      TWO signatures, both confirmed live, not just one. Thin binaries
+      (`^[\xce\xcf]\xfa\xed\xfe`) are confirmed FILETYPE-AGNOSTIC
+      directly from source - matches MH_OBJECT/MH_EXECUTE/MH_DYLIB/etc.
+      alike, since the filetype field (offset 12) isn't part of the
+      magic check - tested with a real clang-cross-compiled object file
+      (`clang -target x86_64-apple-macos11`), not a linked executable
+      but the identical magic bytes one would carry. Fat/universal
+      binaries (`^\xca\xfe\xba\xbe..\x00[\x01-\x14]`) are a SEPARATE
+      signature, initially untested - security-auditor review (#384)
+      correctly flagged that fat/universal is the dominant modern macOS
+      distribution form post-Apple-Silicon and that the thin signature
+      structurally cannot match it (different magic entirely,
+      `\xca\xfe\xba\xbe` vs `\xce\xfa\xed\xfe`/`\xcf\xfa\xed\xfe`).
+      Closed, not just disclosed: built a REAL universal binary
+      (`llvm-lipo -create` combining genuine x86_64+arm64 clang objects,
+      Debian's `llvm` package, no macOS SDK needed) and live-fire
+      confirmed it produces the SAME `application/x-mach-o-executable`
+      mime_type - one entry in this list genuinely covers both thin and
+      fat Mach-O, not just the thin case.
+    Two classes tested and confirmed as REAL, PERMANENT gaps - not
+    addable via mime_type, disclosed rather than silently absorbed:
+    - .ps1/.vbs/.js/.wsf all typed `text/plain` - Zeek has no distinct
+      signature for PowerShell/VBScript/JScript/WSF content at all.
+      Adding `text/plain` to this list would match literally any
+      plaintext HTTP download (logs, configs, READMEs) - too broad to
+      ever be a specific signal at this logsource. T1059.001/.005/.007
+      genuinely cannot be covered here; needs endpoint telemetry
+      (Sysmon ScriptBlockText) instead. .hta also typed `text/plain`'s
+      sibling `text/html` (HTA is just HTML+script to Zeek's detector) -
+      same "too broad" verdict, also NOT added.
+      `proc_creation_win_mshta_remote.yml` is NOT a substitute for this
+      gap: it requires `CommandLine|contains: http|javascript|vbscript`
+      alongside `mshta.exe`, so a locally-saved `.hta` invoked by bare
+      path (`mshta.exe C:\Users\...\dropper.hta`) fires neither that
+      rule nor this one - a real, currently uncovered T1218.005 delivery
+      chain, not just a network-layer gap with an endpoint-side
+      fallback.
+    - Archive/container formats (.iso tested, real genisoimage output,
+      valid CD001 signature at the standard 32769-byte offset) produce
+      NO mime_type at all - confirmed both live and via source (no
+      ISO9660 signature exists anywhere in the image's magic/*.sig
+      files). Same structural gap class #382 found for SMTP: an absent
+      mime_type can never match this rule's equality selection, and
+      Zeek's file-analysis framework doesn't recurse into archives at
+      all - an EXE inside a .zip/.7z/.iso is invisible regardless of
+      what's in this list. T1566.001's "over-claims blanket coverage"
+      concern from this issue is confirmed real for exactly this reason
+      (this is also why the LNK entry above only covers the bare-file
+      case, not the dominant ISO-wrapped one).
+    One unplanned, security-relevant finding beyond this issue's own
+    ask: a minimal real MSI (msitools' msibuild, genuine OLE Compound
+    File output, confirmed magic `\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1`)
+    types as `application/msword` - Zeek's own signature file comments
+    this heuristic as "non-specific and terrible but ... there doesn't
+    seem to be a better option" (base/frameworks/files/magic/office.sig).
+    Deliberately NOT added to this list: application/msword would match
+    every legitimate Word-document download (a payload class this rule
+    was never meant to flag), and Zeek's file-analysis framework cannot
+    distinguish a malicious MSI installer (T1218.007) from a real .doc
+    at this logsource - a genuine, currently-unclosable blind spot, not
+    an oversight. Filed as #417 for anyone who wants to pursue a
+    hash/heuristic-based secondary check instead of mime_type filtering.
+    Tags deliberately UNCHANGED by #384, recorded so this reads as a
+    decision, not an oversight: an ATT&CK tag for LNK delivery
+    (T1204.002) and one for scripting (the T1059 family) were considered
+    and rejected for this rule specifically - the LNK entry only covers
+    the non-dominant bare-file delivery (see above), and the script
+    entries are shebang-gated/content-anchored narrow enough that
+    tagging the broader technique would overclaim coverage this rule
+    doesn't actually have. `docs/detections/attack-coverage.md`'s rollup
+    intentionally does not count this rule toward those techniques.
+    security-auditor review (#384) also flagged that this single
+    `level: low` OR-block now spans very different real-world base rates
+    - a bare LNK or Mach-O hit is far higher-fidelity than a routine
+    shell-script download, but inherits the same severity. Not split
+    here (a bigger design/test-invariant change than a mime_type-list
+    fix); filed as #418.
 references:
     - https://attack.mitre.org/techniques/T1105/
     - https://docs.zeek.org/en/master/logs/files.html
@@ -91,8 +224,21 @@ detection:
             - 'application/x-executable'
             - 'application/x-sharedlib'
             - 'text/x-shellscript'
+            - 'text/x-python'
+            - 'text/x-perl'
+            - 'text/x-ruby'
+            - 'text/x-msdos-batch'
+            - 'application/x-ms-shortcut'
+            - 'application/x-mach-o-executable'
     condition: selection_transport and selection_payload
 falsepositives:
     - Legitimate software distribution, installers, and update downloads
     - Internal patch-management or deployment traffic
+    - Provisioning and configuration-management scripts fetched over
+      plaintext HTTP (cloud-init, kickstart %post, PXE, internal
+      artifact/mirror servers) - security-auditor review (#384), the
+      dominant real source of text/x-shellscript/text/x-python/
+      text/x-perl/text/x-ruby hits on this rule, not package-manager
+      installs (pip/gem/cpan are HTTPS and ship archives, both opaque
+      to this rule)
 level: low

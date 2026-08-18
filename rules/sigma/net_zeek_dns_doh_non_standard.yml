@@ -33,6 +33,29 @@ description: |
     NXDOMAIN it makes this the single strongest DoH-adoption signal
     available on this logsource — its absence from the round-1 list was an
     oversight given how directly it fits this rule's exact purpose.
+    #428 (security-auditor finding, #426's own review): `query|endswith`
+    against a bare suffix like `quad9.net` (no leading dot) is an
+    UNANCHORED match — `evilquad9.net` shares the same trailing 9
+    characters and fired this rule despite not being a Quad9 hostname at
+    all, exactly the attacker-registrable lookalike-domain gap this fix
+    closes. Rewritten to selection_bare (exact match on each literal
+    hostname) OR selection_subdomain (a genuine dot-anchored subdomain,
+    e.g. `.quad9.net`) — this preserves every currently-covered real
+    value (the bare hostnames themselves, and the dns9/dns10/dns11.
+    quad9.net subdomains #228's own round-2 review widened this rule
+    for) while excluding the same-suffix-but-different-registrable-
+    domain lookalike class. Does NOT make this rule unforgeable
+    (security-auditor finding): it matches on the observed query, not
+    the response, so any host that can send a DNS packet can emit an
+    arbitrary label under a real provider domain (e.g. `dig
+    <random>.quad9.net` in a loop) and produce a hit without controlling
+    that domain at all — this closes the lookalike-REGISTRATION trick,
+    not lookalike-EMISSION. A hit on a random-looking subdomain of a
+    real provider is an emission signal, not proof the query resolved
+    or that a real DoH bootstrap followed. Same underlying gap in
+    net_zeek_dns_crypto_mining_pool.yml (fixed in the same change, one
+    severity tier higher at level: medium) — see that rule's own
+    description for the same caveat in that rule's context.
 references:
     - https://attack.mitre.org/techniques/T1572/
 author: Suburban-SOC
@@ -44,8 +67,8 @@ logsource:
     product: zeek
     service: dns
 detection:
-    selection:
-        query|endswith:
+    selection_bare:
+        query:
             - 'cloudflare-dns.com'
             - 'dns.google'
             - 'dns.google.com'
@@ -55,8 +78,24 @@ detection:
             - 'doh.libredns.gr'
             - 'dns.nextdns.io'
             - 'use-application-dns.net'
-    condition: selection
+    # Invariant (#428): each entry here must be "." + the matching
+    # selection_bare entry, same order — a future domain added to only
+    # one of the two lists reintroduces either an unanchored-suffix gap
+    # (bare-only) or drops real subdomain coverage (subdomain-only).
+    selection_subdomain:
+        query|endswith:
+            - '.cloudflare-dns.com'
+            - '.dns.google'
+            - '.dns.google.com'
+            - '.doh.opendns.com'
+            - '.quad9.net'
+            - '.doh.cleanbrowsing.org'
+            - '.doh.libredns.gr'
+            - '.dns.nextdns.io'
+            - '.use-application-dns.net'
+    condition: selection_bare or selection_subdomain
 falsepositives:
     - Organization-approved DoH usage (if a deployment intentionally standardizes on one of these providers, allowlist it here rather than treating every hit as an incident).
     - Browsers with DoH enabled by default performing routine background lookups even when not actively used for resolution.
+    - A hit on a random-looking subdomain of a real provider domain is an emission signal only — this rule matches the observed query, not the response, so any host that can send a DNS packet can produce a hit under a real provider domain without controlling that domain or the query actually resolving.
 level: low

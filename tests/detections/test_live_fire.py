@@ -390,6 +390,26 @@ class NetworkLiveFireTests(LiveFireTestCase):
         # of that same assumption.
         self.assert_rule_fires_correctly("net_zeek_dns_dga_nxdomain_burst.yml")
 
+    def test_zeek_dns_doh_non_standard_fires_against_real_es(self):
+        # #428, security-auditor finding: "a compiled Lucene wildcard
+        # *.quad9.net requires a literal dot before quad9.net" is a
+        # backend-semantics claim sigma_eval.py cannot validate by
+        # construction — it re-implements endswith with a Python regex,
+        # never touching Lucene's WildcardQuery automaton. This module
+        # exists precisely to catch a claim like that being wrong in
+        # production while passing in CI. fixtures.json's true_negatives
+        # for this rule includes evilquad9.net (the exact lookalike #428
+        # fixed) — assert_rule_fires_correctly's false-positive check
+        # confirms the real compiled query rejects it, not just this
+        # session's one-off manual verification.
+        self.assert_rule_fires_correctly("net_zeek_dns_doh_non_standard.yml")
+
+    def test_zeek_dns_crypto_mining_pool_fires_against_real_es(self):
+        # #428 (same review, sibling rule): identical unanchored-suffix
+        # bug and identical fix, one severity tier higher (level: medium).
+        # fixtures.json's true_negatives includes evilnanopool.org.
+        self.assert_rule_fires_correctly("net_zeek_dns_crypto_mining_pool.yml")
+
     def test_zeek_dns_txt_answer_abuse_fires_against_real_es(self):
         # #292: field-mapping-zeek-dns's new answers -> dns.answers rename
         # had never been proven against a real pipeline/index before this —

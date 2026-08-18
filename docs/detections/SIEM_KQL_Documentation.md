@@ -212,7 +212,7 @@ event.dataset:zeek.conn AND ((destination.port:(9001 OR 9030)) AND network.trans
 - **Rule:** `net_zeek_dns_crypto_mining_pool.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1496
 
 ```
-event.dataset:zeek.dns AND (dns.question.name:(*nanopool.org OR *supportxmr.com OR *hashvault.pro OR *moneroocean.stream OR *minexmr.com OR *nicehash.com OR *f2pool.com OR *2miners.com OR *c3pool.com OR *herominers.com OR *unmineable.com))
+event.dataset:zeek.dns AND ((dns.question.name:(nanopool.org OR supportxmr.com OR hashvault.pro OR moneroocean.stream OR minexmr.com OR nicehash.com OR f2pool.com OR 2miners.com OR c3pool.com OR herominers.com OR unmineable.com)) OR (dns.question.name:(*.nanopool.org OR *.supportxmr.com OR *.hashvault.pro OR *.moneroocean.stream OR *.minexmr.com OR *.nicehash.com OR *.f2pool.com OR *.2miners.com OR *.c3pool.com OR *.herominers.com OR *.unmineable.com)))
 ```
 
 ## NXDOMAIN Response for a DGA-Characteristic Domain Name
@@ -228,7 +228,7 @@ event.dataset:zeek.dns AND (dns.response_code:NXDOMAIN AND dns.question.name:/.*
 - **Rule:** `net_zeek_dns_doh_non_standard.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1572
 
 ```
-event.dataset:zeek.dns AND (dns.question.name:(*cloudflare\-dns.com OR *dns.google OR *dns.google.com OR *doh.opendns.com OR *quad9.net OR *doh.cleanbrowsing.org OR *doh.libredns.gr OR *dns.nextdns.io OR *use\-application\-dns.net))
+event.dataset:zeek.dns AND ((dns.question.name:(cloudflare\-dns.com OR dns.google OR dns.google.com OR doh.opendns.com OR quad9.net OR doh.cleanbrowsing.org OR doh.libredns.gr OR dns.nextdns.io OR use\-application\-dns.net)) OR (dns.question.name:(*.cloudflare\-dns.com OR *.dns.google OR *.dns.google.com OR *.doh.opendns.com OR *.quad9.net OR *.doh.cleanbrowsing.org OR *.doh.libredns.gr OR *.dns.nextdns.io OR *.use\-application\-dns.net)))
 ```
 
 ## DNS Query with High-Entropy Long Subdomain Label (Possible Tunneling)

@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 12/15 closed, resumed 2026-08-17 (project-board backfill retroactively assigned 7 more open follow-ups back to this milestone) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 13/25 closed — 10 real follow-ups still open (filed as review discoveries during this same resumed run), 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -1123,6 +1123,55 @@ are real, working smallest/most-contained first: #386 → #387 → #382 →
   **M17 now 12/15 closed** (3 open remaining: #283/#333 not actionable,
   1 real follow-up left) — #393 next (threshold-rule test hardening),
   the last actionable M17 item.
+- [x] **#393 (M17) — COMPLETE, MERGED** — the same window-math class of
+  bug this issue was filed for existed on ALL 8 threshold files, not
+  just the 2 named in the issue title: `lookback >= interval +
+  detection_window` (guarantees full containment of any campaign phase)
+  applied corpus-wide, correcting the flat `interval+1m` convention
+  (partial containment only, as low as ~10% for window-width-comparable
+  campaigns) on auth-win-bruteforce-{failed-logons,source-spray},
+  auth-win-explicit-cred-account-sweep, all 3 disc-win-*-repeat files,
+  and net-zeek-ssh-session-cadence (the -sustained sibling was already
+  fixed in #392). Generalized `ThresholdLiveFireTests` from 1 hardcoded
+  file to all 8, which caught a real, previously-undetected drift:
+  auth-win-bruteforce-source-spray.ndjson's #370 IP-sentinel exclusion
+  had never been back-ported into its paired Sigma file's own
+  `detection:` block — fixed, and the ndjson's query is now the literal
+  `sigma convert` output going forward instead of hand-typed. Building
+  the generalized test also surfaced and fixed two live-fire test bugs:
+  `source.ip`'s `ignore_malformed: true` silently drops non-IP-shaped
+  test values from aggregation, and the two zeek-ssh threshold files
+  (identical compiled query + aggregation field) had entity-value
+  cross-contamination between test cases (18 counted instead of the
+  expected <5). Parallel security-auditor + code-reviewer review of the
+  full diff: code-reviewer found stale "6-minute" prose left over from
+  before the window correction in 2 files, fixed; security-auditor (2
+  consecutive infra connection failures on the dedicated agent, resolved
+  via a general-purpose fallback) found a third instance of the same
+  staleness plus a real gap — no test proved the *new* window was what's
+  deployed, as opposed to merely proving *some* window existed — closed
+  by adding a compile-time regression guard
+  (`test_lookback_guarantees_full_containment_of_the_documented_detection_window`),
+  mutation-tested against two revert scenarios. [PR
+  #423](https://github.com/voltron-1/Suburban_SOC/pull/423). CI's
+  `pytest-cov` job hung twice in a row on the unrelated "Install
+  WeasyPrint native dependencies" step (same symptom, same workflow, as
+  the #422 precedent) — confirmed against `gh run list` history (every
+  prior run of this workflow completes in under 2 minutes) before
+  cancel+rerun; the third attempt passed. No new follow-up issues filed
+  — every finding from both reviews was fixed inline in this same PR.
+  **M17 now 13/15 closed against the corrected count** — but re-checking
+  the milestone directly (not just this doc's own running tally) surfaced
+  that fixing #386/#387/#382/#383/#384/#392 across this resumed run had
+  filed 10 real follow-up issues (#407, #410, #411, #413, #414, #415,
+  #417, #418, #420, #421), each properly milestoned to M17 at creation
+  time per this repo's own convention, none previously reflected in this
+  doc's per-issue narrative or NEXT UP table. **True current state: M17
+  is 13/25 closed, 10 real actionable issues still open, 2 permanently
+  not actionable (#283, #333).** Continuing the same resumed run through
+  this corrected queue, smallest/most-contained first, same cycle as
+  before — not stopping to report completion, since M17 demonstrably
+  still has real, milestoned, actionable work.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -2898,6 +2947,41 @@ are implemented in code; checked off with that one caveat noted inline.
   Resolved Architecture Decisions:
   - Alert ID sourcing: uses a Semantic Deduplication Key (hash of tenant+IP+severity+5m_bucket)
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
+
+---
+
+## LAST SESSION — 2026-08-18
+
+- **#393 closed (M17) — threshold-rule sliding-window containment math was
+  wrong corpus-wide, not just on the 2 files named in the issue title.**
+  [PR #423](https://github.com/voltron-1/Suburban_SOC/pull/423) merged
+  (squash), all 12 CI checks green after two cancel+rerun cycles on an
+  infra-flaky `pytest-cov` job (same "Install WeasyPrint native
+  dependencies" hang as the #422 precedent, confirmed via `gh run list`
+  history before retrying). Corrected `lookback >= interval +
+  detection_window` on all 8 `rules/elastic/threshold/*.ndjson` files;
+  generalized `ThresholdLiveFireTests` from 1 hardcoded file to all 8,
+  which caught a real drift (auth-win-bruteforce-source-spray.ndjson's
+  #370 IP-sentinel exclusion never back-ported to its paired Sigma file)
+  and 2 live-fire test bugs (source.ip `ignore_malformed` silent-drop;
+  entity-value cross-contamination between the two identical-query
+  zeek-ssh threshold files). Parallel review added a compile-time
+  regression guard for the window-math fix itself (nothing previously
+  proved the *new* window was deployed vs. merely proving some window
+  existed) — mutation-tested, both revert scenarios caught. Full detail
+  in `findings/20260817-393-threshold-window-and-live-fire.md`.
+- **M17 discovered NOT complete on re-check.** This resumed run's own
+  fixes for #386/#387/#382/#383/#384/#392 had filed 10 real follow-up
+  issues (#407, #410, #411, #413, #414, #415, #417, #418, #420, #421),
+  each properly milestoned to M17 at creation, none previously reflected
+  in this doc's running tally (which had been tracking only the original
+  15-issue corrected set, not issues discovered mid-run). Corrected via
+  `gh issue list --search 'milestone:"M17 - Detection Rule Coverage &
+  Correctness"'` (the ground truth, not this doc's own prior narrative).
+  **True M17 state: 13/25 closed, 10 real actionable issues still open,
+  2 permanently not actionable (#283, #333).** Continuing the same
+  resumed run through the corrected queue — not reporting completion to
+  the user yet, since real work remains.
 
 ---
 

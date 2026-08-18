@@ -15,7 +15,7 @@
       "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "SSH Login Attempt for a Nonexistent User \u2014 rules/sigma/auth_linux_invalid_user_ssh_attempt.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "SSH Login Attempt for a Nonexistent User :: rules/sigma/auth_linux_invalid_user_ssh_attempt.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -23,7 +23,7 @@
       "tactic": "persistence",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Reference to authorized_keys in Linux Auth Log \u2014 rules/sigma/auth_linux_ssh_authorized_keys_change.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Reference to authorized_keys in Linux Auth Log :: rules/sigma/auth_linux_ssh_authorized_keys_change.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -31,7 +31,7 @@
       "tactic": "initial-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Direct Root Login via SSH \u2014 rules/sigma/auth_linux_ssh_root_login.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Direct Root Login via SSH :: rules/sigma/auth_linux_ssh_root_login.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -39,7 +39,7 @@
       "tactic": "privilege-escalation",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "su Session Opened \u2014 rules/sigma/auth_linux_su_session_opened.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "su Session Opened :: rules/sigma/auth_linux_su_session_opened.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -47,7 +47,7 @@
       "tactic": "privilege-escalation",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Sudo Command Execution Logged \u2014 rules/sigma/auth_linux_sudo_privilege_escalation.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Sudo Command Execution Logged :: rules/sigma/auth_linux_sudo_privilege_escalation.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -55,7 +55,7 @@
       "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "AS-REP Roasting \u2014 TGT Requested for an Account Without Pre-Authentication \u2014 rules/sigma/auth_win_asreproast_no_preauth_tgt.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "AS-REP Roasting \u2014 TGT Requested for an Account Without Pre-Authentication :: rules/sigma/auth_win_asreproast_no_preauth_tgt.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -63,7 +63,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Audit Policy Changed \u2014 rules/sigma/auth_win_audit_policy_changed.yml; Windows Event Log Service Reconfigured or Disabled (Windows System 7040) \u2014 rules/sigma/system_win_eventlog_service_tamper.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Audit Policy Changed :: rules/sigma/auth_win_audit_policy_changed.yml; Windows Event Log Service Reconfigured or Disabled (Windows System 7040) :: rules/sigma/system_win_eventlog_service_tamper.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -71,7 +71,7 @@
       "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Repeated Failed Sign-Ins (Windows Security 4625) \u2014 rules/sigma/auth_win_bruteforce_failed_logons.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)); SSH Password Guessing / Brute Force (Zeek Notice) \u2014 rules/sigma/net_zeek_ssh_bruteforce.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)); SSH Session Cadence \u2014 Complementary Brute-Force Coverage Below detect-bruteforcing's Threshold \u2014 rules/sigma/net_zeek_ssh_session_cadence.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)); Sustained Low-and-Slow SSH Session Cadence \u2014 Below detect-bruteforcing AND net_zeek_ssh_session_cadence's Own Rate Floor \u2014 rules/sigma/net_zeek_ssh_session_cadence_sustained.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)); Brute Force \u2014 configs/logstash.conf (Category 5 framework enrichment) (test: tests/pipeline/test_framework_enrichment.py)",
+      "comment": "Repeated Failed Sign-Ins (Windows Security 4625) :: rules/sigma/auth_win_bruteforce_failed_logons.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)); SSH Password Guessing / Brute Force (Zeek Notice) :: rules/sigma/net_zeek_ssh_bruteforce.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)); SSH Session Cadence \u2014 Complementary Brute-Force Coverage Below detect-bruteforcing's Threshold :: rules/sigma/net_zeek_ssh_session_cadence.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)); Sustained Low-and-Slow SSH Session Cadence \u2014 Below detect-bruteforcing AND net_zeek_ssh_session_cadence's Own Rate Floor :: rules/sigma/net_zeek_ssh_session_cadence_sustained.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)); Brute Force :: configs/logstash.conf (Category 5 framework enrichment) (test: tests/pipeline/test_framework_enrichment.py)",
       "enabled": true
     },
     {
@@ -79,7 +79,7 @@
       "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Password Spray Indicator via Failed Logons From a Single Source (Windows Security 4625) \u2014 rules/sigma/auth_win_bruteforce_source_spray.yml; Explicit-Credential Sign-In Recorded (Windows Security 4648) \u2014 rules/sigma/auth_win_explicit_cred_account_sweep.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Password Spray Indicator via Failed Logons From a Single Source (Windows Security 4625) :: rules/sigma/auth_win_bruteforce_source_spray.yml; Explicit-Credential Sign-In Recorded (Windows Security 4648) :: rules/sigma/auth_win_explicit_cred_account_sweep.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -87,7 +87,7 @@
       "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "DCSync \u2014 Directory Replication Rights Exercised by a Non-DC Account \u2014 rules/sigma/auth_win_dcsync_replication_rights_used.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "DCSync \u2014 Directory Replication Rights Exercised by a Non-DC Account :: rules/sigma/auth_win_dcsync_replication_rights_used.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -95,7 +95,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Logon Attempt Against a Disabled Account \u2014 rules/sigma/auth_win_disabled_account_logon_attempt.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Logon Attempt Against a Disabled Account :: rules/sigma/auth_win_disabled_account_logon_attempt.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -103,7 +103,7 @@
       "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Kerberoasting \u2014 RC4 Service Ticket Requested for a User SPN \u2014 rules/sigma/auth_win_kerberoasting_rc4_spn_request.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Kerberoasting \u2014 RC4 Service Ticket Requested for a User SPN :: rules/sigma/auth_win_kerberoasting_rc4_spn_request.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -111,7 +111,7 @@
       "tactic": "lateral-movement",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Pass-the-Hash Logon Pattern (LogonType 9, Negotiate) \u2014 rules/sigma/auth_win_pass_the_hash_logon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Pass-the-Hash Logon Pattern (LogonType 9, Negotiate) :: rules/sigma/auth_win_pass_the_hash_logon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -119,7 +119,7 @@
       "tactic": "persistence",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Privileged Group Membership Change (Windows Security 4732/4728/4756) \u2014 rules/sigma/auth_win_priv_group_membership_change.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Privileged Group Membership Change (Windows Security 4732/4728/4756) :: rules/sigma/auth_win_priv_group_membership_change.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -127,7 +127,7 @@
       "tactic": "lateral-movement",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Interactive Logon via RDP (LogonType 10) \u2014 rules/sigma/auth_win_rdp_logon_type10.yml; RDP Connection Originating From Outside Private Address Space \u2014 rules/sigma/net_zeek_conn_external_rdp_inbound.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Interactive Logon via RDP (LogonType 10) :: rules/sigma/auth_win_rdp_logon_type10.yml; RDP Connection Originating From Outside Private Address Space :: rules/sigma/net_zeek_conn_external_rdp_inbound.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -135,7 +135,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Security Audit Log Cleared (Windows Security 1102) \u2014 rules/sigma/auth_win_security_log_cleared.yml; Clearing Windows Event Logs via Wevtutil \u2014 rules/sigma/proc_creation_win_clear_event_logs.yml; Event Log Cleared (Windows System 104) \u2014 rules/sigma/system_win_eventlog_cleared.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Security Audit Log Cleared (Windows Security 1102) :: rules/sigma/auth_win_security_log_cleared.yml; Clearing Windows Event Logs via Wevtutil :: rules/sigma/proc_creation_win_clear_event_logs.yml; Event Log Cleared (Windows System 104) :: rules/sigma/system_win_eventlog_cleared.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -143,7 +143,7 @@
       "tactic": "privilege-escalation",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Special-Privilege Logon Assigning SeDebugPrivilege (Windows Security 4672) \u2014 rules/sigma/auth_win_sedebug_special_logon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Special-Privilege Logon Assigning SeDebugPrivilege (Windows Security 4672) :: rules/sigma/auth_win_sedebug_special_logon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -151,7 +151,7 @@
       "tactic": "discovery",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Object Access Against a Privileged AD Group \u2014 rules/sigma/auth_win_sensitive_group_recon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Object Access Against a Privileged AD Group :: rules/sigma/auth_win_sensitive_group_recon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -159,7 +159,7 @@
       "tactic": "persistence",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "User Account Created (Windows Security 4720) \u2014 rules/sigma/auth_win_user_account_created.yml; Local User Account Creation via Net.exe \u2014 rules/sigma/proc_creation_win_local_acct_create.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "User Account Created (Windows Security 4720) :: rules/sigma/auth_win_user_account_created.yml; Local User Account Creation via Net.exe :: rules/sigma/proc_creation_win_local_acct_create.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -167,7 +167,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Suspicious CreateRemoteThread Target or Source (Sysmon EventID 8) \u2014 rules/sigma/create_remote_thread_win_susp_target.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Suspicious CreateRemoteThread Target or Source (Sysmon EventID 8) :: rules/sigma/create_remote_thread_win_susp_target.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -175,7 +175,7 @@
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Unusually Large ICMP Flow (Possible ICMP Tunnel) \u2014 rules/sigma/net_zeek_conn_icmp_tunnel_large.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Unusually Large ICMP Flow (Possible ICMP Tunnel) :: rules/sigma/net_zeek_conn_icmp_tunnel_large.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -183,7 +183,7 @@
       "tactic": "lateral-movement",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "SMB Connection Crossing Private/Public Address Boundary \u2014 rules/sigma/net_zeek_conn_smb_lateral_admin.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "SMB Connection Crossing Private/Public Address Boundary :: rules/sigma/net_zeek_conn_smb_lateral_admin.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -191,7 +191,7 @@
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Connection to Tor's Default OR or Directory Port \u2014 rules/sigma/net_zeek_conn_tor_exit_node.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Connection to Tor's Default OR or Directory Port :: rules/sigma/net_zeek_conn_tor_exit_node.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -199,7 +199,7 @@
       "tactic": "impact",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "DNS Query for a Known Cryptocurrency Mining Pool \u2014 rules/sigma/net_zeek_dns_crypto_mining_pool.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "DNS Query for a Known Cryptocurrency Mining Pool :: rules/sigma/net_zeek_dns_crypto_mining_pool.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -207,7 +207,7 @@
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "NXDOMAIN Response for a DGA-Characteristic Domain Name \u2014 rules/sigma/net_zeek_dns_dga_nxdomain_burst.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "NXDOMAIN Response for a DGA-Characteristic Domain Name :: rules/sigma/net_zeek_dns_dga_nxdomain_burst.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -215,7 +215,7 @@
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "DNS Lookup for a Known Public DNS-over-HTTPS Provider \u2014 Blind to Hardcoded-IP DoH Clients \u2014 rules/sigma/net_zeek_dns_doh_non_standard.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "DNS Lookup for a Known Public DNS-over-HTTPS Provider \u2014 Blind to Hardcoded-IP DoH Clients :: rules/sigma/net_zeek_dns_doh_non_standard.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -223,7 +223,7 @@
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "DNS Query with High-Entropy Long Subdomain Label (Possible Tunneling) \u2014 rules/sigma/net_zeek_dns_tunneling_high_entropy.yml; TXT Record Answer with Encoded-Looking Payload (Possible C2 Download Direction) \u2014 rules/sigma/net_zeek_dns_txt_answer_abuse.yml; TXT Record Query with Encoded-Looking Payload (Possible C2/Exfil Channel) \u2014 rules/sigma/net_zeek_dns_txt_record_abuse.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "DNS Query with High-Entropy Long Subdomain Label (Possible Tunneling) :: rules/sigma/net_zeek_dns_tunneling_high_entropy.yml; TXT Record Answer with Encoded-Looking Payload (Possible C2 Download Direction) :: rules/sigma/net_zeek_dns_txt_answer_abuse.yml; TXT Record Query with Encoded-Looking Payload (Possible C2/Exfil Channel) :: rules/sigma/net_zeek_dns_txt_record_abuse.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -231,7 +231,7 @@
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Executable or Script Payload Downloaded Over HTTP (Zeek Files) \u2014 rules/sigma/net_zeek_executable_download.yml; Malicious File Download via Bitsadmin \u2014 rules/sigma/proc_creation_win_bitsadmin_download.yml; Ingress Tool Transfer via Certutil URL Cache \u2014 rules/sigma/proc_creation_win_certutil_urlcache_download.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Executable or Script Payload Downloaded Over HTTP (Zeek Files) :: rules/sigma/net_zeek_executable_download.yml; Malicious File Download via Bitsadmin :: rules/sigma/proc_creation_win_bitsadmin_download.yml; Ingress Tool Transfer via Certutil URL Cache :: rules/sigma/proc_creation_win_certutil_urlcache_download.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -239,7 +239,7 @@
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "HTTP Request to a Known Default C2 Beacon URI \u2014 rules/sigma/net_zeek_http_cobalt_strike_beacon.yml; TLS Connection with Expired Certificate \u2014 rules/sigma/net_zeek_ssl_expired_cert_connection.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "HTTP Request to a Known Default C2 Beacon URI :: rules/sigma/net_zeek_http_cobalt_strike_beacon.yml; TLS Connection with Expired Certificate :: rules/sigma/net_zeek_ssl_expired_cert_connection.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -247,7 +247,7 @@
       "tactic": "exfiltration",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Large HTTP POST Request Body \u2014 rules/sigma/net_zeek_http_exfil_large_post.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Large HTTP POST Request Body :: rules/sigma/net_zeek_http_exfil_large_post.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -255,7 +255,7 @@
       "tactic": "discovery",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Network Port or Address Scan Detected (Zeek Notice) \u2014 rules/sigma/net_zeek_port_scan.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)); Network Service Discovery \u2014 configs/logstash.conf (Category 5 framework enrichment) (test: tests/pipeline/test_framework_enrichment.py)",
+      "comment": "Network Port or Address Scan Detected (Zeek Notice) :: rules/sigma/net_zeek_port_scan.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)); Network Service Discovery :: configs/logstash.conf (Category 5 framework enrichment) (test: tests/pipeline/test_framework_enrichment.py)",
       "enabled": true
     },
     {
@@ -263,7 +263,7 @@
       "tactic": "initial-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Executable Payload Sent as an Email Attachment (Zeek Files) \u2014 Plaintext SMTP Only \u2014 rules/sigma/net_zeek_smtp_attachment_executable.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Executable Payload Sent as an Email Attachment (Zeek Files) \u2014 Plaintext SMTP Only :: rules/sigma/net_zeek_smtp_attachment_executable.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -271,7 +271,7 @@
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "SMTP Session with an Anomalously Deep Transaction Count \u2014 Plaintext SMTP Only \u2014 rules/sigma/net_zeek_smtp_mass_outbound.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "SMTP Session with an Anomalously Deep Transaction Count \u2014 Plaintext SMTP Only :: rules/sigma/net_zeek_smtp_mass_outbound.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -279,7 +279,7 @@
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "TLS Connection with Self-Signed Certificate (Possible C2) \u2014 rules/sigma/net_zeek_ssl_self_signed_c2.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "TLS Connection with Self-Signed Certificate (Possible C2) :: rules/sigma/net_zeek_ssl_self_signed_c2.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -287,7 +287,7 @@
       "tactic": "collection",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "PowerShell Credential-Harvesting Cmdlet Pattern \u2014 rules/sigma/posh_credential_harvesting_scriptblock.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "PowerShell Credential-Harvesting Cmdlet Pattern :: rules/sigma/posh_credential_harvesting_scriptblock.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -295,7 +295,7 @@
       "tactic": "collection",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "PowerShell-Native Data Compression Staging \u2014 rules/sigma/posh_data_compression_staging.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "PowerShell-Native Data Compression Staging :: rules/sigma/posh_data_compression_staging.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -303,7 +303,7 @@
       "tactic": "discovery",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Active Directory Query via Official ActiveDirectory Module \u2014 rules/sigma/posh_ps_ad_recon_admodule.yml; Active Directory Reconnaissance via PowerView \u2014 rules/sigma/posh_ps_ad_recon_powerview.yml; Domain Group Discovery via Net.exe \u2014 rules/sigma/proc_creation_win_domain_group_discovery.yml; SharpHound / BloodHound AD Collection Execution \u2014 rules/sigma/proc_creation_win_sharphound_bloodhound_collection.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Active Directory Query via Official ActiveDirectory Module :: rules/sigma/posh_ps_ad_recon_admodule.yml; Active Directory Reconnaissance via PowerView :: rules/sigma/posh_ps_ad_recon_powerview.yml; Domain Group Discovery via Net.exe :: rules/sigma/proc_creation_win_domain_group_discovery.yml; SharpHound / BloodHound AD Collection Execution :: rules/sigma/proc_creation_win_sharphound_bloodhound_collection.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -311,7 +311,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "PowerShell AMSI Bypass Attempt \u2014 rules/sigma/posh_ps_amsi_bypass_attempt.yml; Windows Defender Real-Time Protection Disabled \u2014 rules/sigma/proc_creation_win_defender_tamper.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "PowerShell AMSI Bypass Attempt :: rules/sigma/posh_ps_amsi_bypass_attempt.yml; Windows Defender Real-Time Protection Disabled :: rules/sigma/proc_creation_win_defender_tamper.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -319,7 +319,7 @@
       "tactic": "execution",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Obfuscated or Encoded PowerShell Script Block \u2014 rules/sigma/posh_ps_obfuscated_scriptblock.yml; PowerShell Reverse Shell via TCPClient \u2014 rules/sigma/posh_ps_reverse_shell.yml; PowerShell Remote Download Cradle \u2014 rules/sigma/proc_creation_win_powershell_downloadstring.yml; Suspicious PowerShell Encoded Command Execution \u2014 rules/sigma/proc_creation_win_powershell_encoded.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Obfuscated or Encoded PowerShell Script Block :: rules/sigma/posh_ps_obfuscated_scriptblock.yml; PowerShell Reverse Shell via TCPClient :: rules/sigma/posh_ps_reverse_shell.yml; PowerShell Remote Download Cradle :: rules/sigma/proc_creation_win_powershell_downloadstring.yml; Suspicious PowerShell Encoded Command Execution :: rules/sigma/proc_creation_win_powershell_encoded.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -327,7 +327,7 @@
       "tactic": "persistence",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Accessibility Feature Backdoor via Image/OriginalFileName Mismatch \u2014 rules/sigma/proc_creation_win_accessibility_binary_debugger_swap.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Accessibility Feature Backdoor via Image/OriginalFileName Mismatch :: rules/sigma/proc_creation_win_accessibility_binary_debugger_swap.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -335,7 +335,7 @@
       "tactic": "discovery",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "ARP Cache Enumeration via arp.exe \u2014 rules/sigma/proc_creation_win_arp_cache_discovery.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "ARP Cache Enumeration via arp.exe :: rules/sigma/proc_creation_win_arp_cache_discovery.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -343,7 +343,7 @@
       "tactic": "impact",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Windows Recovery Options Disabled via bcdedit \u2014 rules/sigma/proc_creation_win_bcdedit_recovery_disabled.yml; Shadow Copy Deletion via Vssadmin \u2014 rules/sigma/proc_creation_win_vss_delete_shadows.yml; Windows Backup Catalog or System State Backup Deleted via wbadmin \u2014 rules/sigma/proc_creation_win_wbadmin_delete_catalog.yml; Shadow Copy Deletion via WMIC \u2014 rules/sigma/proc_creation_win_wmic_shadowcopy_delete.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Windows Recovery Options Disabled via bcdedit :: rules/sigma/proc_creation_win_bcdedit_recovery_disabled.yml; Shadow Copy Deletion via Vssadmin :: rules/sigma/proc_creation_win_vss_delete_shadows.yml; Windows Backup Catalog or System State Backup Deleted via wbadmin :: rules/sigma/proc_creation_win_wbadmin_delete_catalog.yml; Shadow Copy Deletion via WMIC :: rules/sigma/proc_creation_win_wmic_shadowcopy_delete.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -351,7 +351,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Payload Decoding via Certutil \u2014 rules/sigma/proc_creation_win_certutil_decode.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Payload Decoding via Certutil :: rules/sigma/proc_creation_win_certutil_decode.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -359,7 +359,7 @@
       "tactic": "exfiltration",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Data Encoded for Exfiltration via Certutil \u2014 rules/sigma/proc_creation_win_certutil_encode_exfil_prep.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Data Encoded for Exfiltration via Certutil :: rules/sigma/proc_creation_win_certutil_encode_exfil_prep.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -367,7 +367,7 @@
       "tactic": "impact",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Free Disk Space Wiped via cipher.exe \u2014 rules/sigma/proc_creation_win_cipher_free_space_wipe.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Free Disk Space Wiped via cipher.exe :: rules/sigma/proc_creation_win_cipher_free_space_wipe.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -375,7 +375,7 @@
       "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Saved Credential Enumeration via cmdkey or vaultcmd \u2014 rules/sigma/proc_creation_win_cmdkey_saved_creds_enum.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Saved Credential Enumeration via cmdkey or vaultcmd :: rules/sigma/proc_creation_win_cmdkey_saved_creds_enum.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -383,7 +383,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "CMSTP Execution via Malicious INF or Silent-Install Flags \u2014 rules/sigma/proc_creation_win_cmstp_execution.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "CMSTP Execution via Malicious INF or Silent-Install Flags :: rules/sigma/proc_creation_win_cmstp_execution.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -391,7 +391,7 @@
       "tactic": "execution",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Cscript/Wscript Executing from a Non-Standard Location \u2014 rules/sigma/proc_creation_win_cscript_wscript_remote.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Cscript/Wscript Executing from a Non-Standard Location :: rules/sigma/proc_creation_win_cscript_wscript_remote.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -399,7 +399,7 @@
       "tactic": "persistence",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "DNS Server Plugin DLL Side-Loading via dnscmd \u2014 rules/sigma/proc_creation_win_dnscmd_serverlevelplugindll.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "DNS Server Plugin DLL Side-Loading via dnscmd :: rules/sigma/proc_creation_win_dnscmd_serverlevelplugindll.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -407,7 +407,7 @@
       "tactic": "collection",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Locked File Copied via esentutl VSS Trick (Browser Credential Access) \u2014 rules/sigma/proc_creation_win_esentutl_locked_file_copy.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Locked File Copied via esentutl VSS Trick (Browser Credential Access) :: rules/sigma/proc_creation_win_esentutl_locked_file_copy.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -415,7 +415,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Indirect Command Execution via Forfiles \u2014 rules/sigma/proc_creation_win_forfiles_execution.yml; Indirect Command Execution via Pcalua \u2014 rules/sigma/proc_creation_win_pcalua_execution.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Indirect Command Execution via Forfiles :: rules/sigma/proc_creation_win_forfiles_execution.yml; Indirect Command Execution via Pcalua :: rules/sigma/proc_creation_win_pcalua_execution.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -423,7 +423,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "InstallUtil Execution Bypassing Uninstall Logging \u2014 rules/sigma/proc_creation_win_installutil_bypass.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "InstallUtil Execution Bypassing Uninstall Logging :: rules/sigma/proc_creation_win_installutil_bypass.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -431,7 +431,7 @@
       "tactic": "lateral-movement",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Shell Spawned by PsExec Service or WMI Provider Host \u2014 rules/sigma/proc_creation_win_lateral_tool_parent.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Shell Spawned by PsExec Service or WMI Provider Host :: rules/sigma/proc_creation_win_lateral_tool_parent.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -439,7 +439,7 @@
       "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "LaZagne Credential Harvester Execution \u2014 rules/sigma/proc_creation_win_lazagne_credential_harvest.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "LaZagne Credential Harvester Execution :: rules/sigma/proc_creation_win_lazagne_credential_harvest.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -447,7 +447,7 @@
       "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "LSASS Memory Dump via Comsvcs.dll \u2014 rules/sigma/proc_creation_win_lsass_dump.yml; Mimikatz Module Syntax on the Command Line \u2014 rules/sigma/proc_creation_win_mimikatz_module_syntax.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "LSASS Memory Dump via Comsvcs.dll :: rules/sigma/proc_creation_win_lsass_dump.yml; Mimikatz Module Syntax on the Command Line :: rules/sigma/proc_creation_win_mimikatz_module_syntax.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -455,7 +455,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Mshta Remote or Script Payload Execution \u2014 rules/sigma/proc_creation_win_mshta_remote.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Mshta Remote or Script Payload Execution :: rules/sigma/proc_creation_win_mshta_remote.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -463,7 +463,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "MSI Package Installed from a Remote URL \u2014 rules/sigma/proc_creation_win_msiexec_remote.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "MSI Package Installed from a Remote URL :: rules/sigma/proc_creation_win_msiexec_remote.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -471,7 +471,7 @@
       "tactic": "discovery",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Network Share Enumeration via net.exe \u2014 rules/sigma/proc_creation_win_net_share_recon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Network Share Enumeration via net.exe :: rules/sigma/proc_creation_win_net_share_recon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -479,7 +479,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Firewall Rule Added via netsh \u2014 rules/sigma/proc_creation_win_netsh_firewall_rule_added.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Firewall Rule Added via netsh :: rules/sigma/proc_creation_win_netsh_firewall_rule_added.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -487,7 +487,7 @@
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Port-Proxy Relay Configured via netsh \u2014 rules/sigma/proc_creation_win_netsh_portproxy_relay.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Port-Proxy Relay Configured via netsh :: rules/sigma/proc_creation_win_netsh_portproxy_relay.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -495,7 +495,7 @@
       "tactic": "discovery",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Domain Controller Discovery via Nltest \u2014 rules/sigma/proc_creation_win_nltest_discovery.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Domain Controller Discovery via Nltest :: rules/sigma/proc_creation_win_nltest_discovery.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -503,7 +503,7 @@
       "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "NTDS.dit Extraction via ntdsutil IFM Media Creation \u2014 rules/sigma/proc_creation_win_ntdsutil_ifm_dump.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "NTDS.dit Extraction via ntdsutil IFM Media Creation :: rules/sigma/proc_creation_win_ntdsutil_ifm_dump.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -511,7 +511,7 @@
       "tactic": "execution",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "PsExec Client-Side Remote Execution Launch \u2014 rules/sigma/proc_creation_win_psexec_client_side_launch.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "PsExec Client-Side Remote Execution Launch :: rules/sigma/proc_creation_win_psexec_client_side_launch.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -519,7 +519,7 @@
       "tactic": "collection",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Password-Protected Archive Staging via RAR/WinRAR \u2014 rules/sigma/proc_creation_win_rar_archive_staging.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Password-Protected Archive Staging via RAR/WinRAR :: rules/sigma/proc_creation_win_rar_archive_staging.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -527,7 +527,7 @@
       "tactic": "privilege-escalation",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "RDP Session Hijacking via Tscon \u2014 rules/sigma/proc_creation_win_rdp_hijack_tscon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "RDP Session Hijacking via Tscon :: rules/sigma/proc_creation_win_rdp_hijack_tscon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -535,7 +535,7 @@
       "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "SAM Hive Dump via Reg.exe \u2014 rules/sigma/proc_creation_win_reg_save_sam.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "SAM Hive Dump via Reg.exe :: rules/sigma/proc_creation_win_reg_save_sam.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -543,7 +543,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Regasm/Regsvcs Proxy Execution \u2014 rules/sigma/proc_creation_win_regasm_regsvcs_bypass.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Regasm/Regsvcs Proxy Execution :: rules/sigma/proc_creation_win_regasm_regsvcs_bypass.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -551,7 +551,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Regsvr32 Execution from Remote Server \u2014 rules/sigma/proc_creation_win_regsvr32_remote_sct.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Regsvr32 Execution from Remote Server :: rules/sigma/proc_creation_win_regsvr32_remote_sct.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -559,7 +559,7 @@
       "tactic": "persistence",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Registry Run Key Persistence via Reg.exe \u2014 rules/sigma/proc_creation_win_run_key_persistence.yml; File Dropped into the Startup Folder \u2014 rules/sigma/proc_creation_win_startup_folder_file_drop.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Registry Run Key Persistence via Reg.exe :: rules/sigma/proc_creation_win_run_key_persistence.yml; File Dropped into the Startup Folder :: rules/sigma/proc_creation_win_startup_folder_file_drop.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -567,7 +567,7 @@
       "tactic": "defense-evasion",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Rundll32 Executing Inline Script via mshtml \u2014 rules/sigma/proc_creation_win_rundll32_inline_script.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Rundll32 Executing Inline Script via mshtml :: rules/sigma/proc_creation_win_rundll32_inline_script.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -575,7 +575,7 @@
       "tactic": "persistence",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Existing Service Reconfigured to a New Binary Path \u2014 rules/sigma/proc_creation_win_sc_config_binpath_change.yml; Windows Service Creation via Sc.exe \u2014 rules/sigma/proc_creation_win_service_creation_sc.yml; Remote-Style Service Creation (PsExec Pattern) \u2014 rules/sigma/system_win_remote_service_creation_psexec_style.yml; New Service Installed (Windows System 7045) \u2014 rules/sigma/system_win_service_installed.yml; New Service Installed With a LOLBin as its Binary \u2014 rules/sigma/system_win_suspicious_service_binpath_lolbin.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Existing Service Reconfigured to a New Binary Path :: rules/sigma/proc_creation_win_sc_config_binpath_change.yml; Windows Service Creation via Sc.exe :: rules/sigma/proc_creation_win_service_creation_sc.yml; Remote-Style Service Creation (PsExec Pattern) :: rules/sigma/system_win_remote_service_creation_psexec_style.yml; New Service Installed (Windows System 7045) :: rules/sigma/system_win_service_installed.yml; New Service Installed With a LOLBin as its Binary :: rules/sigma/system_win_suspicious_service_binpath_lolbin.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -583,7 +583,7 @@
       "tactic": "execution",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Scheduled Task Creation via Schtasks \u2014 rules/sigma/proc_creation_win_scheduled_task.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Scheduled Task Creation via Schtasks :: rules/sigma/proc_creation_win_scheduled_task.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -591,7 +591,7 @@
       "tactic": "privilege-escalation",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Print Spooler Service Spawning a Suspicious Child Process \u2014 rules/sigma/proc_creation_win_spooler_child_process_printnightmare.yml; Kernel or File-System Driver Service Installed \u2014 rules/sigma/system_win_driver_service_installed.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Print Spooler Service Spawning a Suspicious Child Process :: rules/sigma/proc_creation_win_spooler_child_process_printnightmare.yml; Kernel or File-System Driver Service Installed :: rules/sigma/system_win_driver_service_installed.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -599,7 +599,7 @@
       "tactic": "discovery",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Suspicious System Owner/User Discovery \u2014 rules/sigma/proc_creation_win_user_discovery.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Suspicious System Owner/User Discovery :: rules/sigma/proc_creation_win_user_discovery.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -607,7 +607,7 @@
       "tactic": "execution",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "WMI Process Call Create \u2014 rules/sigma/proc_creation_win_wmi_process_create.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "WMI Process Call Create :: rules/sigma/proc_creation_win_wmi_process_create.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -615,7 +615,7 @@
       "tactic": "persistence",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Suspicious WMI Event Filter-to-Consumer Binding (WMI-Activity 5861) \u2014 rules/sigma/wmi_win_event_subscription_binding.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Suspicious WMI Event Filter-to-Consumer Binding (WMI-Activity 5861) :: rules/sigma/wmi_win_event_subscription_binding.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     }
   ],

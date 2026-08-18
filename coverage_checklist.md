@@ -19,6 +19,21 @@ Two lanes, 22 emulation->detection pairs. `[x]` = wiring validated by `validate_
       `configs/detections/emulation_telemetry.map`'s EXPLOITATION_UNVERIFIED
       section.
 - [x] **CREDENTIAL_ACCESS_SSH** (T1110) — `sim_brute_ssh.sh` -> `net_zeek_ssh_bruteforce.yml`
+- [x] ⚠️ **CREDENTIAL_ACCESS_SSH_CADENCE_SUSTAINED** (T1110) — `sim_brute_ssh.sh` -> `net_zeek_ssh_session_cadence_sustained.yml`
+      ⚠️ **#392: `sim_brute_ssh.sh`'s default (5 attempts) does NOT exercise
+      this rule** (threshold.value:15) — needs an explicit
+      `BRUTE_PASSWORDS` override (20+ words, not just 15 — a bare 15
+      reintroduces the zero-margin defect this same caveat warns about
+      elsewhere) AND `TARGET_HOST` pointed at a real capture-path host
+      (the documented default, 127.0.0.1, is invisible to every real
+      capture path in this repo). See
+      `configs/detections/emulation_telemetry.map`'s
+      CREDENTIAL_ACCESS_SSH_CADENCE_SUSTAINED section for the exact
+      command. (Note: this checklist's own row count is already known
+      stale vs. `emulation_telemetry.map` — see #414 — the pre-existing
+      `CREDENTIAL_ACCESS_SSH_CADENCE` pairing from #332 has no row here
+      either; not fixed in this change to avoid duplicating #414's own
+      scope.)
 
 Operational to-dos (Linux lane):
 - [ ] `chmod +x tests/anomaly_simulation/sim_portscan.sh`

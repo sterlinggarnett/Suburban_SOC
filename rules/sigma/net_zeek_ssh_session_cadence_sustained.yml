@@ -1,0 +1,164 @@
+title: Sustained Low-and-Slow SSH Session Cadence — Below detect-bruteforcing AND net_zeek_ssh_session_cadence's Own Rate Floor
+id: 7188842a-4eb2-4c0f-914e-d83e78425b06
+status: experimental
+description: |
+    Single-event logic-of-record for the paired Elastic threshold rule
+    (rules/elastic/threshold/net-zeek-ssh-session-cadence-sustained.ndjson),
+    which alerts when a single source establishes 15+ SSH sessions
+    (zeek.ssh) within a 30-minute lookback — a rate of roughly 0.5
+    sessions/minute, genuinely below both policy/protocols/ssh/detect-
+    bruteforcing's own steady-state rate (30 failed auths/30 minutes,
+    ~1/minute) and #332's own net_zeek_ssh_session_cadence.yml companion
+    (5 sessions/6 minutes, the SAME ~1/minute rate, just a burst-latency
+    improvement — see that rule's own "HONEST FRAMING" note, which
+    explicitly named this gap and filed it as a follow-up rather than
+    building it there).
+    #332's own review derived the concrete evasion this rule closes: one
+    SSH connection every 2 minutes = 15 sessions/30min, invisible to both
+    detect-bruteforcing and net_zeek_ssh_session_cadence.yml. With
+    OpenSSH's default MaxAuthTries:6, a single connection can carry up to
+    6 password guesses, so the invisible ceiling those two rules leave
+    open is roughly 180 guesses/hour sustained indefinitely with zero
+    T1110 signal anywhere in this pipeline — UNVERIFIED (security-auditor
+    finding): this specific number assumes policy/protocols/ssh/detect-
+    bruteforcing's own SSH::Password_Guessing notice reliably fires on
+    this pipeline at its documented 30-in-30min threshold, which has
+    never actually been observed firing here (coverage_checklist.md's
+    own "Live-fire: run each sim, confirm the Zeek notice fires" item is
+    still unchecked) and is in tension with net_zeek_ssh_session_
+    cadence.yml's own live-verified finding that auth_success is entirely
+    ABSENT (not false) on failed-auth ssh.log records in this
+    environment - if detect-bruteforcing's own signal depends on that
+    same field, it may not fire as documented either. Filed as #421
+    (whether detect-bruteforcing actually fires at all here) rather than
+    assumed true for this rule's own justification.
+    HONEST FRAMING, same discipline as #332's own rule, corrected after
+    security-auditor review to state the BINDING evasion floor rather
+    than a loose illustrative example: this does NOT close the
+    underlying cat-and-mouse problem, only moves the rate floor lower.
+    The tightest pace that still evades this rule is 14 sessions in a
+    31-minute window (~1 connection every 2m13s, ~27 sessions/hour,
+    ~162 guesses/hour at MaxAuthTries:6) - a ~10% throughput reduction
+    from the pre-#392 180 guesses/hour ceiling, not a qualitative
+    closure. There is no per-source threshold, at any value, that
+    eliminates a slow-enough attacker; each additional companion rule
+    only raises the cost (throughput) of staying invisible by a shrinking
+    margin, never reaches zero. Given the binding number above, the
+    right next step (if pursued) is a differently-SHAPED detection, not
+    a fourth threshold at this shape - e.g. a cardinality/distinct-source
+    rule bucketed by destination (the design already used by rules/
+    elastic/threshold/auth-win-bruteforce-source-spray.ndjson for the
+    Windows password-spray case), which #332's own text already flags as
+    the harder, separate DISTRIBUTED-source gap (many sources each
+    individually under threshold) no per-source rule closes at all.
+    Reuses #332's own selection logic verbatim
+    (client|startswith: 'SSH-', live-verified there against a real,
+    wire-captured SSH session that this field is present on every
+    genuine SSH protocol handshake and does not depend on the unreliable
+    auth_success field) and #332's own KNOWN LIMITATION note
+    (SSH::Info$client is &optional in Zeek's own schema; a lossy-vantage
+    session with the analyzer attached but no observed client banner is
+    silently undercounted here too — not re-verified independently,
+    inherited from the same underlying Zeek behavior #332 already
+    live-confirmed).
+    A second Sigma logic-of-record file (distinct id/UUID), not a reuse
+    of #332's own id, because tests/detections/test_threshold_rules.py's
+    pairing invariant requires rule_id == <sigma_id>-threshold exactly —
+    a strict 1:1 pairing. #392's own issue text considered relaxing that
+    invariant to allow a documented N:1 pairing convention instead, but
+    judged it a bigger, corpus-wide design decision than this issue
+    warrants; a second file is the simpler, lower-risk option and is
+    what's shipped here. Consequence, filed as #420: this rule's
+    detection: block is now byte-identical to net_zeek_ssh_session_
+    cadence.yml's own, duplicated with no test enforcing they stay in
+    sync — a future change to the shared client|startswith selector
+    (e.g. addressing the KNOWN LIMITATION note below) could silently
+    drift between the two files.
+    Same emulation coverage as #332: tests/anomaly_simulation/
+    sim_brute_ssh.sh's simulated attempts already exercise a burst of
+    SSH sessions from one source — sufficient to smoke-test this rule's
+    detection logic firing, though not a true 30-minute-paced emulation
+    run (no new emulation script needed for a static logic check; a
+    genuinely paced live-fire proof would need a real 30+-minute test
+    run, out of scope for this fix).
+    Deliberately status: experimental so deploy_detections.sh does not
+    also deploy this as a Detection Engine query rule (issue #192
+    pattern) — the paired threshold rule is the deployed enforcement.
+    security-auditor finding (HIGH), FIXED not deferred: the paired
+    threshold rule's original "from"/"interval" (now-31m/30m) used the
+    same flat +1-minute-overlap convention every other threshold rule in
+    this corpus uses - reasonable for a burst-shaped attack (the other
+    rules' target), but for THIS rule's target (15 sessions spread
+    across up to 28 minutes, genuinely comparable in width to the
+    30-minute lookback) the containment band shrank to 3 minutes out of
+    every 30: a run only fully captured a real 15-session campaign in
+    one evaluation ~10% of the time (band-width/interval = 3/30,
+    independently verified), the other ~90% split the sessions across
+    two evaluations with neither crossing threshold.value:15 alone -
+    silently missing the rule's own stated purpose almost all the time.
+    Corrected to "interval": "5m" / "from": "now-35m" (lookback >=
+    interval + the 30-minute detection window), which GUARANTEES full
+    containment for any campaign phase, not just improves the odds -
+    live-verified both the original containment failure and the
+    corrected guarantee against a real Elasticsearch. This rule
+    intentionally does NOT use the corpus's flat +1m convention; #393
+    (filed against the two OTHER threshold files, before this one
+    existed) tracks fixing THEIR windowing to the same formula - this
+    file ships the fix directly rather than deferring it, since deferral
+    here would have shipped a rule that misses its own point ~90% of the
+    time. Full detail, including the exact math, in the paired threshold
+    rule's own description. Also unexercised by tests/detections/
+    test_live_fire.py's ThresholdLiveFireTests, still hardcoded to one
+    other file (#393's own Gap 2, filed before this file existed) - the
+    aggregation behavior was live-verified manually, not by an automated
+    regression test.
+    Caveats inherited from net_zeek_ssh_session_cadence.yml, not
+    re-derived independently but equally applicable here (security-
+    auditor finding: the first draft of this file dropped both).
+    Detection Engine alerts from this rule are NOT wired to SOAR dispatch
+    (configs/logstash.conf's /alert trigger gates on
+    [threat][technique][id]=="T1110", which Category 5 sets only from
+    the zeek.notice path) - do not "fix" that gap by tagging
+    threat.technique.id on zeek.ssh documents directly, which would fire
+    the unrate-limited /alert webhook once per real SSH session.
+    metric_raw_alert_volume() in scripts/setup/ai_agent/slo_metrics.py
+    sums this rule's hits into the same combined zeek_notices/rule_hits
+    value as its two siblings - a before/after tuning comparison on
+    `value` alone will see a step change from this rule's addition
+    regardless of any real noise reduction elsewhere.
+references:
+    - https://attack.mitre.org/techniques/T1110/
+    - https://docs.zeek.org/en/master/scripts/policy/protocols/ssh/detect-bruteforcing.zeek.html
+author: Suburban-SOC
+date: 2026-08-18
+tags:
+    - attack.credential_access
+    - attack.t1110
+logsource:
+    product: zeek
+    service: ssh
+detection:
+    selection:
+        client|startswith: 'SSH-'
+    condition: selection
+falsepositives:
+    - An admin or automation tool (Ansible, deployment scripts, health
+      checks) establishing many sequential SSH connections to the same
+      host over a longer window — a 30-minute lookback makes routine
+      configuration-management sweeps or monitoring checks a more likely
+      source of this rule's first firing than its shorter-window
+      companion's.
+    - A jump host or bastion legitimately proxying multiple real users'
+      sessions from one apparent source IP over an extended period.
+    - The operator's own workstation during a long interactive mesh/
+      OpenWrt admin session hopping between several node SSH connections.
+    - scripts/hive-mind-broker/dispatcher.py concurrently dispatches SSH
+      connections to every router in a tenant's inventory during a
+      containment action — the SOC's own broker host generating
+      repeated containment activity is a plausible source of this
+      rule's first real-environment firing, and would name the SOC's
+      own infrastructure in the alert. Not excluded at the query level
+      (an attacker who compromised the broker host should not get a
+      blind spot from this rule) — a documented false-positive class
+      for the analyst to recognize at triage instead.
+level: medium

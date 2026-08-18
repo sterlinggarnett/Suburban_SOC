@@ -76,6 +76,44 @@ ECS_Mapping       : threat.technique.id = "T1110" | threat.tactic.name = "Creden
 Target_Sigma_Rule : rules/sigma/net_zeek_ssh_session_cadence.yml
 NIST_CSF_Control  : DE.AE-02 (Detection and Anomaly Validation)
 
+# #392: same emulation script and dataset as CREDENTIAL_ACCESS_SSH_CADENCE
+# above, a third independent detection path over the identical zeek.ssh
+# session-count signal, just a higher per-source threshold (15, not 5) over
+# a longer lookback (5m run interval / 35m lookback, corrected per the
+# security-auditor HIGH finding on the paired threshold rule itself - see
+# that rule's own description).
+# INSUFFICIENT-BY-DEFAULT CAVEAT (worse than the zero-margin caveat above,
+# not just tight): sim_brute_ssh.sh's default BRUTE_PASSWORDS issues exactly
+# 5 attempts - one third of this rule's threshold.value:15. The default run
+# does NOT exercise this rule at all, silently, the same way
+# validate_emulation_map.py reports this mapping green regardless (file
+# existence/tag/platform sanity only). Exercising this rule for real needs
+# an explicit override WITH MARGIN (security-auditor: 15 words would
+# reintroduce the same zero-margin defect the caveat above already warns
+# about) AND a real capture-path target, e.g.:
+#   BRUTE_PASSWORDS="w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 w14 w15 \
+#     w16 w17 w18 w19 w20" \
+#   TARGET_HOST=<a host reachable over the real capture interface> \
+#     tests/anomaly_simulation/sim_brute_ssh.sh
+# (BRUTE_PASSWORDS is a space-separated list; the script issues one SSH
+# attempt per word). TARGET_HOST defaults to 127.0.0.1
+# (tests/anomaly_simulation/.env.example) - loopback traffic is invisible
+# to every real capture path in this repo (CAPTURE_IFACE, not lo), so the
+# documented override alone produces ZERO zeek.ssh documents on a default
+# config, the same defect class as the EXPLOITATION_UNVERIFIED disclosure
+# above. Also note: this produces 1 guess per session (NumberOfPasswordPrompts=1
+# in sim_brute_ssh.sh), not the 6-per-session shape the rule's own threat
+# model discusses - a volume/session-count smoke test, not a rate- or
+# guess-count-accurate emulation. Not fixed by changing the script's own
+# default - doing so would also change CREDENTIAL_ACCESS_SSH/CREDENTIAL_
+# ACCESS_SSH_CADENCE's own emulation volume above.
+[EMULATION: CREDENTIAL_ACCESS_SSH_CADENCE_SUSTAINED]
+Execution_Vector  : tests/anomaly_simulation/sim_brute_ssh.sh
+Log_Source        : configs/systemd/zeek-host-capture.service -> ssh.log
+ECS_Mapping       : threat.technique.id = "T1110" | threat.tactic.name = "Credential Access"
+Target_Sigma_Rule : rules/sigma/net_zeek_ssh_session_cadence_sustained.yml
+NIST_CSF_Control  : DE.AE-02 (Detection and Anomaly Validation)
+
 # --------------------------- WINDOWS ENDPOINT LANE (Sysmon) ---------------------------
 
 [EMULATION: DELIVERY_BITSADMIN]

@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 14/27 closed — 11 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 15/28 closed — 11 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -1201,6 +1201,25 @@ are real, working smallest/most-contained first: #386 → #387 → #382 →
   all 12 CI checks green, no infra flakiness this time. **M17 now 14/27
   closed** (11 real follow-ups open, 2 not actionable) — continuing the
   same resumed run, smallest/most-contained next.
+- [x] **#426 (M17) — COMPLETE, MERGED** — the sibling fix #410's own review
+  flagged: `net_zeek_dns_doh_non_standard.yml` only catches the plaintext
+  hostname lookup a DoH client performs before establishing its encrypted
+  channel; a host with a hardcoded resolver IP skips that lookup entirely
+  and is invisible to it. Moved into the title. security-auditor review
+  reworded the first draft ("Hostname-Lookup Phase Only," named WHEN the
+  rule sees traffic) to state the exploitable gap directly instead
+  ("Blind to Hardcoded-IP DoH Clients"). Filed
+  [#428](https://github.com/voltron-1/Suburban_SOC/issues/428) (M17) for
+  an out-of-scope pre-existing gap the review found — unanchored
+  `endswith` suffixes let a lookalike domain (`evilquad9.net`) match.
+  Corrected #425's own framing via comment: its em-dash-delimiter
+  collision isn't hypothetical, it's already live on `main` today (T1110
+  is a 5-rule technique group with 2 colliding em-dash titles) — no code
+  change, just re-scoped severity. [PR
+  #429](https://github.com/voltron-1/Suburban_SOC/pull/429), all 12 CI
+  checks green. **M17 now 15/28 closed** (11 real follow-ups open, 2 not
+  actionable) — continuing the same resumed run, smallest/most-contained
+  next.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -3020,6 +3039,16 @@ are implemented in code; checked off with that one caveat noted inline.
   (M17). Full detail in `findings/20260818-410-smtp-title-plaintext-
   scope.md`. **M17 now 14/27 closed** (11 real follow-ups open, 2 not
   actionable) — continuing the resumed run.
+- **#426 closed (M17) — DoH rule title now discloses hardcoded-IP blind
+  spot.** [PR #429](https://github.com/voltron-1/Suburban_SOC/pull/429)
+  merged (squash), all 12 CI checks green. security-auditor review
+  reworded the title's first draft to name the exploitable gap directly;
+  filed #428 (M17) for an out-of-scope pre-existing gap (unanchored
+  `endswith` domain matching); corrected #425's severity framing via
+  comment (its collision is already live on `main`, not hypothetical).
+  Full detail in `findings/20260818-426-doh-title-scope.md`. **M17 now
+  15/28 closed** (11 real follow-ups open, 2 not actionable) —
+  continuing the resumed run.
 
 ---
 

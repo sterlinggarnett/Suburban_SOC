@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 11/15 closed, resumed 2026-08-17 (project-board backfill retroactively assigned 7 more open follow-ups back to this milestone) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 12/15 closed, resumed 2026-08-17 (project-board backfill retroactively assigned 7 more open follow-ups back to this milestone) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -1075,6 +1075,54 @@ are real, working smallest/most-contained first: #386 → #387 → #382 →
   out of scope. **M17 now 11/15 closed** (4 open remaining: #283/#333
   not actionable, 2 real follow-ups left) — #392 next (long-window SSH
   cadence companion).
+- [x] **#392 (P3, detection) — COMPLETE, MERGED** — #332's own review
+  found its 5-session/6-minute rule normalizes to the same steady-state
+  rate as detect-bruteforcing (~1/min) — doesn't lower the sustained
+  rate an attacker can pace under to evade both rules indefinitely.
+  [PR #422](https://github.com/voltron-1/Suburban_SOC/pull/422) merged
+  2026-08-18 (squash), auto-closing #392 — no GitHub-side human review,
+  same review-bypass basis as every prior session fix (13/13 CI green
+  after one transient CI infra hang — a "Reporting Plane Coverage" job
+  stuck 36 minutes on an unrelated apt-dependency step with zero
+  prior-run precedent, cancelled and re-run cleanly in 41s second time —
+  parallel security-auditor + code-reviewer sub-agent review).
+  Added a third SSH threshold rule pair (own Sigma UUID — the pairing
+  invariant requires strict 1:1) detecting 15+ sessions/30min, a
+  genuinely lower 0.5/min rate vs the existing rules' 1/min.
+  security-auditor found a HIGH-severity design flaw in the first draft
+  and held for a fix rather than approving: the initial windowing
+  (interval 30m, from now-31m, matching every other threshold rule's
+  flat +1-minute-overlap convention) only fully captures a real
+  15-session/28-minute campaign in a single evaluation ~10% of the time
+  (independently re-derived and confirmed: containment band / interval
+  = 3/30) — the other ~90% splits the campaign across two evaluations,
+  neither crossing the threshold alone, silently missing the rule's own
+  stated purpose almost all the time. Fixed directly rather than
+  deferred to #393 (which covers only the two pre-existing threshold
+  files): interval 5m / from now-35m guarantees full containment for
+  any campaign phase — live-verified both the original containment
+  failure and the corrected guarantee against a real Elasticsearch
+  terms aggregation. Also corrected the HONEST FRAMING section to state
+  the binding evasion floor (14 sessions/31min, ~162 guesses/hour, a
+  ~10% throughput reduction) rather than a looser illustrative example;
+  carried forward two caveats the first draft dropped from the sibling
+  rule (SOAR non-wiring, SLO metric inflation); added the SOC's own
+  containment-broker SSH traffic as a disclosed false-positive source;
+  fixed the emulation_telemetry.map disclosure, which itself
+  reintroduced a zero-margin defect (bumped 15→20 words) and didn't
+  address that the documented TARGET_HOST default is loopback,
+  invisible to every real capture path in this repo.
+  Filed [#420](https://github.com/voltron-1/Suburban_SOC/issues/420)
+  (two Sigma files now share identical detection logic with no
+  consistency test — also folded in ndjson-query-vs-compiled-Sigma-
+  query drift and missing alert_suppression) and
+  [#421](https://github.com/voltron-1/Suburban_SOC/issues/421) (whether
+  detect-bruteforcing's own notice has ever actually fired on this
+  pipeline — the number this rule's own justification is built on) as
+  follow-ups, both milestoned, both deliberately out of scope.
+  **M17 now 12/15 closed** (3 open remaining: #283/#333 not actionable,
+  1 real follow-up left) — #393 next (threshold-rule test hardening),
+  the last actionable M17 item.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>

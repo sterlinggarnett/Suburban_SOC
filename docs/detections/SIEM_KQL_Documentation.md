@@ -76,7 +76,7 @@ winlog.event_id:4625
 - **Rule:** `auth_win_bruteforce_source_spray.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1110.003
 
 ```
-winlog.event_id:4625
+winlog.event_id:4625 AND (NOT (winlog.event_data.IpAddress:(\- OR 0.0.0.0 OR \:\: OR "")))
 ```
 
 ## DCSync — Directory Replication Rights Exercised by a Non-DC Account

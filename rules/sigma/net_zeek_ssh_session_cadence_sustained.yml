@@ -9,7 +9,9 @@ description: |
     sessions/minute, genuinely below both policy/protocols/ssh/detect-
     bruteforcing's own steady-state rate (30 failed auths/30 minutes,
     ~1/minute) and #332's own net_zeek_ssh_session_cadence.yml companion
-    (5 sessions/6 minutes, the SAME ~1/minute rate, just a burst-latency
+    (5 sessions/10 minutes by rate-of-purpose — 10-minute lookback as of
+    #393's windowing fix, but the same SAME ~1/minute steady-state rate
+    the threshold.value:5 was tuned for — just a burst-latency
     improvement — see that rule's own "HONEST FRAMING" note, which
     explicitly named this gap and filed it as a follow-up rather than
     building it there).
@@ -100,18 +102,16 @@ description: |
     interval + the 30-minute detection window), which GUARANTEES full
     containment for any campaign phase, not just improves the odds -
     live-verified both the original containment failure and the
-    corrected guarantee against a real Elasticsearch. This rule
-    intentionally does NOT use the corpus's flat +1m convention; #393
-    (filed against the two OTHER threshold files, before this one
-    existed) tracks fixing THEIR windowing to the same formula - this
-    file ships the fix directly rather than deferring it, since deferral
-    here would have shipped a rule that misses its own point ~90% of the
-    time. Full detail, including the exact math, in the paired threshold
-    rule's own description. Also unexercised by tests/detections/
-    test_live_fire.py's ThresholdLiveFireTests, still hardcoded to one
-    other file (#393's own Gap 2, filed before this file existed) - the
-    aggregation behavior was live-verified manually, not by an automated
-    regression test.
+    corrected guarantee against a real Elasticsearch. This rule shipped
+    its own fix directly rather than following the corpus's flat +1m
+    convention; #393 (filed before this file existed) subsequently
+    applied the identical formula to all 7 other threshold files and
+    generalized ThresholdLiveFireTests to exercise every threshold file
+    generically instead of one hardcoded path - this file's own
+    aggregation behavior, live-verified manually during #392's own
+    review, is now also covered by that generalized automated test.
+    Full detail, including the exact math, in the paired threshold
+    rule's own description.
     Caveats inherited from net_zeek_ssh_session_cadence.yml, not
     re-derived independently but equally applicable here (security-
     auditor finding: the first draft of this file dropped both).

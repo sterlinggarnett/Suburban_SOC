@@ -5,8 +5,14 @@ description: |
     Single-event logic-of-record for the paired Elastic threshold rule
     (rules/elastic/threshold/net-zeek-ssh-session-cadence.ndjson), which
     alerts when a single source establishes 5+ SSH sessions (zeek.ssh) within
-    a 6-minute lookback (a 5-minute run interval with 1-minute overlap - the
-    real trigger is 5-in-6, not 5-in-5). #261 wired policy/protocols/ssh/
+    a 10-minute lookback (a 5-minute run interval with a 5-minute overlap,
+    corrected from an original 1-minute overlap - security-auditor review,
+    #393: the original 6-minute lookback (5m interval + 1m overlap) only
+    fully contained a real sliding 5-minute window ~20% of the time for an
+    arbitrary-phase campaign; "from": "now-10m" (lookback >= interval + the
+    5-minute detection window) guarantees full containment instead. See the
+    paired threshold rule's own description for the exact math). #261 wired
+    policy/protocols/ssh/
     detect-bruteforcing into the real capture path (threshold: 30 failed
     auths from one source in 30 minutes, both upstream Zeek defaults) and
     fixed configs/logstash.conf's T1110 pipeline tag to key on its aggregated
@@ -14,7 +20,7 @@ description: |
     reasonable but leaves a real recall gap with no compensating control:
     29 failed attempts from one source in 30 minutes produces zero T1110
     signal anywhere in this pipeline.
-    HONEST FRAMING (security-auditor finding): 5-in-6-minutes and 30-in-30-
+    HONEST FRAMING (security-auditor finding): 5-in-10-minutes and 30-in-30-
     minutes are the SAME steady-state rate (~1 session/minute) - this rule
     does NOT lower the sustained rate an attacker can stay under to evade
     both rules indefinitely (e.g. one connection every 2 minutes = 15

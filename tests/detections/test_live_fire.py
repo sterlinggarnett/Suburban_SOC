@@ -35,7 +35,9 @@ One rule per category named in the issue's acceptance criteria:
                        pre-rename field name and could never fire), so this
                        is a direct regression test for a documented
                        production incident, not a synthetic example.
-  - threshold:         rules/elastic/threshold/auth-win-bruteforce-failed-logons.ndjson
+  - threshold:         every file in rules/elastic/threshold/*.ndjson (#393:
+                       generalized from the original single hardcoded file
+                       to all 8, via THRESHOLD_TEST_CONFIGS)
 
 Two known scope limits, security-auditor/code-reviewer verified (both reviews
 run in parallel per this repo's standing rules) but not fully closed here:
@@ -44,8 +46,8 @@ run in parallel per this repo's standing rules) but not fully closed here:
     runs a language:lucene rule (e.g. analyze_wildcard) - confirming exact
     parity needs a live capture from a real Kibana rule execution, not
     something inspectable from this repo alone. The threshold tests DO now
-    apply the rule's own from/to window (see _bucket_count), which is the
-    property that actually matters for that rule's documented purpose.
+    apply each rule's own from/to window (see _metric_value), which is the
+    property that actually matters for those rules' documented purpose.
   - load_pipeline_field_mapping() intentionally reimplements a SIMPLIFIED
     subset of pySigma's real field-mapping precedence (OR across conditions
     and last-transformation-wins on overlap, vs pySigma's real AND-by-default
@@ -69,6 +71,7 @@ Run:  pytest tests/detections/test_live_fire.py
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -86,6 +89,7 @@ SIGMA_DIR = ROOT / "rules" / "sigma"
 THRESHOLD_DIR = ROOT / "rules" / "elastic" / "threshold"
 PIPELINE_PATH = ROOT / "configs" / "detections" / "suburban-soc-ecs.yml"
 INDEX_TEMPLATE_PATH = ROOT / "configs" / "elasticsearch" / "logstash-security-template.json"
+SIEM_KQL_DOC_PATH = ROOT / "docs" / "detections" / "SIEM_KQL_Documentation.md"
 FIXTURES = json.loads((HERE / "fixtures.json").read_text(encoding="utf-8"))
 
 ES_URL = os.environ.get("LIVE_FIRE_ES_URL", "http://localhost:9200")
@@ -686,6 +690,132 @@ class WindowsSecurityLiveFireTests(LiveFireTestCase):
         self.assert_rule_fires_correctly("auth_win_pass_the_hash_logon.yml")
 
 
+def _set_dotted(doc: dict, path: str, value) -> None:
+    """Sets doc[a][b][c] = value for a dotted path "a.b.c", creating
+    intermediate dicts as needed. Used to place a threshold rule's own
+    threshold.field[0]/cardinality field values into a generic base
+    document without each per-family builder needing to know those paths
+    itself — the rule's own JSON is the single source of truth for where
+    its bucketing/cardinality fields actually live."""
+    parts = path.split(".")
+    cur = doc
+    for p in parts[:-1]:
+        cur = cur.setdefault(p, {})
+    cur[parts[-1]] = value
+
+
+def _win_4625_base_doc() -> dict:
+    return {"winlog": {"event_id": "4625", "event_data": {}}}
+
+
+def _win_4648_base_doc() -> dict:
+    return {"winlog": {"event_id": "4648", "event_data": {}}}
+
+
+def _zeek_ssh_base_doc() -> dict:
+    return {"event": {"dataset": "zeek.ssh"}, "client": "SSH-2.0-OpenSSH_9.6"}
+
+
+def _sigma_fixture_base_doc(sigma_filename: str) -> dict:
+    """Builds a base document from the paired Sigma rule's own true_positive
+    fixture, translated through the real pipeline field mapping — the same
+    real-shape data test_live_fire.py's other tests already use, rather
+    than a hand-built guess at what process.executable/process.args
+    actually look like post-pipeline (#393: an earlier draft of this
+    verification hand-built raw Sysmon field names directly and silently
+    matched nothing, since the compiled query selects on the RENAMED
+    fields — caught by live-testing against real ES before shipping, not
+    assumed to work)."""
+    rule_path = SIGMA_DIR / sigma_filename
+    sigma_rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+    logsource = sigma_rule.get("logsource", {})
+    mapping = load_pipeline_field_mapping(logsource)
+    fixture = FIXTURES[sigma_filename]["true_positive"]
+    return translate_fixture(fixture, mapping, logsource)
+
+
+# Per-threshold-file document-builder dispatch. Each entry describes how to
+# build ONE matching event; the generic test methods below place the
+# rule's own threshold.field[0] (and, for cardinality rules, the
+# cardinality field) into that document via _set_dotted rather than each
+# entry needing to know its own rule's field paths redundantly. `cardinality`
+# is None for plain-count rules; for cardinality rules it's the dotted path
+# that must get a DISTINCT value per indexed document to actually cross the
+# cardinality threshold (a repeated value would never cross it, the same
+# way `min_doc_count` alone can't distinguish 6 events from 6 DISTINCT
+# users without this).
+# security-auditor finding (#393): source.ip is explicitly mapped `type:
+# ip` in the real production template (configs/elasticsearch/logstash-
+# security-template.json), and that same template sets `index.mapping.
+# ignore_malformed: true` - a non-IP string written into it is silently
+# accepted at the API level (indexes fine, survives in _source) but is
+# NEVER actually added to the field's doc-values/inverted index, so a
+# terms aggregation on it can never find it. A generic "entity.<label>"
+# placeholder string, fine for every keyword-mapped entity field in this
+# corpus, silently produces zero-bucket false failures for source.ip
+# specifically - caught by the very live-fire testing this fix exists to
+# add, not assumed to work. Entity-value generation is therefore
+# per-config, defaulting to the descriptive string and overridden only
+# where the real field type demands a differently-shaped value.
+#
+# Namespaced per rule FILE, not just per label: net-zeek-ssh-session-
+# cadence.ndjson and its -sustained sibling compile to the byte-identical
+# query (event.dataset:zeek.ssh AND client:SSH\-*, live-verified by
+# ThresholdQueryMatchesCompiledSigmaTests) and aggregate the same
+# source.ip field — a single shared "notcrossed" entity value across both
+# would let one file's indexed docs get counted in the OTHER file's
+# aggregation within the same test run, since _metric_value's query
+# filter can't distinguish them by entity alone. Caught live: an
+# unnamespaced _IP_ENTITY_FOR produced 18 (14 sustained + 4 cadence) not
+# less than 5 for the plain cadence file's own "notcrossed" assertion,
+# not a hypothetical.
+def _default_entity_for(namespace):
+    return lambda label: f"entity.{namespace}.{label}"
+
+
+def _ip_entity_for(namespace_octet):
+    label_octet = {"crossed": 1, "notcrossed": 2, "stale": 3, "case": 4}
+    return lambda label: f"10.99.{namespace_octet}.{label_octet[label]}"
+
+
+THRESHOLD_TEST_CONFIGS = {
+    "auth-win-bruteforce-failed-logons.ndjson": {
+        "base_doc": lambda: _win_4625_base_doc(), "cardinality": None,
+        "entity_for": _default_entity_for("failed-logons"),
+    },
+    "auth-win-bruteforce-source-spray.ndjson": {
+        "base_doc": lambda: _win_4625_base_doc(),
+        "cardinality": "winlog.event_data.TargetUserName",
+        "entity_for": _default_entity_for("source-spray"),
+    },
+    "auth-win-explicit-cred-account-sweep.ndjson": {
+        "base_doc": lambda: _win_4648_base_doc(),
+        "cardinality": "winlog.event_data.TargetUserName",
+        "entity_for": _default_entity_for("cred-sweep"),
+    },
+    "disc-win-domain-group-discovery-repeat.ndjson": {
+        "base_doc": lambda: _sigma_fixture_base_doc("proc_creation_win_domain_group_discovery.yml"),
+        "cardinality": None, "entity_for": _default_entity_for("domain-group"),
+    },
+    "disc-win-nltest-discovery-repeat.ndjson": {
+        "base_doc": lambda: _sigma_fixture_base_doc("proc_creation_win_nltest_discovery.yml"),
+        "cardinality": None, "entity_for": _default_entity_for("nltest"),
+    },
+    "disc-win-user-discovery-repeat.ndjson": {
+        "base_doc": lambda: _sigma_fixture_base_doc("proc_creation_win_user_discovery.yml"),
+        "cardinality": None, "entity_for": _default_entity_for("user-discovery"),
+    },
+    "net-zeek-ssh-session-cadence.ndjson": {
+        "base_doc": lambda: _zeek_ssh_base_doc(), "cardinality": None,
+        "entity_for": _ip_entity_for(1),
+    },
+    "net-zeek-ssh-session-cadence-sustained.ndjson": {
+        "base_doc": lambda: _zeek_ssh_base_doc(), "cardinality": None,
+        "entity_for": _ip_entity_for(2),
+    },
+}
+
+
 class ThresholdLiveFireTests(LiveFireTestCase):
     """Threshold rules (rules/elastic/threshold/*.ndjson) have no fixtures.json
     entry — sigma_eval.py can't express cardinality logic at all (see that
@@ -696,85 +826,220 @@ class ThresholdLiveFireTests(LiveFireTestCase):
     confirm it does not. Also tests the rule's own from/to lookback window —
     the property its own description calls out as the actual security-
     relevant one (a tumbling, non-overlapping window lets an attacker
-    straddle two scheduled runs and stay under threshold in either)."""
+    straddle two scheduled runs and stay under threshold in either).
 
-    NDJSON = THRESHOLD_DIR / "auth-win-bruteforce-failed-logons.ndjson"
+    #393 (security-auditor Gap 2): originally hardcoded to ONE threshold
+    file (auth-win-bruteforce-failed-logons.ndjson) — the other 7 files'
+    aggregation behavior and lookback-window correctness were asserted only
+    in prose (#332/#392's own PR descriptions) or not at all, never by an
+    automated regression test. Generalized to iterate every file in
+    THRESHOLD_DIR via THRESHOLD_TEST_CONFIGS' per-rule-family document
+    builder, run once per file via subTest so a single broken rule's
+    failure doesn't hide the rest."""
 
-    def _threshold_rule(self) -> dict:
-        line = next(ln for ln in self.NDJSON.read_text(encoding="utf-8").splitlines() if ln.strip())
-        return json.loads(line)
+    def _threshold_rules(self):
+        rules = []
+        for path in sorted(THRESHOLD_DIR.glob("*.ndjson")):
+            self.assertIn(
+                path.name, THRESHOLD_TEST_CONFIGS,
+                f"{path.name}: no THRESHOLD_TEST_CONFIGS entry — a new threshold rule "
+                f"was added without teaching this test how to build a matching document "
+                f"for it, silently exempting it from live-fire coverage")
+            line = next(ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip())
+            rules.append((path, json.loads(line)))
+        return rules
 
-    def _index_failed_logon(self, doc_id: str, target_user: str, timestamp: str):
-        # #297 (security-auditor review): event_id as a string, not an int —
-        # this writes directly to ES (bypasses configs/logstash.conf
-        # entirely) so it isn't affected by that issue's bug, but the
-        # fixture should still model the real Winlogbeat-emitted shape
-        # (ECS types winlog.event_id as keyword/string) rather than a shape
-        # production never actually sends.
-        self._index(doc_id, {"@timestamp": timestamp, "winlog": {
-            "event_id": "4625", "event_data": {"TargetUserName": target_user}}})
+    def _index_matching_doc(self, doc_id: str, path: Path, rule: dict, entity: str,
+                             seq: int, timestamp: str):
+        config = THRESHOLD_TEST_CONFIGS[path.name]
+        doc = config["base_doc"]()
+        doc["@timestamp"] = timestamp
+        _set_dotted(doc, rule["threshold"]["field"][0], entity)
+        if config["cardinality"]:
+            # A repeated cardinality-field value would never cross a
+            # cardinality threshold no matter how many documents are
+            # indexed — each must get its own distinct value.
+            _set_dotted(doc, config["cardinality"], f"seq-{seq}")
+        self._index(doc_id, doc)
 
-    def _bucket_count(self, rule: dict, target_user: str) -> int:
-        # The rule's own from/to (ES understands "now-6m"/"now" date math
+    @staticmethod
+    def _threshold_target(rule: dict) -> int:
+        """The real number a bucket's metric must reach/exceed to fire —
+        threshold.value for a plain-count rule, cardinality.value for a
+        cardinality rule (threshold.value on those is a structurally
+        different, near-always-1 "how many buckets" gate, not the count
+        that matters here)."""
+        cardinality = (rule["threshold"].get("cardinality") or [None])[0]
+        return cardinality["value"] if cardinality else rule["threshold"]["value"]
+
+    def _metric_value(self, rule: dict, entity: str) -> int:
+        # The rule's own from/to (ES understands "now-10m"/"now" date math
         # natively, same syntax Kibana's Detection Engine passes through) —
         # a bare query with no range filter would count events the rule
         # itself would never see, and could not catch a broken lookback
-        # window (security-auditor review).
+        # window (security-auditor review). No min_doc_count filtering
+        # here — that only ever made sense for plain-count rules, and
+        # would silently give the WRONG metric for a cardinality rule
+        # (filtering the outer bucket on raw doc_count is not the same
+        # gate as the nested cardinality value the rule actually fires
+        # on). Returns the raw metric; callers compare it against
+        # _threshold_target themselves — the security-relevant assertion
+        # is "does the metric cross the target", not "does a bucket
+        # exist at all" (#393 follow-up: an earlier draft asserted a
+        # below-threshold bucket has metric==0, which is wrong — a
+        # below-threshold bucket still exists with metric==n, just below
+        # target; this generalization of the original hardcoded-file
+        # version was caught failing 6 of 8 files before being fixed,
+        # not assumed correct).
+        cardinality = (rule["threshold"].get("cardinality") or [None])[0]
+        aggs = {"by_field": {"terms": {
+            "field": rule["threshold"]["field"][0], "size": 1000}}}
+        if cardinality:
+            aggs["by_field"]["aggs"] = {"card": {"cardinality": {"field": cardinality["field"]}}}
         r = requests.post(f"{ES_URL}/{self.index}/_search", auth=ES_AUTH, verify=ES_VERIFY, timeout=10,
                            json={"query": {"bool": {"must": [
                                      {"query_string": {"query": rule["query"]}},
                                      {"range": {"@timestamp": {"gte": rule["from"], "lte": rule["to"]}}},
                                  ]}},
-                                 "size": 0,
-                                 "aggs": {"by_field": {"terms": {
-                                     "field": rule["threshold"]["field"][0],
-                                     "min_doc_count": rule["threshold"]["value"]}}}})
+                                 "size": 0, "aggs": aggs})
         r.raise_for_status()
         buckets = r.json()["aggregations"]["by_field"]["buckets"]
-        matching = [b for b in buckets if b["key"] == target_user]
-        return matching[0]["doc_count"] if matching else 0
+        matching = [b for b in buckets if b["key"] == entity]
+        if not matching:
+            return 0
+        if cardinality:
+            return matching[0]["card"]["value"]
+        return matching[0]["doc_count"]
 
     def test_threshold_crossed_when_value_met(self):
-        rule = self._threshold_rule()
-        n = rule["threshold"]["value"]
-        now = datetime.now(timezone.utc).isoformat()
-        for i in range(n):
-            self._index_failed_logon(f"hit-{i}", "victim.crossed", now)
-        self._refresh()
-        self.assertGreaterEqual(
-            self._bucket_count(rule, "victim.crossed"), n,
-            f"threshold companion for {self.NDJSON.name}: {n} matching events did not "
-            f"cross its own threshold.value against a real terms aggregation")
+        for path, rule in self._threshold_rules():
+            with self.subTest(rule=path.name):
+                config = THRESHOLD_TEST_CONFIGS[path.name]
+                target = self._threshold_target(rule)
+                entity = config["entity_for"]("crossed")
+                now = datetime.now(timezone.utc).isoformat()
+                for i in range(target):
+                    self._index_matching_doc(f"{path.stem}-hit-{i}", path, rule, entity, i, now)
+                self._refresh()
+                self.assertGreaterEqual(
+                    self._metric_value(rule, entity), target,
+                    f"threshold companion for {path.name}: {target} matching events did "
+                    f"not cross its own threshold/cardinality target against a real "
+                    f"terms aggregation")
 
     def test_threshold_not_crossed_below_value(self):
-        rule = self._threshold_rule()
-        n = rule["threshold"]["value"] - 1
-        now = datetime.now(timezone.utc).isoformat()
-        for i in range(n):
-            self._index_failed_logon(f"hit-{i}", "victim.notcrossed", now)
-        self._refresh()
-        self.assertEqual(
-            self._bucket_count(rule, "victim.notcrossed"), 0,
-            f"threshold companion for {self.NDJSON.name}: {n} events (one below "
-            f"threshold.value) incorrectly crossed the threshold — min_doc_count is not "
-            f"actually enforcing the documented value")
+        for path, rule in self._threshold_rules():
+            with self.subTest(rule=path.name):
+                config = THRESHOLD_TEST_CONFIGS[path.name]
+                target = self._threshold_target(rule)
+                n = target - 1
+                entity = config["entity_for"]("notcrossed")
+                now = datetime.now(timezone.utc).isoformat()
+                for i in range(n):
+                    self._index_matching_doc(f"{path.stem}-notcrossed-{i}", path, rule, entity, i, now)
+                self._refresh()
+                self.assertLess(
+                    self._metric_value(rule, entity), target,
+                    f"threshold companion for {path.name}: {n} events (one below the "
+                    f"threshold/cardinality target) incorrectly reached or crossed it — "
+                    f"the aggregation is not actually enforcing the documented value")
 
     def test_threshold_events_outside_lookback_window_do_not_count(self):
         """Enough events to cross threshold.value, but timestamped well
         before the rule's own `from` — must NOT cross. A rule whose from/to
         got dropped or widened would silently pass the other two tests
         (which only ever index "now") but fail this one."""
-        rule = self._threshold_rule()
-        n = rule["threshold"]["value"]
-        stale = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        for i in range(n):
-            self._index_failed_logon(f"hit-{i}", "victim.stale", stale)
-        self._refresh()
-        self.assertEqual(
-            self._bucket_count(rule, "victim.stale"), 0,
-            f"threshold companion for {self.NDJSON.name}: {n} events timestamped an hour "
-            f"before the rule's own \"from\": {rule['from']!r} still crossed threshold — "
-            f"the lookback window is not actually being enforced")
+        for path, rule in self._threshold_rules():
+            with self.subTest(rule=path.name):
+                config = THRESHOLD_TEST_CONFIGS[path.name]
+                target = self._threshold_target(rule)
+                entity = config["entity_for"]("stale")
+                stale = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+                for i in range(target):
+                    self._index_matching_doc(f"{path.stem}-stale-{i}", path, rule, entity, i, stale)
+                self._refresh()
+                self.assertEqual(
+                    self._metric_value(rule, entity), 0,
+                    f"threshold companion for {path.name}: {target} events timestamped "
+                    f"an hour before the rule's own \"from\": {rule['from']!r} still "
+                    f"counted at all — the lookback window is not actually being "
+                    f"enforced")
+
+    def test_ssh_session_cadence_rules_are_case_sensitive_on_client(self):
+        # #393's own explicit ask: `client` has no explicit template
+        # property (falls to strings_as_keyword, no normalizer), meaning
+        # the deployed query is case-SENSITIVE, while sigma_eval.py's
+        # fixture replay is case-insensitive by Sigma's own default - a
+        # real CI-vs-deployed divergence, unverified against a live index
+        # until now. A lowercase "ssh-2.0-..." banner (a real value some
+        # SSH implementations emit, though OpenSSH itself does not) must
+        # NOT match the compiled query if the deployed index is genuinely
+        # case-sensitive here.
+        for filename in ("net-zeek-ssh-session-cadence.ndjson",
+                          "net-zeek-ssh-session-cadence-sustained.ndjson"):
+            with self.subTest(rule=filename):
+                path = THRESHOLD_DIR / filename
+                rule = json.loads(next(ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()))
+                now = datetime.now(timezone.utc).isoformat()
+                doc = {"@timestamp": now, "event": {"dataset": "zeek.ssh"},
+                       "client": "ssh-2.0-lowercase_banner",
+                       "source": {"ip": THRESHOLD_TEST_CONFIGS[filename]["entity_for"]("case")}}
+                self._index(f"{path.stem}-case", doc)
+                self._refresh()
+                r = requests.post(f"{ES_URL}/{self.index}/_search", auth=ES_AUTH, verify=ES_VERIFY,
+                                   timeout=10, json={"query": {"query_string": {"query": rule["query"]}},
+                                                      "_source": False, "size": 10})
+                r.raise_for_status()
+                matched_ids = {h["_id"] for h in r.json()["hits"]["hits"]}
+                self.assertNotIn(
+                    f"{path.stem}-case", matched_ids,
+                    f"{filename}: a lowercase 'ssh-2.0-...' client banner matched the "
+                    f"compiled query — the deployed index is NOT case-sensitive here "
+                    f"after all, contradicting the assumption this test pins; if this "
+                    f"fails, sigma_eval.py's case-insensitive-by-default fixture replay "
+                    f"was already correct and this comment is the one that's wrong")
+
+
+class ThresholdQueryMatchesCompiledSigmaTests(unittest.TestCase):
+    """#393 Gap 3: all 8 threshold .ndjson files' `query` strings are
+    hand-maintained, derived once from a real `sigma convert` run at
+    authoring time, with nothing enforcing they stay in sync if the paired
+    Sigma file's `detection:` block is edited later. Compile-only (no live
+    ES needed) so this runs in every `pytest tests/` invocation, not just
+    when LIVE_FIRE_ES_URL is set — converts a currently-silent-rot risk
+    into a CI-enforced invariant, using docs/detections/
+    SIEM_KQL_Documentation.md's already-generated, CI-`--check`-gated
+    content as the source of truth rather than re-invoking `sigma convert`
+    a second time in this file."""
+
+    _RULE_BLOCK_RE = re.compile(
+        r"\*\*Rule:\*\* `(?P<name>[^`]+)`.*?\n```\n(?P<query>.*?)\n```",
+        re.DOTALL)
+
+    @classmethod
+    def setUpClass(cls):
+        text = SIEM_KQL_DOC_PATH.read_text(encoding="utf-8")
+        cls.compiled_queries = {m.group("name"): m.group("query") for m in cls._RULE_BLOCK_RE.finditer(text)}
+
+    def test_every_threshold_rule_query_matches_its_sigma_files_compiled_query(self):
+        for path in sorted(THRESHOLD_DIR.glob("*.ndjson")):
+            with self.subTest(rule=path.name):
+                rule = json.loads(next(ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()))
+                sigma_refs = [r for r in rule["references"] if r.startswith("rules/sigma/")]
+                self.assertEqual(len(sigma_refs), 1, f"{path.name}: expected exactly one rules/sigma/ reference")
+                sigma_name = Path(sigma_refs[0]).name
+                self.assertIn(
+                    sigma_name, self.compiled_queries,
+                    f"{path.name}: {sigma_name} has no entry in {SIEM_KQL_DOC_PATH.name} — "
+                    f"regenerate it with scripts/setup/build_kql_docs.py")
+                self.assertEqual(
+                    rule["query"], self.compiled_queries[sigma_name],
+                    f"{path.name}: hand-authored \"query\" no longer matches "
+                    f"{sigma_name}'s real compiled Lucene query in "
+                    f"{SIEM_KQL_DOC_PATH.name} — the Sigma detection: block was edited "
+                    f"without updating this threshold rule's hand-maintained query to "
+                    f"match, a silent drift between the documented logic-of-record and "
+                    f"the deployed enforcement")
 
 
 class ZeekEventDatasetScopingTests(unittest.TestCase):

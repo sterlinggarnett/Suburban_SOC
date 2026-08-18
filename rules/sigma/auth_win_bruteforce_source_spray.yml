@@ -14,13 +14,27 @@ description: >
     the source is clearly hostile. Deliberately status: experimental so
     deploy_detections.sh does not also deploy this as a noisy per-event
     query rule (issue #192, security-auditor review finding).
+    #393 (new test_live_fire.py consistency check, security-auditor):
+    #370's fix added a NOT IpAddress:(sentinel list) exclusion directly to
+    the paired threshold rule's hand-authored query, without updating this
+    file's own detection: block to match — a real drift this file's own
+    claim of being "the logic-of-record" had silently stopped being true
+    for since #370 shipped. Added here so the two stay in sync, matching
+    configs/logstash.conf's own 4-value sentinel set for the source.ip ECS
+    copy (the same set #370/#342 established).
 logsource:
     product: windows
     service: security
 detection:
     selection:
         EventID: 4625
-    condition: selection
+    filter_ip_sentinel:
+        IpAddress:
+            - '-'
+            - '0.0.0.0'
+            - '::'
+            - ''
+    condition: selection and not filter_ip_sentinel
 falsepositives:
     - A misconfigured application or service account retrying the same
       stale credential against many resources from one host.

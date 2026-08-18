@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 16/31 closed — 13 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 17/32 closed — 13 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -1251,6 +1251,28 @@ are real, working smallest/most-contained first: #386 → #387 → #382 →
   checks green. **M17 now 16/31 closed** (13 real follow-ups open, 2 not
   actionable) — continuing the same resumed run, smallest/most-contained
   next.
+- [x] **#428 (M17) — COMPLETE, MERGED** — filed during #426's own review:
+  `net_zeek_dns_doh_non_standard.yml`'s `query|endswith` used bare
+  suffixes with no leading dot, so `evilquad9.net` matched despite not
+  being a real Quad9 hostname. Split into `selection_bare` (exact) OR
+  `selection_subdomain` (dot-anchored). security-auditor review found
+  the IDENTICAL bug live in the sibling `net_zeek_dns_crypto_mining_pool.yml`
+  at a higher severity tier (`level: medium`) — fixed directly in this
+  same change per the standing no-public-disclosure convention for live
+  gaps, not filed separately. Also independently found and fixed a
+  same-class bug in `sigma_eval.py`'s shared `endswith` handling (bare
+  `"$"` vs `r"\Z"`, same divergence-from-Lucene class as #387) —
+  mutation-tested. Added permanent live-fire regression coverage for
+  both rules against a real Elasticsearch (not just this session's
+  manual verification), and an explicit emission-vs-registration caveat
+  after confirming the fix narrows but doesn't eliminate query forgery
+  (both rules match the observed query, not the response — filed
+  [#434](https://github.com/voltron-1/Suburban_SOC/issues/434) (M17) for
+  the actual mitigation, a design decision not a live-gap disclosure).
+  [PR #435](https://github.com/voltron-1/Suburban_SOC/pull/435), all 12
+  CI checks green. **M17 now 17/32 closed** (13 real follow-ups open, 2
+  not actionable) — continuing the same resumed run, smallest/most-
+  contained next.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -3091,6 +3113,20 @@ are implemented in code; checked off with that one caveat noted inline.
   found, one of which (#432) is a silent-data-loss risk via upsert, not
   just a display-ambiguity bug. Full detail in
   `findings/20260818-425-merged-comment-delimiter.md`. **M17 now 16/31
+  closed** (13 real follow-ups open, 2 not actionable) — continuing the
+  resumed run.
+- **#428 closed (M17) — DNS rules' unanchored endswith suffix matching
+  fixed.** [PR #435](https://github.com/voltron-1/Suburban_SOC/pull/435)
+  merged (squash), all 12 CI checks green including the real live-fire
+  ES job. security-auditor review found the identical bug live in a
+  higher-severity sibling rule (net_zeek_dns_crypto_mining_pool.yml,
+  level: medium) and it was fixed directly in this same change rather
+  than filed publicly, per the standing no-disclosure convention for
+  live gaps. Also fixed a same-class bug in sigma_eval.py's shared
+  endswith handling, added permanent live-fire regression tests for
+  both rules, and filed #434 (M17) for the emission-vs-registration
+  design gap the fix doesn't close. Full detail in
+  `findings/20260818-428-dns-unanchored-suffix-fix.md`. **M17 now 17/32
   closed** (13 real follow-ups open, 2 not actionable) — continuing the
   resumed run.
 

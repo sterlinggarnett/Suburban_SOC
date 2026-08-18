@@ -1,4 +1,4 @@
-title: DNS Lookup for a Known Public DNS-over-HTTPS Provider
+title: DNS Lookup for a Known Public DNS-over-HTTPS Provider — Blind to Hardcoded-IP DoH Clients
 id: ea6d5688-e872-4d41-b362-80d1e2bd7b56
 status: experimental
 description: |
@@ -10,7 +10,17 @@ description: |
     dns.log entry for the tunneled queries. A host actually using DoH with a
     hardcoded resolver IP (skipping this lookup entirely) is invisible to
     this rule; see net_zeek_ssl_self_signed_c2 / conn rules in this batch for
-    complementary encrypted-channel coverage.
+    complementary encrypted-channel coverage. #426 (code-reviewer finding,
+    same class of bug #410 fixed for the SMTP rules): this caveat did not
+    survive into docs/detections/SIEM_KQL_Documentation.md (title/tags/
+    query only) — fixed by moving it into the title itself, the one field
+    every downstream rendering keeps. security-auditor review (#426): an
+    earlier draft of the title suffix read "Hostname-Lookup Phase Only,"
+    which named WHEN this rule sees traffic, not the operationally
+    relevant fact of WHAT it misses — an analyst reading only the title
+    still had to infer that a hardcoded-resolver-IP client is invisible.
+    Reworded to state that gap directly, since it's the one an attacker
+    can actually exploit to stay undetected.
     On a campus network, DoH bypasses whatever DNS-based content filtering
     or detection the organization relies on, which is the actual risk this
     rule flags — not that DoH itself is malicious.

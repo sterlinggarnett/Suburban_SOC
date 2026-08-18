@@ -223,7 +223,7 @@ event.dataset:zeek.dns AND (dns.question.name:(*nanopool.org OR *supportxmr.com 
 event.dataset:zeek.dns AND (dns.response_code:NXDOMAIN AND dns.question.name:/.*[a-zA-Z0-9]{20,}\..*/)
 ```
 
-## DNS Lookup for a Known Public DNS-over-HTTPS Provider
+## DNS Lookup for a Known Public DNS-over-HTTPS Provider — Blind to Hardcoded-IP DoH Clients
 
 - **Rule:** `net_zeek_dns_doh_non_standard.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1572
 

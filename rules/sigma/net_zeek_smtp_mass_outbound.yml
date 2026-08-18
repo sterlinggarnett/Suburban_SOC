@@ -1,4 +1,4 @@
-title: SMTP Session with an Anomalously Deep Transaction Count
+title: SMTP Session with an Anomalously Deep Transaction Count — Plaintext SMTP Only
 id: c8c70736-aa54-46ff-8539-40651e32bb29
 status: experimental
 description: |
@@ -28,14 +28,19 @@ description: |
     PER transaction with trans_depth incrementing, so one session over the
     threshold produces roughly (trans_depth - 20) separate alerts, not one
     — a real fan-out this rule does not suppress. It also has no
-    directionality (the title says "outbound" but the logic doesn't check
-    which side originated the session) and, like
+    directionality (the filename says "outbound" but the logic doesn't
+    check which side originated the session — the title never has) and,
+    like
     net_zeek_smtp_attachment_executable, is blind to any session using
     STARTTLS or implicit TLS — SMTP submission (587/465) is TLS by default
     on any modern client, and Zeek's SMTP analyzer cannot see inside it.
     On most networks that makes this rule's real-world hit rate on
     plaintext SMTP-25 relay abuse specifically, not general mass-mail
-    detection.
+    detection. #410 (security-auditor review, same finding filed against
+    both SMTP rules): that scope limit did not survive into
+    docs/detections/SIEM_KQL_Documentation.md (title/tags/query only) —
+    fixed by moving it into the title itself, the one field every
+    downstream rendering keeps.
 references:
     - https://attack.mitre.org/techniques/T1071/003/
 author: Suburban-SOC

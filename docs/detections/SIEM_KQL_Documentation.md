@@ -287,7 +287,7 @@ event.dataset:zeek.http AND (http.request.method:POST AND http.request.body.byte
 event.dataset:zeek.notice AND (note:(Scan\:\:Port_Scan OR Scan\:\:Address_Scan OR Scan\:\:Random_Scan))
 ```
 
-## Executable Payload Sent as an Email Attachment (Zeek Files)
+## Executable Payload Sent as an Email Attachment (Zeek Files) — Plaintext SMTP Only
 
 - **Rule:** `net_zeek_smtp_attachment_executable.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1566.001
 
@@ -295,7 +295,7 @@ event.dataset:zeek.notice AND (note:(Scan\:\:Port_Scan OR Scan\:\:Address_Scan O
 event.dataset:zeek.files AND (zeek.source:SMTP AND (mime_type:(application\/x\-dosexec OR application\/x\-executable OR application\/x\-sharedlib OR text\/x\-shellscript OR text\/x\-python OR text\/x\-perl OR text\/x\-ruby OR text\/x\-msdos\-batch OR application\/x\-ms\-shortcut OR application\/x\-mach\-o\-executable)))
 ```
 
-## SMTP Session with an Anomalously Deep Transaction Count
+## SMTP Session with an Anomalously Deep Transaction Count — Plaintext SMTP Only
 
 - **Rule:** `net_zeek_smtp_mass_outbound.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1071.003
 

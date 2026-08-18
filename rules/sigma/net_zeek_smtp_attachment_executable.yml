@@ -1,4 +1,4 @@
-title: Executable Payload Sent as an Email Attachment (Zeek Files)
+title: Executable Payload Sent as an Email Attachment (Zeek Files) — Plaintext SMTP Only
 id: ac644b20-a43f-49fb-b488-f6b958c05a5a
 status: experimental
 description: |
@@ -89,9 +89,9 @@ description: |
     this rule entirely. This rule's practical coverage is unencrypted
     MTA-to-MTA relay on port 25, not general inbound phishing-attachment
     delivery; the T1566.001 tag below should be read with that scope, not
-    as blanket coverage of the technique. This caveat does not survive
+    as blanket coverage of the technique. This caveat did not survive
     into docs/detections/SIEM_KQL_Documentation.md (title/tags/query only)
-    — filed as #410 to move the scope limit into the rule title itself,
+    — fixed (#410) by moving the scope limit into the rule title itself,
     the one field every downstream rendering keeps.
 references:
     - https://attack.mitre.org/techniques/T1566/001/

@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 9/15 closed, resumed 2026-08-17 (project-board backfill retroactively assigned 7 more open follow-ups back to this milestone) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 10/15 closed, resumed 2026-08-17 (project-board backfill retroactively assigned 7 more open follow-ups back to this milestone) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -981,6 +981,42 @@ are real, working smallest/most-contained first: #386 → #387 → #382 →
   of scope. **M17 now 9/15 closed** (6 open remaining: #283/#333 not
   actionable, 4 real follow-ups left) — #383 next (false EXPLOITATION
   emulation pairing).
+- [x] **#383 (P3, bug, detection) — COMPLETE, MERGED** — `net_zeek_
+  executable_download.yml`'s description already disclosed (#365 review)
+  that `sim_malware_download.sh`'s default sample never exercises this
+  rule; the same false "wired" claim survived in `emulation_telemetry.map`
+  and `coverage_checklist.md`.
+  [PR #416](https://github.com/voltron-1/Suburban_SOC/pull/416) merged
+  2026-08-17 (squash), auto-closing #383 — no GitHub-side human review,
+  same review-bypass basis as every prior session fix (13/13 CI green,
+  parallel security-auditor + code-reviewer sub-agent review).
+  Chose disclosure (#383's own option (b)) over building a new working
+  emulation (option (a) — real design/live-fire work, out of scope for a
+  priority:low docs-accuracy bug, explicitly valid per the issue's own
+  acceptance criteria). Both reviewers approved the scope call but found
+  the disclosure didn't reach far enough: `validate_emulation_map.py`
+  parses comment lines out entirely before any section/key parsing, so a
+  comment-only disclosure never reached the CI step literally named
+  "purple-team loop is real" or SOP-147 Step 0.4's "expect 22/22 green" —
+  both still showed a bare, indistinguishable PASS. Fixed by renaming the
+  section itself (`EXPLOITATION` → `EXPLOITATION_UNVERIFIED`) so the gap
+  reaches every automated rendering (console/`--json`/`--markdown`), live-
+  confirmed via the real validator; added a SOP-147 pointer; marked the
+  checklist checkbox itself, not just its indented note; cross-referenced
+  `test_live_fire.py`'s real-ES coverage so the disclosure doesn't read as
+  "this rule is unverified" (only the emulation payload is).
+  Filed [#413](https://github.com/voltron-1/Suburban_SOC/issues/413) (the
+  disclosure still doesn't reach 5 more operator-facing locations — the
+  sim script's own output, its README, SOP-147's evidence step, the
+  evidence log, `verify_detections.py`), [#414](https://github.com/voltron-1/Suburban_SOC/issues/414)
+  (`coverage_checklist.md` is one pairing short of the map and 3 ATT&CK
+  technique IDs disagree between the two files — pre-existing, surfaced
+  during review) and [#415](https://github.com/voltron-1/Suburban_SOC/issues/415)
+  (build a genuinely working emulation, option (a)) as follow-ups, all
+  milestoned, all deliberately out of scope. **M17 now 10/15 closed** (5
+  open remaining: #283/#333 not actionable, 3 real follow-ups left) —
+  #384 next (mime_type coverage expansion for script interpreters/
+  archives/containers).
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>

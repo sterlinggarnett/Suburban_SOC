@@ -85,7 +85,7 @@ ES "$ES_URL/_cluster/health?pretty"                # status: green/yellow, no un
 ```bash
 python tests/validate_emulation_map.py             # expect 22/22 green
 ```
-This proves every sim, log-source config, and Sigma rule in `configs/detections/emulation_telemetry.map` exists and ATT&CK tags match — **before** you spend a capture window.
+This proves every sim, log-source config, and Sigma rule in `configs/detections/emulation_telemetry.map` exists and ATT&CK tags match — **before** you spend a capture window. It does NOT prove an emulation's actual telemetry output matches its paired rule's detection logic — check the `.map` file itself for `# BROKEN PAIRING`/caveat comments above a section before running that specific scenario (e.g. `EXPLOITATION`, #383: structurally green here, confirmed NOT to produce matching telemetry).
 ✅ **Done when:** 22/22 pass.
 
 ### Step 0.5 — Generate real telemetry (pick Path A or Path B)

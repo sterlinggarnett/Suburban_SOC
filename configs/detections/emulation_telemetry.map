@@ -13,7 +13,35 @@ ECS_Mapping       : threat.technique.id = "T1046" | threat.tactic.name = "Discov
 Target_Sigma_Rule : rules/sigma/net_zeek_port_scan.yml
 NIST_CSF_Control  : DE.CM-01 (Security Continuous Monitoring)
 
-[EMULATION: EXPLOITATION]
+# BROKEN PAIRING (#383, security-auditor, #365 review): renamed
+# EXPLOITATION -> EXPLOITATION_UNVERIFIED so the gap below reaches every
+# automated rendering of this file (console table, --json, --markdown),
+# not just this comment - validate_emulation_map.py parses out comment
+# lines entirely (never attached to the Emulation object), so a plain
+# "EXPLOITATION" name would still show a bare, indistinguishable PASS in
+# every consumer of this file, including the CI step literally named
+# "purple-team loop is real" and SOP-147 Step 0.4's "expect 22/22 green."
+# sim_malware_download.sh's default sample (EICAR over HTTPS) neither
+# crosses bat0 nor exposes the file to Zeek at all; its documented
+# plaintext-HTTP fallback yields mime_type=application/zip, which is in
+# neither this rule's old 9-entry mime_type list nor the new 4-entry one
+# #365 shipped. This section's Execution_Vector/Target_Sigma_Rule pairing
+# passes validate_emulation_map.py (file existence + T1105 tag match
+# only — it has no way to verify an emulation's ACTUAL telemetry output,
+# see #383's own text) but does NOT produce telemetry this rule's
+# detection logic matches. The RULE itself is NOT in question — it's
+# verified against a real Elasticsearch with the real compiled Lucene
+# query (tests/detections/test_live_fire.py's
+# test_zeek_executable_download_fires_against_real_es) and #365 live-
+# verified every mime_type against the pinned Zeek image. What's missing
+# is only an emulation that produces a matching payload — see
+# net_zeek_executable_download.yml's own description for the full
+# disclosure. #383 closed by disclosing this gap rather than building a
+# new working emulation (a genuinely matching payload needs its own
+# design/review, out of scope for a docs fix) — left wired here (not
+# removed) so the T1105/PR.IR-02 mapping intent stays visible for
+# whoever picks up a real emulation for this rule.
+[EMULATION: EXPLOITATION_UNVERIFIED]
 Execution_Vector  : tests/anomaly_simulation/sim_malware_download.sh
 Log_Source        : configs/network/filebeat.yml -> files.log
 ECS_Mapping       : threat.technique.id = "T1105" | threat.tactic.name = "Command and Control"

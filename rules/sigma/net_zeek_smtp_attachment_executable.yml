@@ -61,8 +61,16 @@ description: |
     attachment whose bytes match none of Zeek's narrow signature set
     produces no `mime_type` at all, and this rule's equality selection
     can never fire against a missing field. Archive/packed/container and
-    script-interpreter payload classes (#384, filed separately) are the
-    realistic instances of this gap, not a theoretical edge case.
+    script-interpreter payload classes are the realistic instances of
+    this gap, not a theoretical edge case — confirmed by #384's own
+    live-fire sweep, which added 6 new script-interpreter/LNK/Mach-O
+    mime_type entries to this list (kept in sync with the HTTP sibling's,
+    per the existing convention) but confirmed archive/container formats
+    (.iso tested) and generic scripting languages with no distinct Zeek
+    signature (.ps1/.vbs/.js/.wsf, all type text/plain — too broad to
+    ever add) remain permanent, disclosed gaps at this logsource. Full
+    methodology: net_zeek_executable_download.yml's own description and
+    findings/20260817-384-mime-type-coverage.md.
     `filename` on the same files.log entry (e.g. "notepad.exe" above) is
     the MIME-declared filename, fully attacker-controlled and NOT
     content-derived (double extensions, spoofed extensions) — useful for
@@ -105,7 +113,13 @@ detection:
             - 'application/x-executable'
             - 'application/x-sharedlib'
             - 'text/x-shellscript'
+            - 'text/x-python'
+            - 'text/x-perl'
+            - 'text/x-ruby'
+            - 'text/x-msdos-batch'
+            - 'application/x-ms-shortcut'
+            - 'application/x-mach-o-executable'
     condition: selection_transport and selection_payload
 falsepositives:
-    - Legitimate IT-distributed software, scripts, or installers sent by email (uncommon practice, but occurs at some organizations) — encourage a non-email distribution channel rather than allowlisting.
+    - Legitimate IT-distributed software, scripts, or installers sent by email — encourage a non-email distribution channel rather than allowlisting. security-auditor review (#384), the "uncommon practice" framing this bullet used to carry was calibrated when the list was PE/ELF/shell-script only; a developer or vendor emailing a .py/.rb/.pl script attachment is genuinely common, not a rare edge case, now that this rule's mime_type list covers those interpreters too — the `level` field below is kept as-is pending a dedicated review of whether the expanded match surface should change it, not silently left stale.
 level: medium

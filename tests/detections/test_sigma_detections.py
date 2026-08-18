@@ -568,7 +568,13 @@ class SigmaDetectionTests(unittest.TestCase):
                 ("net_zeek_smtp_attachment_executable.yml", "SMTP")):
             det = load_rule(SIGMA_DIR / rule_name)["detection"]
             for mime_type in ("application/x-dosexec", "application/x-executable",
-                              "application/x-sharedlib", "text/x-shellscript"):
+                              "application/x-sharedlib", "text/x-shellscript",
+                              # #384: 6 more, each live-verified against the real
+                              # pinned zeek/zeek image AND cross-checked against
+                              # Zeek's own magic/*.sig signature source.
+                              "text/x-python", "text/x-perl", "text/x-ruby",
+                              "text/x-msdos-batch", "application/x-ms-shortcut",
+                              "application/x-mach-o-executable"):
                 with self.subTest(rule=rule_name, mime_type=mime_type):
                     self.assertTrue(
                         detection_matches(det, {"source": source, "mime_type": mime_type}),
@@ -578,10 +584,13 @@ class SigmaDetectionTests(unittest.TestCase):
         # security-auditor finding: both rules' descriptions claim their
         # mime_type lists are "kept in sync", but nothing enforced that
         # claim — a future edit to only ONE of the two rules would drift
-        # silently. Asserts the exact 4-element list, in the same order,
-        # on both rules at once.
+        # silently. Asserts the exact list, in the same order, on both
+        # rules at once. #384 expanded this from 4 to 10 entries.
         expected = ['application/x-dosexec', 'application/x-executable',
-                    'application/x-sharedlib', 'text/x-shellscript']
+                    'application/x-sharedlib', 'text/x-shellscript',
+                    'text/x-python', 'text/x-perl', 'text/x-ruby',
+                    'text/x-msdos-batch', 'application/x-ms-shortcut',
+                    'application/x-mach-o-executable']
         for rule_name in ("net_zeek_executable_download.yml",
                           "net_zeek_smtp_attachment_executable.yml"):
             det = load_rule(SIGMA_DIR / rule_name)["detection"]
@@ -620,6 +629,36 @@ class SigmaDetectionTests(unittest.TestCase):
                         f"{rule_name}: {dead_mime_type!r} was removed as confirmed-dead on "
                         f"real Zeek (#365) — if it's back, either it was reintroduced by "
                         f"accident, or new evidence means this test itself needs updating")
+
+    def test_zeek_executable_and_smtp_rules_do_not_match_deliberately_excluded_mime_types(self):
+        # #384: mime_type values Zeek DOES really produce (unlike the
+        # dead-and-never-produced ones above) but that were deliberately
+        # NOT added to either rule's list, disclosed in both rules'
+        # descriptions rather than silently omitted:
+        #   - text/plain: live-verified as what .ps1/.vbs/.js/.wsf all
+        #     produce (no distinct Zeek signature for any of them) - too
+        #     broad to add (matches every plaintext HTTP/SMTP download).
+        #   - text/html: live-verified as what .hta produces (HTA is just
+        #     HTML+script to Zeek's detector) - same "too broad" verdict.
+        #   - application/msword: live-verified as what a real MSI
+        #     (genuine OLE Compound File output) produces, per Zeek's own
+        #     signature comment ("non-specific and terrible") - adding it
+        #     would match every legitimate Word-document download/
+        #     attachment. Filed as #417.
+        # Pins that a well-meaning "add more coverage" edit doesn't
+        # silently add any of these, defeating the reason they were
+        # excluded.
+        for rule_name, source in (
+                ("net_zeek_executable_download.yml", "HTTP"),
+                ("net_zeek_smtp_attachment_executable.yml", "SMTP")):
+            det = load_rule(SIGMA_DIR / rule_name)["detection"]
+            for excluded_mime_type in ("text/plain", "text/html", "application/msword"):
+                with self.subTest(rule=rule_name, mime_type=excluded_mime_type):
+                    self.assertFalse(
+                        detection_matches(det, {"source": source, "mime_type": excluded_mime_type}),
+                        f"{rule_name}: {excluded_mime_type!r} was deliberately excluded (#384, "
+                        f"too broad/ambiguous) — if it's back, this reintroduces the exact "
+                        f"false-positive flood #384's review found")
 
 
 def coverage_report():

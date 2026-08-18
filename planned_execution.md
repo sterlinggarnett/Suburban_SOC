@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 15/28 closed — 11 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 16/31 closed — 13 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -1218,6 +1218,37 @@ are real, working smallest/most-contained first: #386 → #387 → #382 →
   change, just re-scoped severity. [PR
   #429](https://github.com/voltron-1/Suburban_SOC/pull/429), all 12 CI
   checks green. **M17 now 15/28 closed** (11 real follow-ups open, 2 not
+  actionable) — continuing the same resumed run, smallest/most-contained
+  next.
+- [x] **#425 (M17) — COMPLETE, MERGED** — filed during #410's own review:
+  `build_attack_coverage.py`'s `_merged_comment()` used `" — "` (em dash)
+  as its title<->rule Navigator-tooltip delimiter, the same character
+  several rule titles legitimately contain — confirmed already ambiguous
+  in a live, shipped tooltip (T1110, 5 rules, 2 em-dash titles) before
+  the fix. Changed to `" :: "`, coupled to a named constant instead of
+  duplicating the literal three separate times (the exact decoupling
+  that let the original bug survive #281 → #410 → #425 unnoticed).
+  Parallel review: code-reviewer caught the new regression test only
+  exercising `_merged_comment()`'s short-circuit path, not the `else`
+  branch the real bug actually lived in — fixed. security-auditor found
+  the fix was correct but fragile, and (explicitly asked to be folded
+  into this same PR) added a structural non-ambiguity test plus an
+  ordering-independent assertion inside `_merged_comment()` itself, and
+  a validation error message that names the offending character instead
+  of a bare "rename it." Filed 3 more milestoned follow-ups from the
+  same review:
+  [#430](https://github.com/voltron-1/Suburban_SOC/issues/430) (network-
+  path tactic validation gap — could silently drop a real technique from
+  the coverage matrix),
+  [#431](https://github.com/voltron-1/Suburban_SOC/issues/431) (same
+  bug class, prospective — markdown table has no `|` escaping),
+  [#432](https://github.com/voltron-1/Suburban_SOC/issues/432)
+  (`run_hunts.py`'s composite ES `_id` has no delimiter guard — a
+  colliding hunt id would silently overwrite another hunt's stored
+  findings via upsert, the worst-consequence instance of this bug class
+  found, though not currently live). [PR
+  #433](https://github.com/voltron-1/Suburban_SOC/pull/433), all 12 CI
+  checks green. **M17 now 16/31 closed** (13 real follow-ups open, 2 not
   actionable) — continuing the same resumed run, smallest/most-contained
   next.
 
@@ -3049,6 +3080,19 @@ are implemented in code; checked off with that one caveat noted inline.
   Full detail in `findings/20260818-426-doh-title-scope.md`. **M17 now
   15/28 closed** (11 real follow-ups open, 2 not actionable) —
   continuing the resumed run.
+- **#425 closed (M17) — build_attack_coverage.py's Navigator-tooltip
+  delimiter fixed.** [PR #433](https://github.com/voltron-1/Suburban_SOC/pull/433)
+  merged (squash), all 12 CI checks green. Confirmed the em-dash
+  delimiter bug was already live on `main` (T1110's tooltip), not
+  hypothetical. Parallel review folded a structural non-ambiguity test
+  and a delimiter/guard-coupling refactor directly into this PR (both
+  explicitly requested by security-auditor rather than deferred); filed
+  #430/#431/#432 (M17) for related-but-out-of-scope gaps the same review
+  found, one of which (#432) is a silent-data-loss risk via upsert, not
+  just a display-ambiguity bug. Full detail in
+  `findings/20260818-425-merged-comment-delimiter.md`. **M17 now 16/31
+  closed** (13 real follow-ups open, 2 not actionable) — continuing the
+  resumed run.
 
 ---
 

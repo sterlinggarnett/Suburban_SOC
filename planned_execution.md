@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 17/32 closed — 13 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -1273,6 +1273,30 @@ are real, working smallest/most-contained first: #386 → #387 → #382 →
   CI checks green. **M17 now 17/32 closed** (13 real follow-ups open, 2
   not actionable) — continuing the same resumed run, smallest/most-
   contained next.
+- [x] **#430 (M17) — COMPLETE, MERGED** — filed during #425's own review:
+  the Sigma-rule path already failed loudly on an unresolvable
+  `attack.<tactic>` tag (#281); the network path (parsing
+  `[threat][tactic][name]` out of `configs/logstash.conf`) had none.
+  security-auditor review found the initial name-only validation was
+  incomplete and folded 3 more fixes into the same change: the field-
+  pairing regex used unanchored `.*?` that could cross an `add_field`
+  block boundary and silently mis-pair or drop entries (mutation-tested
+  — reverted to `.*?`, confirmed the exact predicted mis-pairing,
+  restored the `[^}]*?` fix); only the tactic *name* was validated, not
+  the *id* (now validates both as a pair, and resurrects `TACTICS`' own
+  previously-dead ATT&CK-ID data); the network technique id had no
+  format check or normalization unlike the Sigma path (now matched and
+  uppercased consistently); comments weren't stripped before parsing
+  (a commented-out example mapping could be harvested as live
+  coverage). 5 new regression tests plus a real-corpus row-count
+  invariant. Filed
+  [#436](https://github.com/voltron-1/Suburban_SOC/issues/436) and
+  [#437](https://github.com/voltron-1/Suburban_SOC/issues/437) (both
+  M17) for two smaller, genuinely separate design gaps the review
+  surfaced. [PR #438](https://github.com/voltron-1/Suburban_SOC/pull/438),
+  all 12 CI checks green. **M17 now 18/34 closed** (14 real follow-ups
+  open, 2 not actionable) — continuing the same resumed run,
+  smallest/most-contained next.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -3129,6 +3153,17 @@ are implemented in code; checked off with that one caveat noted inline.
   `findings/20260818-428-dns-unanchored-suffix-fix.md`. **M17 now 17/32
   closed** (13 real follow-ups open, 2 not actionable) — continuing the
   resumed run.
+- **#430 closed (M17) — build_attack_coverage.py's network-path tactic
+  validation fixed.** [PR #438](https://github.com/voltron-1/Suburban_SOC/pull/438)
+  merged (squash), all 12 CI checks green. security-auditor review found
+  the initial fix incomplete — a regex block-boundary anchoring bug
+  could silently mis-pair or drop entries (mutation-tested to confirm),
+  tactic id was unvalidated, technique id was unnormalized, comments
+  weren't stripped — all fixed in the same change with new regression
+  coverage. Filed #436/#437 (M17) for two smaller separate gaps. Full
+  detail in `findings/20260818-430-network-tactic-validation.md`. **M17
+  now 18/34 closed** (14 real follow-ups open, 2 not actionable) —
+  continuing the resumed run.
 
 ---
 

@@ -188,15 +188,67 @@ def harvest():
             "status": status.group(1) if status else "experimental",
         })
     # --- Network: Zeek detections classified in logstash.conf (Category 5) ---
-    # Pair each [threat][technique][id] with the following [threat][tactic][name].
+    # Pair each [threat][technique][id] with the [threat][tactic][id]/[name]
+    # that follow it within the SAME add_field block.
+    #
+    # security-auditor finding (#430): the original pattern used `.*?`
+    # between fields, unanchored to the enclosing `add_field { ... }`
+    # block. Because Logstash imposes no field ordering within an
+    # add_field hash, a future block could legally write its fields in a
+    # different order, or a new block inserted ahead of an existing one
+    # could let `.*?` skip straight past a block boundary and pair a
+    # technique with the WRONG tactic (or swallow a whole block,
+    # silently dropping it from coverage) - a real-but-wrong pairing
+    # that would pass this function's own validation below, since both
+    # halves ARE individually valid, just mis-paired. `[^}]*?` (not
+    # crossing a `}`) keeps the match inside one add_field block -
+    # verified against the real corpus: no `}` occurs between any two
+    # fields within either of the two real blocks. Comments are stripped
+    # first so a commented-out example mapping block can't be harvested
+    # as live coverage (the same silent-overstatement failure mode, via
+    # a different route).
+    conf_code = re.sub(r"(?m)^\s*#.*$", "", CONF)
     net = re.findall(
-        r'\[threat\]\[technique\]\[id\]"\s*=>\s*"([^"]+)".*?'
-        r'\[threat\]\[technique\]\[name\]"\s*=>\s*"([^"]+)".*?'
+        r'\[threat\]\[technique\]\[id\]"\s*=>\s*"([^"]+)"[^}]*?'
+        r'\[threat\]\[technique\]\[name\]"\s*=>\s*"([^"]+)"[^}]*?'
+        r'\[threat\]\[tactic\]\[id\]"\s*=>\s*"([^"]+)"[^}]*?'
         r'\[threat\]\[tactic\]\[name\]"\s*=>\s*"([^"]+)"',
-        CONF, re.S)
-    for tech, name, tactic in net:
+        conf_code, re.S)
+    # The Sigma path above fails loudly on an unresolvable tactic tag
+    # (the #281 guard) - this path had no equivalent. A malformed
+    # [threat][tactic][id]/[name] pair here (typo, wrong casing, a name
+    # that doesn't match ATT&CK's exact wording, or an id/name pair that
+    # individually resolve but don't actually go together) would produce
+    # a Navigator-layer key matching no real tactic column, so Navigator
+    # silently drops the entry — the identical dead-cell failure the
+    # Sigma-path guard exists to prevent, just reachable from configs/
+    # logstash.conf instead of a rule file. Validated as a (name, id)
+    # PAIR against TACTICS' own values (not just the name alone) so a
+    # copy-paste edit that changes one half but not the other is also
+    # caught, not just a wholly-unresolvable value — this also puts
+    # TACTICS' own TA-ID half back into live use instead of being dead
+    # data referenced by nothing.
+    valid_tactic_pairs = set(TACTICS.values())
+    for tech, name, tactic_id, tactic in net:
+        if (tactic, tactic_id) not in valid_tactic_pairs:
+            raise ValueError(
+                f"configs/logstash.conf: [threat][tactic] (id={tactic_id!r}, "
+                f"name={tactic!r}) (paired with technique {tech!r} / {name!r}) "
+                f"does not match any real ATT&CK tactic (id, name) pair in "
+                f"TACTICS — it would silently render as a dead Navigator cell "
+                f"rather than a resolvable technique-tactic pairing. Valid "
+                f"pairs: {sorted(valid_tactic_pairs)}")
+        if not re.fullmatch(r"T\d{4}(?:\.\d{3})?", tech):
+            raise ValueError(
+                f"configs/logstash.conf: [threat][technique][id] {tech!r} "
+                f"(paired with tactic {tactic!r}) is not a well-formed ATT&CK "
+                f"technique id (T#### or T####.###) — the Sigma path already "
+                f"normalizes/validates this shape; a malformed or "
+                f"differently-cased id here would produce a duplicate or "
+                f"unresolvable Navigator cell instead of merging with the "
+                f"real technique")
         rows.append({
-            "technique": tech, "tactic": tactic,
+            "technique": tech.upper(), "tactic": tactic,
             "source": "Zeek (notice / ssh)",
             "rule": "configs/logstash.conf (Category 5 framework enrichment)",
             "test": "tests/pipeline/test_framework_enrichment.py",

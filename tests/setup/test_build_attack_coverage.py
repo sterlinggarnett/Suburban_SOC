@@ -25,6 +25,7 @@ the other is silently dropped" failure #281 describes, just inverted.
 
 Run:  pytest tests/setup/test_build_attack_coverage.py
 """
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -170,6 +171,22 @@ class RealCorpusRegressionTests(unittest.TestCase):
         unique_count = len({r["technique"] for r in rows})
         self.assertIn(f"**Coverage:** {unique_count} techniques", md)
         self.assertLess(unique_count, len(rows))
+
+    def test_network_row_count_matches_the_real_conf_technique_assignment_count(self):
+        # security-auditor finding (#430): a cross-block regex mis-pairing
+        # or block-swallow (see MergedCommentTests-adjacent unit tests for
+        # the synthetic reproduction) could silently DROP a network entry
+        # while every individual field still resolves — count-parity
+        # against the real config's own literal technique-id assignment
+        # count is the one check that would catch a silent drop against
+        # real data, not just a synthetic fixture.
+        rows = bac.harvest()
+        network_rows = [r for r in rows if r["rule"].startswith("configs/logstash.conf")]
+        expected_count = len(re.findall(r'\[threat\]\[technique\]\[id\]"\s*=>', bac.CONF))
+        self.assertEqual(len(network_rows), expected_count,
+                          "harvest() emitted a different number of network rows than "
+                          "there are [threat][technique][id] assignments in the real "
+                          "configs/logstash.conf — a block was mis-paired or dropped")
 
 
 class UniqueTechniqueCountTests(unittest.TestCase):
@@ -352,6 +369,7 @@ class HarvestFailsLoudlyOnBadInputTests(unittest.TestCase):
     def test_raises_on_unsafe_title_from_a_logstash_conf_network_entry(self):
         conf = ('"[threat][technique][id]" => "T1046",'
                 '"[threat][technique][name]" => "Bad; Title",'
+                '"[threat][tactic][id]" => "TA0007",'
                 '"[threat][tactic][name]" => "Discovery"')
         with tempfile.TemporaryDirectory() as d:
             sigma_dir = Path(d)
@@ -359,6 +377,126 @@ class HarvestFailsLoudlyOnBadInputTests(unittest.TestCase):
                  mock.patch.object(bac, "CONF", conf):
                 with self.assertRaises(ValueError):
                     bac.harvest()
+
+    def test_raises_when_network_entrys_tactic_name_does_not_resolve(self):
+        # #430 security-auditor finding: the Sigma-rule path above fails
+        # loudly on an unresolvable tactic; the network (configs/
+        # logstash.conf) path had no equivalent, so a typo'd or malformed
+        # [threat][tactic][name] would silently render as a dead
+        # Navigator cell rather than failing the build. A plausible
+        # authoring typo: "Cred Access" instead of the real ATT&CK
+        # tactic name "Credential Access" - correct id, wrong name.
+        conf = ('"[threat][technique][id]" => "T1110",'
+                '"[threat][technique][name]" => "Test Technique",'
+                '"[threat][tactic][id]" => "TA0006",'
+                '"[threat][tactic][name]" => "Cred Access"')
+        with tempfile.TemporaryDirectory() as d:
+            sigma_dir = Path(d)
+            with mock.patch.object(bac, "SIGMA_DIR", sigma_dir), \
+                 mock.patch.object(bac, "CONF", conf):
+                with self.assertRaises(ValueError) as ctx:
+                    bac.harvest()
+        self.assertIn("logstash.conf", str(ctx.exception))
+        self.assertIn("Cred Access", str(ctx.exception))
+
+    def test_raises_when_network_entrys_tactic_id_and_name_are_individually_valid_but_mismatched(self):
+        # security-auditor finding (#430): validating the tactic NAME
+        # alone would pass a copy-paste mistake where the id and name
+        # are each individually a real ATT&CK value, just not the SAME
+        # tactic's id/name — e.g. Discovery's real id (TA0007) paired
+        # with a different tactic's real name ("Credential Access").
+        # Both halves resolve individually; the PAIR does not.
+        conf = ('"[threat][technique][id]" => "T1046",'
+                '"[threat][technique][name]" => "Test Technique",'
+                '"[threat][tactic][id]" => "TA0007",'
+                '"[threat][tactic][name]" => "Credential Access"')
+        with tempfile.TemporaryDirectory() as d:
+            sigma_dir = Path(d)
+            with mock.patch.object(bac, "SIGMA_DIR", sigma_dir), \
+                 mock.patch.object(bac, "CONF", conf):
+                with self.assertRaises(ValueError):
+                    bac.harvest()
+
+    def test_does_not_raise_when_network_entrys_tactic_name_resolves(self):
+        conf = ('"[threat][technique][id]" => "T1110",'
+                '"[threat][technique][name]" => "Test Technique",'
+                '"[threat][tactic][id]" => "TA0006",'
+                '"[threat][tactic][name]" => "Credential Access"')
+        with tempfile.TemporaryDirectory() as d:
+            sigma_dir = Path(d)
+            with mock.patch.object(bac, "SIGMA_DIR", sigma_dir), \
+                 mock.patch.object(bac, "CONF", conf):
+                rows = bac.harvest()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["tactic"], "Credential Access")
+
+    def test_raises_on_malformed_network_technique_id(self):
+        # security-auditor finding (#430): the Sigma path uppercases and
+        # regex-constrains its technique id; the network path took it
+        # verbatim. A malformed/differently-cased id (lowercase 't1046',
+        # a missing 'T' prefix) would produce a Navigator cell that
+        # doesn't merge with the real technique's cell.
+        conf = ('"[threat][technique][id]" => "t1046",'
+                '"[threat][technique][name]" => "Test Technique",'
+                '"[threat][tactic][id]" => "TA0007",'
+                '"[threat][tactic][name]" => "Discovery"')
+        with tempfile.TemporaryDirectory() as d:
+            sigma_dir = Path(d)
+            with mock.patch.object(bac, "SIGMA_DIR", sigma_dir), \
+                 mock.patch.object(bac, "CONF", conf):
+                with self.assertRaises(ValueError):
+                    bac.harvest()
+
+    def test_network_pairing_does_not_cross_an_add_field_block_boundary(self):
+        # security-auditor finding (#430): the original `.*?` between
+        # fields was unanchored to the enclosing add_field block, so a
+        # block missing its own tactic fields could let the pattern
+        # reach past the closing "}" into the NEXT block's tactic fields
+        # and silently mis-pair them. Block 1 here deliberately has no
+        # tactic fields at all; a real add_field-block-crossing match
+        # would incorrectly pair T1046 with block 2's Credential Access.
+        # The fix ([^}]*? instead of .*?) must find ONLY block 2's
+        # complete quadruple, not a cross-block mis-pairing for block 1.
+        conf = (
+            'mutate { add_field => {\n'
+            '  "[threat][technique][id]" => "T1046"\n'
+            '  "[threat][technique][name]" => "Network Service Discovery"\n'
+            '} }\n'
+            'mutate { add_field => {\n'
+            '  "[threat][technique][id]" => "T1110"\n'
+            '  "[threat][technique][name]" => "Brute Force"\n'
+            '  "[threat][tactic][id]" => "TA0006"\n'
+            '  "[threat][tactic][name]" => "Credential Access"\n'
+            '} }\n'
+        )
+        with tempfile.TemporaryDirectory() as d:
+            sigma_dir = Path(d)
+            with mock.patch.object(bac, "SIGMA_DIR", sigma_dir), \
+                 mock.patch.object(bac, "CONF", conf):
+                rows = bac.harvest()
+        self.assertEqual(len(rows), 1,
+                          "block-boundary anchoring regressed — T1046 (which has no "
+                          "tactic fields of its own) matched across the block boundary "
+                          "into block 2's tactic fields instead of not matching at all")
+        self.assertEqual(rows[0]["technique"], "T1110")
+
+    def test_commented_out_network_mapping_is_not_harvested_as_coverage(self):
+        # security-auditor finding (#430): the parser operated on raw
+        # file text with no comment awareness — a commented-out example
+        # mapping would be silently counted as live coverage, overstating
+        # what's actually deployed.
+        conf = (
+            '# "[threat][technique][id]" => "T1046",\n'
+            '# "[threat][technique][name]" => "Network Service Discovery",\n'
+            '# "[threat][tactic][id]" => "TA0007",\n'
+            '# "[threat][tactic][name]" => "Discovery",\n'
+        )
+        with tempfile.TemporaryDirectory() as d:
+            sigma_dir = Path(d)
+            with mock.patch.object(bac, "SIGMA_DIR", sigma_dir), \
+                 mock.patch.object(bac, "CONF", conf):
+                rows = bac.harvest()
+        self.assertEqual(rows, [])
 
 
 if __name__ == "__main__":

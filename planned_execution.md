@@ -24,7 +24,7 @@ matching the M12/M13/M14 pattern.
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 13/25 closed — 10 real follow-ups still open (filed as review discoveries during this same resumed run), 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 14/27 closed — 11 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -1172,6 +1172,35 @@ are real, working smallest/most-contained first: #386 → #387 → #382 →
   this corrected queue, smallest/most-contained first, same cycle as
   before — not stopping to report completion, since M17 demonstrably
   still has real, milestoned, actionable work.
+- [x] **#410 (M17) — COMPLETE, MERGED** — the smallest/most-contained item
+  in the corrected queue: `net_zeek_smtp_attachment_executable.yml` and
+  `net_zeek_smtp_mass_outbound.yml` both carry a real, load-bearing scope
+  caveat (Zeek can only see SMTP content in plaintext — STARTTLS/implicit
+  TLS sessions are invisible) that was buried in `description:` and
+  didn't survive into any title-only downstream rendering. Moved the
+  caveat into both titles. Parallel review: both reviewers independently
+  caught the same adjacent pre-existing bug (a description claiming "the
+  title says outbound" when that word has only ever been in the
+  filename) — fixed. code-reviewer also caught a title-segment-ordering
+  inconsistency against house convention — fixed. security-auditor
+  exhaustively confirmed no consumer in the repo keys on rule title text
+  (all key by filename/id) and the ATT&CK-coverage SLO is provably
+  title-independent, then surfaced 3 out-of-scope pre-existing findings:
+  [#424](https://github.com/voltron-1/Suburban_SOC/issues/424) (M20,
+  MEDIUM — hardcoded ntfy notification titles containing an em dash
+  likely silently drop the SOAR approval-request push, latin-1 header
+  encoding),
+  [#425](https://github.com/voltron-1/Suburban_SOC/issues/425) (M17,
+  LOW — the coverage-doc generator's own em-dash delimiter can collide
+  with an em-dash-containing title in a multi-rule grouping), and
+  [#426](https://github.com/voltron-1/Suburban_SOC/issues/426) (M17 — a
+  sibling rule, net_zeek_dns_doh_non_standard.yml, has the exact same
+  class of buried-scope-caveat bug #410 itself fixed). Unpinned
+  sigma-cli in CI was already tracked as #330 (M19) — no duplicate
+  filed. [PR #427](https://github.com/voltron-1/Suburban_SOC/pull/427),
+  all 12 CI checks green, no infra flakiness this time. **M17 now 14/27
+  closed** (11 real follow-ups open, 2 not actionable) — continuing the
+  same resumed run, smallest/most-contained next.
 
 <details>
 <summary>M15 history (complete) — click to expand</summary>
@@ -2982,6 +3011,15 @@ are implemented in code; checked off with that one caveat noted inline.
   2 permanently not actionable (#283, #333).** Continuing the same
   resumed run through the corrected queue — not reporting completion to
   the user yet, since real work remains.
+- **#410 closed (M17) — SMTP rule titles now disclose plaintext-only
+  scope.** [PR #427](https://github.com/voltron-1/Suburban_SOC/pull/427)
+  merged (squash), all 12 CI checks green with no infra flakiness this
+  time. Parallel review fixed an adjacent pre-existing description bug
+  both reviewers caught independently, and surfaced 3 out-of-scope
+  findings, all filed and milestoned: #424 (M20), #425 (M17), #426
+  (M17). Full detail in `findings/20260818-410-smtp-title-plaintext-
+  scope.md`. **M17 now 14/27 closed** (11 real follow-ups open, 2 not
+  actionable) — continuing the resumed run.
 
 ---
 

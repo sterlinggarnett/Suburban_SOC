@@ -338,7 +338,17 @@ def _match_one(value, mods, target, field: str = "") -> bool:
         if "contains" in mods:
             return re.search(pattern, s, re.DOTALL) is not None
         if "endswith" in mods:
-            return re.search(pattern + "$", s, re.DOTALL) is not None
+            # security-auditor finding (#428's own review, same bug class
+            # as #387): bare "$" also matches immediately before a
+            # trailing newline in Python re - "\Z" (true end-of-string)
+            # doesn't. A value ending in a literal newline (e.g. an
+            # embedded control character in a Zeek dns.answers TXT
+            # record - already documented as legal in
+            # tests/detections/test_live_fire.py) would report "fires"
+            # here while the deployed Lucene keyword-field wildcard query
+            # requires the term to literally end at the pattern, with no
+            # such leniency - a CI-green/production-blind divergence.
+            return re.search(pattern + r"\Z", s, re.DOTALL) is not None
         if "startswith" in mods:
             return re.match(pattern, s, re.DOTALL) is not None
         if not mods and field in _TEXT_MAPPED_FIELDS:

@@ -294,6 +294,58 @@ class SigmaDetectionTests(unittest.TestCase):
         self.assertTrue(detection_matches(det, firefox_canary),
                          "DoH rule regressed: Firefox's use-application-dns.net canary no longer fires")
 
+    def test_doh_rule_excludes_lookalike_domains_after_the_anchoring_fix(self):
+        # #428, security-auditor finding: the original `query|endswith:
+        # 'quad9.net'` (no leading dot) was an UNANCHORED suffix match —
+        # 'evilquad9.net' shares the same trailing 9 characters and fired
+        # this rule despite not being a Quad9 hostname at all. Fixed via
+        # selection_bare (exact) OR selection_subdomain (dot-anchored) —
+        # this proves the lookalike is now excluded while the legitimate
+        # dns11.quad9.net subdomain (asserted above) still fires.
+        det = load_rule(SIGMA_DIR / "net_zeek_dns_doh_non_standard.yml")["detection"]
+        lookalike = {"query": "evilquad9.net"}
+        self.assertFalse(detection_matches(det, lookalike),
+                          "DoH rule regressed: evilquad9.net (an attacker-registrable "
+                          "lookalike, not a real Quad9 hostname) incorrectly fires")
+
+    def test_mining_pool_rule_excludes_lookalike_domains_after_the_anchoring_fix(self):
+        # security-auditor finding (#428's own review): the identical
+        # unanchored-endswith bug fixed for the DoH rule above was also
+        # live in this rule, at a higher severity (level: medium vs the
+        # DoH rule's low) — 'evilnanopool.org' shares the same trailing
+        # 11 characters as 'nanopool.org' and fired despite being a
+        # different registered domain entirely. Same selection_bare OR
+        # selection_subdomain fix applied here.
+        det = load_rule(SIGMA_DIR / "net_zeek_dns_crypto_mining_pool.yml")["detection"]
+        real_subdomain = {"query": "xmr-eu2.nanopool.org"}
+        lookalike = {"query": "evilnanopool.org"}
+        self.assertTrue(detection_matches(det, real_subdomain),
+                         "mining-pool rule regressed: a real operator subdomain "
+                         "(xmr-eu2.nanopool.org) no longer fires")
+        self.assertFalse(detection_matches(det, lookalike),
+                          "mining-pool rule regressed: evilnanopool.org (an "
+                          "attacker-registrable lookalike, not a real mining pool "
+                          "operator) incorrectly fires")
+
+    def test_bare_and_subdomain_selections_stay_paired_on_anchoring_fixed_rules(self):
+        # security-auditor finding: the selection_bare/selection_subdomain
+        # pairing invariant on both anchoring-fixed rules was previously
+        # enforced only by a YAML comment, invisible to CI — a future
+        # domain added to only one of the two lists would silently
+        # reintroduce either an unanchored-suffix gap (bare-only) or drop
+        # real subdomain coverage (subdomain-only), and nothing would
+        # catch it. Asserted mechanically instead.
+        for rule_file in ("net_zeek_dns_doh_non_standard.yml", "net_zeek_dns_crypto_mining_pool.yml"):
+            with self.subTest(rule=rule_file):
+                det = load_rule(SIGMA_DIR / rule_file)["detection"]
+                bare = det["selection_bare"]["query"]
+                sub = det["selection_subdomain"]["query|endswith"]
+                self.assertEqual(
+                    ["." + b for b in bare], sub,
+                    f"{rule_file}: selection_bare and selection_subdomain have drifted — "
+                    f"every selection_bare entry must have exactly one '.'-prefixed "
+                    f"selection_subdomain twin, same order")
+
     def test_sensitive_group_recon_catches_name_branch_independently(self):
         # M13 US6 (#229/#242) code review: round-1 used ObjectName|contains
         # for the RID suffixes ('-512' etc), which false-fires on any object
@@ -513,6 +565,23 @@ class SigmaDetectionTests(unittest.TestCase):
             "a newline-containing value that the real compiled Lucene regexp "
             "query matches did not fire here - re.fullmatch is missing "
             "re.DOTALL, or the DOTALL fix regressed")
+
+    def test_match_one_endswith_does_not_match_before_a_trailing_newline(self):
+        # security-auditor finding (#428's own review, same bug class as
+        # #387, opposite direction): bare "$" in Python re also matches
+        # immediately BEFORE a trailing newline at the end of the string -
+        # "quad9.net$" matches "quad9.net\n". A real Lucene keyword-field
+        # wildcard/term query has no such leniency: "quad9.net\n" is a
+        # different literal term than "quad9.net", full stop. Fixed by
+        # using "\Z" (true end-of-string) instead of "$".
+        from sigma_eval import _match_one
+        trailing_newline_value = "quad9.net\n"
+        self.assertFalse(
+            _match_one(trailing_newline_value, ["endswith"], "quad9.net", "query"),
+            "a value with a literal trailing newline after the target suffix "
+            "incorrectly fired - endswith is using \"$\" (which matches before "
+            "a trailing newline) instead of \"\\Z\" (true end-of-string), "
+            "diverging from the real compiled Lucene query's behavior")
 
     def test_match_one_wildcard_translated_modifiers_match_dot_across_a_literal_newline(self):
         # #387 follow-up (code-reviewer, live-verified): the identical

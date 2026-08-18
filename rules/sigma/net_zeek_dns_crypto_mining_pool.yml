@@ -31,6 +31,26 @@ description: |
     starting point, not a complete one. Downgraded high -> medium to match
     that residual staleness risk rather than presenting stale-list coverage
     as high-confidence.
+    security-auditor finding, same class as #428's own fix for
+    net_zeek_dns_doh_non_standard.yml: `query|endswith` against a bare
+    suffix with no leading dot (e.g. `nanopool.org`) is an UNANCHORED
+    match — a domain like `evilnanopool.org` shares the same trailing
+    11 characters and fired this rule despite being a different
+    registered domain entirely, at this rule's own `level: medium`
+    (a higher tier than the DoH rule this pattern was first found in,
+    and more likely to be actioned). Rewritten to selection_bare (exact
+    match on each operator domain) OR selection_subdomain (a genuine
+    dot-anchored subdomain, e.g. `.nanopool.org`) — preserves every
+    currently-covered real operator subdomain (xmr-eu2.nanopool.org
+    etc.) while excluding a same-suffix-but-different-domain lookalike.
+    Does NOT make this rule unforgeable: it matches on the observed
+    query, not the response, so any host that can send a DNS packet can
+    emit an arbitrary label under a real operator domain (e.g.
+    `dig <random>.nanopool.org` in a loop) and produce a hit without
+    controlling that domain at all — this fix closes the lookalike-
+    registration trick, not lookalike-emission. A hit on a random-
+    looking subdomain of a real operator is an emission signal, not
+    proof the query resolved or that a real mining session followed.
 references:
     - https://attack.mitre.org/techniques/T1496/
 author: Suburban-SOC
@@ -42,8 +62,8 @@ logsource:
     product: zeek
     service: dns
 detection:
-    selection:
-        query|endswith:
+    selection_bare:
+        query:
             - 'nanopool.org'
             - 'supportxmr.com'
             - 'hashvault.pro'
@@ -55,7 +75,31 @@ detection:
             - 'c3pool.com'
             - 'herominers.com'
             - 'unmineable.com'
-    condition: selection
+    # Invariant: each entry here must be "." + the matching
+    # selection_bare entry, same order — a future operator domain added
+    # to only one of the two lists reintroduces either an unanchored-
+    # suffix gap (bare-only) or drops real subdomain coverage
+    # (subdomain-only).
+    selection_subdomain:
+        query|endswith:
+            - '.nanopool.org'
+            - '.supportxmr.com'
+            - '.hashvault.pro'
+            - '.moneroocean.stream'
+            - '.minexmr.com'
+            - '.nicehash.com'
+            - '.f2pool.com'
+            - '.2miners.com'
+            - '.c3pool.com'
+            - '.herominers.com'
+            - '.unmineable.com'
+    condition: selection_bare or selection_subdomain
 falsepositives:
     - Deliberate, authorized crypto/security research on an isolated segment.
+    - A hit on a random-looking subdomain of a real operator domain is an
+      emission signal only — this rule matches the observed query, not the
+      response, so any host that can send a DNS packet can produce a hit
+      under a real operator domain without controlling that domain or the
+      query actually resolving; do not treat a hit alone as proof a mining
+      session followed.
 level: medium

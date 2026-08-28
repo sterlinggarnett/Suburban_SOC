@@ -471,7 +471,7 @@ services:
       - path.repo=/usr/share/elasticsearch/snapshots
       - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
     ports:
-      - ${ES_PORT:-9200}:9200
+      - "127.0.0.1:${ES_PORT:-9200}:9200"
     volumes:
       - certs:/usr/share/elasticsearch/config/certs
       - suburban_soc_data:/usr/share/elasticsearch/data

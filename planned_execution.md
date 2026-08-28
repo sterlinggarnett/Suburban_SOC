@@ -26,7 +26,7 @@ matching the M12/M13/M14 pattern.
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
-| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | 6 | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
+| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ⏳ 1/7 closed — 6 open (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
@@ -46,12 +46,39 @@ Working the corrected 15-issue set now, smallest/most-contained first
 (see M17 progress below). **M18 closed out 2026-08-17 too** (12/16, no
 actionable work left — #326 externally blocked on real telemetry,
 #396/#403/#405 are review-discovered follow-ups deliberately scoped out
-of the fixes that found them, not active gaps). M19–M22 remain open
-calls, not yet started. Same approach as M16/M17/M18 whenever the next
-one starts: smallest/most-contained issue first, one at a time, each
-through the full implement → parallel security-auditor + code-reviewer
-review → live-verify → PR → CI → merge → update this doc → commit+push
-cycle, no unattended multi-issue runs.
+of the fixes that found them, not active gaps). **M19 started
+2026-08-28** (see M19 progress below); M20–M22 remain open calls, not
+yet started. Same approach as M16/M17/M18 whenever the next one starts:
+smallest/most-contained issue first, one at a time, each through the
+full implement → parallel security-auditor + code-reviewer review →
+live-verify → PR → CI → merge → update this doc → commit+push cycle, no
+unattended multi-issue runs.
+
+**M19 progress:**
+
+- [x] **#359 (P2, security) — COMPLETE, MERGED (PR #448)** — `scripts/
+  setup/docker-compose.yml`'s `elasticsearch` service published its port
+  as `${ES_PORT:-9200}:9200`, binding Docker to `0.0.0.0` (every host
+  interface) rather than the `localhost` every doc/SOP in this repo
+  already assumes. With ES's own auth as the only remaining control once
+  exposed to the LAN, this widened the blast radius of any credential
+  weakness on the cluster from "exploitable from the host" to
+  "exploitable from anywhere on the LAN." Bound to `127.0.0.1` instead,
+  matching `hive_mind_broker`/the AI agent's own port-binding pattern.
+  Added a static regression test (`tests/setup/test_docker_compose_
+  ports.py`), verified to fail without the fix and pass with it. Two
+  parallel reviews (security-focused, code-quality-focused) both
+  returned "safe to merge as-is." CI's `pip-audit` check failed on push
+  for an unrelated pre-existing issue (`scripts/hive-mind-broker/
+  requirements.txt`'s `asyncssh` 2.18.0, CVE-2026-54591, already red on
+  `main`) — ported Dependabot's own fix (#447, bump to 2.23.1) into this
+  PR rather than waiting on it to merge first; verified locally with
+  `pip-audit` before pushing. Filed
+  [#449](https://github.com/voltron-1/Suburban_SOC/issues/449)
+  (unmilestoned, for later triage) for the identical port-exposure bug
+  found in `scripts/setup/docker-compose.ha.yml`'s `es01` service while
+  reviewing this fix — a separate, explicitly-not-turnkey topology
+  sketch, out of scope for #359 itself.
 
 **M18 progress:**
 

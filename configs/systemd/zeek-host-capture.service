@@ -329,8 +329,12 @@ ExecStartPre=/bin/bash -c 'set -e; cp -r --remove-destination ${SOC_REPO}/config
 # self-heal chain below, a symlink found here means the directory is
 # already compromised, and starting capture against it would be worse than
 # refusing to start (security-auditor review, per issue #321's own
-# suggested fix).
-ExecStartPre=/bin/bash -c '[ -d /storage/PCAP/intel ] && [ ! -L /storage/PCAP/intel ]'
+# suggested fix). Emits an explicit FATAL message on failure — every other
+# hard-fail ExecStartPre in this unit does the same (see the symlink sweep
+# and the config.zeek staleness check below) so an on-call responder sees
+# more than a bare "ExecStartPre exited" line in the journal (code-reviewer
+# follow-up, round 2).
+ExecStartPre=/bin/bash -c '[ -d /storage/PCAP/intel ] && [ ! -L /storage/PCAP/intel ] || { echo "FATAL: /storage/PCAP/intel is missing or a symlink -- refusing to chown/chmod a possibly-compromised path" >&2; exit 1; }'
 ExecStartPre=-/bin/bash -c 'chown -h root:${SOC_USER} /storage/PCAP/intel && chmod 1775 /storage/PCAP/intel'
 # intel.dat itself (not just the directory) needs to be tjlam-OWNED, not
 # merely group-writable: refresh_intel.sh's live sync writes a temp file

@@ -16,14 +16,10 @@ fi
 
 # Sync Intel configurations to the host volume
 sudo mkdir -p /storage/PCAP/intel
-# #321: root stays the permanent owner, tjlam gets group-write + sticky-bit
-# access — same fix configs/systemd/zeek-host-capture.service's own
-# ExecStartPre already applies on every restart. Without this, running this
-# script by hand on a host where the directory doesn't exist yet leaves it
-# root:root 0755 (mkdir -p's own default), silently undoing that fix and
-# breaking intel-refresh.service's live sync until the unit itself next runs.
+# Shared root-owner + sticky-bit permission fix, see lib/intel_dir_perms.sh
+# (#321).
 source "${SCRIPT_DIR}/lib/intel_dir_perms.sh"
-harden_intel_dir_perms /storage/PCAP/intel tjlam
+harden_intel_dir_perms /storage/PCAP/intel "${SOC_USER:-tjlam}"
 # security-auditor review: --remove-destination + a symlink guard, same
 # reasoning as zeek_run_pcap.sh's identical check.
 if [ -L /storage/PCAP/intel/config.zeek ]; then

@@ -9,7 +9,8 @@ Three independent findings, each with its own assertion here:
    itself against a symlink swap between the chown and chmod steps (chmod
    has no -h/no-dereference equivalent on Linux). A hard, non-"-"-prefixed
    ExecStartPre immediately before that line narrows the window by refusing
-   to start if the path is already missing or a symlink.
+   to start (with an explicit FATAL message) if the path is already missing
+   or a symlink.
 
 2. The same unit's intel.dat fallback `cp` (used only when the primary
    config-sync cp left intel.dat missing/empty) lacked --remove-destination,
@@ -24,7 +25,17 @@ Three independent findings, each with its own assertion here:
    reintroducing the root:root 0755 state the systemd unit's own fix
    corrects if run by hand on a host where the directory doesn't exist yet.
    A shared helper (scripts/setup/lib/intel_dir_perms.sh) now applies the
-   same chown -h/chmod 1775 fix in all three.
+   same chown -h/chmod 1775 fix in all three. Round 2 (security-auditor
+   review): the helper's own first draft left the same chmod-symlink-race
+   window (see finding 1) wide open in these 3 callers, since each script's
+   pre-existing symlink check runs well before its own mkdir -p rather than
+   immediately before the chown/chmod — so the guard was moved INTO
+   harden_intel_dir_perms() itself, immediately before the privileged
+   commands, so every caller gets it regardless of what it checked earlier.
+   The `group_user` argument was also parameterized as `${SOC_USER:-tjlam}`
+   at each call site (code-reviewer follow-up) rather than a bare "tjlam"
+   literal, matching the portability fix #320 already made for the same
+   deployment-user value in this same systemd unit.
 
 Static text/regex assertions against the real files, same convention as
 this directory's other Zeek-capture-path checks (see
@@ -83,6 +94,14 @@ class ChownChmodSymlinkGuardTests(unittest.TestCase):
             "the guard line should refuse to proceed if /storage/PCAP/intel "
             "is a symlink",
         )
+        self.assertIn(
+            "FATAL", guard_line,
+            "the guard line should echo an explicit FATAL diagnostic on "
+            "failure, matching every other hard-fail ExecStartPre in this "
+            "unit (the symlink sweep and the config.zeek staleness check) — "
+            "a bare non-zero exit leaves nothing but 'ExecStartPre exited' "
+            "in the journal (code-reviewer follow-up)",
+        )
 
     def test_guard_line_is_not_best_effort(self):
         # A "-"-prefixed guard here would defeat its own purpose: it exists
@@ -136,6 +155,40 @@ class SiblingScriptsApplyIntelDirPermsTests(unittest.TestCase):
         self.assertIn("chown -h", helper_text)
         self.assertIn("chmod 1775", helper_text)
 
+    def test_helper_guards_against_missing_or_symlinked_dir_before_chown_chmod(self):
+        # Round 2 (security-auditor review): the guard must live INSIDE the
+        # function, immediately before the privileged chown/chmod, not be
+        # left to each caller — see the module docstring for why the first
+        # draft's caller-side-only checks didn't actually close this window.
+        helper_text = LIB_HELPER.read_text(encoding="utf-8")
+        func_start = helper_text.index("harden_intel_dir_perms()")
+        func_body = helper_text[func_start:]
+        guard_idx = func_body.find('[ ! -d "$dir" ]')
+        chown_idx = func_body.find("sudo chown -h")
+        self.assertNotEqual(-1, guard_idx, "harden_intel_dir_perms() is missing a not-a-directory guard on $dir")
+        self.assertNotEqual(-1, chown_idx, "harden_intel_dir_perms() no longer calls chown -h")
+        self.assertLess(
+            guard_idx, chown_idx,
+            "the missing/symlink guard must run BEFORE chown/chmod inside "
+            "harden_intel_dir_perms(), not after",
+        )
+        self.assertIn(
+            '[ -L "$dir" ]', func_body[:chown_idx],
+            "harden_intel_dir_perms() must also refuse to proceed if $dir "
+            "is itself a symlink, before chown/chmod runs",
+        )
+
+    def test_helper_chains_chown_and_chmod_with_and_not_two_independent_commands(self):
+        # Pins the invariant the helper's own header comment documents: a
+        # failed chown must never leave a root:root directory silently
+        # chmod'd to 1775 anyway by an unconditional second command.
+        helper_text = LIB_HELPER.read_text(encoding="utf-8")
+        self.assertIn(
+            'sudo chown -h "root:${group_user}" "$dir" && sudo chmod 1775 "$dir"',
+            helper_text,
+            "chown and chmod must be chained with && inside harden_intel_dir_perms()",
+        )
+
     def test_every_sibling_script_sources_the_helper_and_calls_it_after_mkdir(self):
         for script_path in SIBLING_SCRIPTS:
             text = script_path.read_text(encoding="utf-8")
@@ -160,11 +213,19 @@ class SiblingScriptsApplyIntelDirPermsTests(unittest.TestCase):
                 "mkdir -p that creates the directory it's meant to harden",
             )
             call_idx = next(
-                (i for i, line in enumerate(lines) if "harden_intel_dir_perms /storage/PCAP/intel tjlam" in line),
+                (
+                    i
+                    for i, line in enumerate(lines)
+                    if 'harden_intel_dir_perms /storage/PCAP/intel "${SOC_USER:-tjlam}"' in line
+                ),
                 None,
             )
             self.assertIsNotNone(
-                call_idx, f"{script_path.name}: never calls harden_intel_dir_perms /storage/PCAP/intel tjlam"
+                call_idx,
+                f"{script_path.name}: never calls "
+                'harden_intel_dir_perms /storage/PCAP/intel "${SOC_USER:-tjlam}" — a bare '
+                '"tjlam" literal would reintroduce the same hardcoded-deployment-user '
+                "portability issue #320 already fixed for this value in the systemd unit",
             )
             self.assertGreater(
                 call_idx, mkdir_idx,
@@ -181,7 +242,11 @@ class SiblingScriptsApplyIntelDirPermsTests(unittest.TestCase):
             text = script_path.read_text(encoding="utf-8")
             has_set_e = any(line.startswith("set -e") for line in _lines(text))
             call_line = next(
-                (line for line in _lines(text) if "harden_intel_dir_perms /storage/PCAP/intel tjlam" in line),
+                (
+                    line
+                    for line in _lines(text)
+                    if 'harden_intel_dir_perms /storage/PCAP/intel "${SOC_USER:-tjlam}"' in line
+                ),
                 None,
             )
             self.assertIsNotNone(call_line, f"{script_path.name}: missing the harden_intel_dir_perms call")

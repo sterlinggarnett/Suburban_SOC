@@ -32,7 +32,27 @@ jobs:
         # transitive deps of pysigma-backend-elasticsearch. If that ever
         # changes, this step should fail with a normal ModuleNotFoundError,
         # not something that looks unrelated to detections.
-        run: pip install --quiet sigma-cli pysigma-backend-elasticsearch pytest pyyaml requests
+        #
+        # #330: sigma-cli/pysigma/pysigma-backend-elasticsearch pinned —
+        # an unpinned install here silently picks up whatever's newest on
+        # PyPI, and a newer pysigma-backend-elasticsearch release changing
+        # its Lucene multi-word-term escaping (quoted vs. backslash-escaped
+        # — semantically identical, textually different) fails
+        # build_kql_docs.py --check below on a diff completely unrelated to
+        # the PR. These are the exact versions docs/detections/
+        # SIEM_KQL_Documentation.md was generated against, on this job's
+        # own pinned Python (.python-version) — see build_kql_docs.py's own
+        # docstring for why the Python version matters here too, not just
+        # the package versions.
+        #
+        # To deliberately bump these (all three pins live here, in the
+        # live-fire job below, and in deploy_detections.sh — update all
+        # three together): under this same Python version, `pip install
+        # --upgrade sigma-cli pysigma pysigma-backend-elasticsearch`, run
+        # `python scripts/setup/build_kql_docs.py` to regenerate the doc,
+        # review the diff, then commit the new pins + the regenerated doc
+        # together.
+        run: pip install --quiet sigma-cli==3.1.0 pysigma==1.5.0 pysigma-backend-elasticsearch==2.1.1 pytest pyyaml requests
 
       - name: Pipeline consistency tests
         # #286 security-auditor MEDIUM: this used to invoke
@@ -161,7 +181,10 @@ jobs:
           python-version-file: .python-version
 
       - name: Install the Sigma toolchain
-        run: pip install --quiet sigma-cli pysigma-backend-elasticsearch pytest "requests==2.33.0" pyyaml
+        # #330: pinned to the same versions as the `detections` job above —
+        # see that step's comment for why an unpinned install here would
+        # silently drift.
+        run: pip install --quiet sigma-cli==3.1.0 pysigma==1.5.0 pysigma-backend-elasticsearch==2.1.1 pytest "requests==2.33.0" pyyaml
 
       - name: Live-fire detection tests against a real Elasticsearch (issue #221)
         # GitHub Actions sets CI=true by default on every runner — test_live_fire.py's

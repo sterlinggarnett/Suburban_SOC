@@ -6,6 +6,8 @@
      "privileges": ["read"]},
     {"names": ["soc-agent-health-*"],
      "privileges": ["read"]},
+    {"names": ["soc-audit-*"],
+     "privileges": ["read"]},
     {"names": ["soc-slo-metrics"],
      "privileges": ["create_index", "create", "read"]},
     {"names": ["threat-intel-indicators", "threat-intel-meta"],

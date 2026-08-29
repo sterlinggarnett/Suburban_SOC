@@ -505,6 +505,15 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
             # manufactures exactly the stuck claim #278 exists to avoid) so a
             # completed reconciliation is never thrown away by the client.
             timeout=25,
+            # #309: BROKER_URL defaults to plain http://hive_mind_broker:8000 —
+            # an on-path attacker (the same threat model #277/#308 address)
+            # could otherwise return a 307/308 and have requests silently
+            # resend this SIGNED request (headers and body both) to an
+            # arbitrary host. Low incremental risk (the attacker is already
+            # on-path and reading cleartext, and the signature is
+            # nonce/timestamp-bound so a redirected replay still can't be
+            # trusted as a real response) but a free one-token hardening.
+            allow_redirects=False,
         )
     except Exception as exc:  # noqa: BLE001 - never let response handling crash
         logger.error("broker dispatch outcome UNKNOWN (request failed after send): %s", exc)
@@ -601,7 +610,12 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
         logger.error("broker dispatch outcome UNKNOWN (response signature missing/invalid, "
                     "body_sha256=%s)", body_digest)
         write_audit("broker_response_signature_invalid", "soc-ai-agent", tenant,
-                   outcome="unknown", target=attacker_ip, detail=f"body_sha256={body_digest}")
+                   outcome="unknown", target=attacker_ip,
+                   # #309: request_id is the join key against the broker's own
+                   # queue row for this SAME dispatch (see app.py's
+                   # dispatch_block()) — not a secret, already sent in
+                   # cleartext over this (currently plain-HTTP) channel.
+                   detail=f"request_id={request_id} body_sha256={body_digest}")
         send_soc_alert("Broker response signature invalid",
                       f"A /webhook/dispatch response for {notify_ip} (tenant '{tenant}') "
                       f"failed HMAC verification — possible on-path tampering. "
@@ -629,7 +643,20 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
         logger.error("broker dispatch outcome UNKNOWN (response request_id mismatch, "
                     "body_sha256=%s)", body_digest)
         write_audit("broker_response_request_id_mismatch", "soc-ai-agent", tenant,
-                   outcome="unknown", target=attacker_ip, detail=f"body_sha256={body_digest}")
+                   outcome="unknown", target=attacker_ip,
+                   # #309: both sides of the mismatch, for reconciliation —
+                   # `request_id` is this call's own value (join key against
+                   # the broker's queue row for the REAL dispatch this call
+                   # made); the response's echoed value (whatever a captured,
+                   # replayed response actually carried) is truncated+repr'd
+                   # rather than trusted verbatim, same reasoning as the
+                   # %r-escaped non-200 log line above — this field is
+                   # verified-signed-by-the-broker but not verified to be a
+                   # SANE broker (a pre-#309 broker echoed it completely
+                   # unsanitised).
+                   detail=(f"request_id={request_id} "
+                           f"received_request_id={str(data.get('request_id'))[:128]!r} "
+                           f"body_sha256={body_digest}"))
         send_soc_alert("Broker response request_id mismatch",
                       f"A /webhook/dispatch response for {notify_ip} (tenant '{tenant}') did not "
                       f"echo the request_id this specific dispatch sent — possible replay of a "

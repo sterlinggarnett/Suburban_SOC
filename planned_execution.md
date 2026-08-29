@@ -29,7 +29,7 @@ matching the M12/M13/M14 pattern.
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
-| [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ⏸️ 5/7 closed, 2 blocked on an external contributor's in-flight PR (no actionable work left) — #439/#380 (ravindharann's in-flight PR touches the exact same README.md lines) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
+| [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -49,12 +49,12 @@ actionable work left — #326 externally blocked on real telemetry,
 of the fixes that found them, not active gaps). **M19 closed out
 2026-08-29** (7/7, see M19 progress below). **M20 closed out 2026-08-29**
 (6/6, see M20 progress below). **M21 closed out 2026-08-29** (3/3, see
-M21 progress below). **M22 closed out 2026-08-29 too** (5/7, no
-actionable work left — see M22 progress below) — #439 skipped (actively
-claimed by an external contributor, ravindharann) and #380 skipped
-(overlaps the exact same README lines #439 is already fixing). **Every
-M16–M22 milestone is now closed or has no actionable work left** — the
-2026-08-16 backlog restructure is fully worked through.
+M21 progress below). **M22 closed out 2026-08-29 too** (7/7 — see M22
+progress below): #439/#380 were deliberately left for external
+contributor ravindharann's own in-flight PR #440 rather than duplicated,
+then merged once the rest of M22 was done. **Every M16–M22 milestone is
+now closed or has no actionable work left** — the 2026-08-16 backlog
+restructure is fully worked through.
 Same approach as M16/M17/M18/M19 whenever the next one starts:
 smallest/most-contained issue first, one at a time, each through the
 full implement → parallel security-auditor + code-reviewer review →
@@ -352,8 +352,7 @@ unattended multi-issue runs.
   this session — GitHub's auto-close didn't fire (the PR body never
   contained a literal "Closes #378"), so the issue was closed manually
   after confirming the merge.
-- [x] **#296 (priority:low) — COMPLETE, MERGED (PR #490). This closes M22
-  — 5/7 issues complete, no actionable work left.**
+- [x] **#296 (priority:low) — COMPLETE, MERGED (PR #490).**
   `configs/detections/suburban-soc-ecs.yml`'s header comment claimed the
   pipeline relied on the elastic backend forwarding Sigma `tags:` to
   Kibana Detection Engine tags, and that all rules "MUST include `tags:
@@ -371,14 +370,30 @@ unattended multi-issue runs.
   Comment-only, no runtime effect; confirmed the removed "Area 3" heading
   had no sibling "Area 1"/"Area 2" elsewhere in the file or repo, and no
   test asserted the removed text. Full test suite and `yamllint` both
-  pass. **#439 and #380 remain open but are not actionable right now** —
-  #439 is actively claimed by an external contributor (ravindharann,
-  assigned, implementation plan posted) and #380 overlaps the exact same
-  `README.md` lines #439 is already fixing; working either risks a
-  guaranteed merge conflict with their in-flight PR. Every other M16–M22
-  issue is now closed or blocked only on something external (an in-flight
-  contributor PR here; a real endpoint deployment for M16's #265; real
-  Windows/PowerShell telemetry for M18's #326).
+  pass.
+- [x] **#439 / #380 (both fix the same stale detection-plane summary) —
+  COMPLETE, MERGED (PR #440, external contributor @ravindharann). This
+  closes M22 — 7/7 issues complete, and every milestone from the
+  2026-08-16 backlog restructure (M16–M22) is now closed or has no
+  actionable work left.** README.md's detection-framework paragraph
+  (L241-244) and M13 milestone row (L78) predated the M13 corpus
+  expansion and cited "37 ATT&CK techniques across 9 tactics" / "35 Sigma
+  rules" / "corpus grew 35 → 105 rules" — all long stale (real:
+  75 techniques / 12 tactics / 108 rules, per `docs/detections/
+  attack-coverage.md`, itself CI-gated in sync with the rule corpus).
+  #439 was assigned to @ravindharann (external contributor) with an
+  implementation plan posted 2026-08-18; their PR #440 (opened 2026-08-19)
+  updated the exact 3 stale spots and was fully CI-green with zero review
+  comments, but sat unreviewed for 10 days — this session's job was
+  deliberately kept clear of it (#439/#380 skipped when M22 started, to
+  avoid a guaranteed merge conflict with their in-flight PR) rather than
+  duplicating their work. Picked up once the rest of M22 was otherwise
+  done: verified the exact lines it touches were still untouched on
+  current `main` (confirmed via `git show origin/main:README.md`, so a
+  squash merge despite the PR's stale `mergeable_state: behind` base
+  would apply cleanly, not silently drop or corrupt intervening changes),
+  merged, thanked the contributor, and closed both issues manually (their
+  PR body carried no auto-close keyword).
 
 **M21 progress:**
 

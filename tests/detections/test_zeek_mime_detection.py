@@ -78,6 +78,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Optional
 
 # Same pin tests/pipeline/test_zeek_image_pin.py enforces across the 4 real
 # production capture paths — duplicated here with this cross-reference
@@ -122,7 +123,7 @@ def _pinned_zeek_image_runnable() -> bool:
         return False
 
 
-def _skip_reason() -> str:
+def _skip_reason() -> Optional[str]:
     """None if the environment can run this suite; otherwise why not —
     checked once in setUpClass so a missing prerequisite skips instantly
     instead of failing partway through a capture."""
@@ -182,24 +183,58 @@ class _Capture:
     """tcpdump on loopback, scoped to one TCP port — started before the real
     exchange and stopped (SIGTERM, so it flushes the pcap) after, with a
     short settle sleep on each side to avoid the classic capture-not-yet-
-    armed / capture-stopped-before-the-FIN race this pattern is prone to."""
+    armed / capture-stopped-before-the-FIN race this pattern is prone to.
+
+    Opening a live capture device needs CAP_NET_RAW/CAP_NET_ADMIN (or root)
+    that a plain, unprivileged `tcpdump` invocation does not have on a
+    default CI runner user — `sudo -n` (non-interactive: fails fast rather
+    than hanging on a password prompt if passwordless sudo isn't configured,
+    which GitHub-hosted runners' default user has) covers that regardless of
+    the exact capability/group setup a given host uses. First caught live:
+    an unprivileged tcpdump here silently produced NO pcap file at all (not
+    an empty one — Zeek's own replay step failed with 'unable to open ...:
+    No such file or directory'), and neither __init__ nor stop() noticed —
+    the Popen process had already exited (permission denied) long before
+    stop() ever ran, its failure never surfaced. Both ends now check the
+    process actually stayed alive/produced real output, so a future
+    regression of this exact class fails loudly at the capture step itself
+    instead of a confusing downstream Zeek error two steps later."""
 
     def __init__(self, tmpdir: Path, pcap_name: str, port: int):
         self.pcap_path = tmpdir / pcap_name
         self._proc = subprocess.Popen(
-            ["tcpdump", "-i", "lo", "-w", str(self.pcap_path), "-U",
+            ["sudo", "-n", "tcpdump", "-i", "lo", "-w", str(self.pcap_path), "-U",
              f"tcp port {port}"],
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         time.sleep(1.0)  # let tcpdump actually attach before traffic starts
+        if self._proc.poll() is not None:
+            stderr = self._proc.stderr.read().decode(errors="replace") if self._proc.stderr else ""
+            raise RuntimeError(
+                f"tcpdump exited immediately (code {self._proc.returncode}) instead of "
+                f"staying attached to the capture — likely a privilege problem (needs "
+                f"passwordless sudo or CAP_NET_RAW/CAP_NET_ADMIN on tcpdump itself). "
+                f"stderr: {stderr!r}")
 
     def stop(self):
         time.sleep(0.5)  # let the last packet (FIN/ACK) land before we stop
+        still_running = self._proc.poll() is None
         self._proc.terminate()
         try:
             self._proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             self._proc.kill()
             self._proc.wait(timeout=10)
+        if not still_running:
+            stderr = self._proc.stderr.read().decode(errors="replace") if self._proc.stderr else ""
+            raise RuntimeError(
+                f"tcpdump had already exited (code {self._proc.returncode}) before the "
+                f"capture was stopped — no pcap was actually being written during the "
+                f"real exchange. stderr: {stderr!r}")
+        if not self.pcap_path.exists() or self.pcap_path.stat().st_size == 0:
+            stderr = self._proc.stderr.read().decode(errors="replace") if self._proc.stderr else ""
+            raise RuntimeError(
+                f"tcpdump ran but {self.pcap_path} is missing or empty after capture — "
+                f"stderr: {stderr!r}")
 
 
 class ZeekMimeDetectionLiveFireTests(unittest.TestCase):

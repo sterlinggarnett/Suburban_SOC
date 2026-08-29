@@ -255,7 +255,17 @@ ExecStartPre=/bin/mkdir -p /storage/PCAP/zeek_logs /storage/PCAP/intel
 # already-successful || chain set -e does not touch), but a REAL fallback
 # failure (intel.dat absent AND the seed cp itself fails) now aborts here
 # too, same as before this fix.
-ExecStartPre=/bin/bash -c 'set -e; cp -r --remove-destination ${SOC_REPO}/configs/intel/* /storage/PCAP/intel/ 2>/dev/null || true; [ -s /storage/PCAP/intel/intel.dat ] || cp ${SOC_REPO}/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat; grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek || { echo "FATAL: deployed config.zeek is missing an expected at-load line - stale copy" >&2; exit 1; }'
+# #321: --remove-destination on the intel.dat fallback cp too (the config.zeek
+# cp above it already has it) — intel.dat is deliberately tjlam-OWNED, not
+# merely group-writable (see the chown below), so its own sticky-bit
+# protection doesn't apply to itself: tjlam can unlink intel.dat, plant a
+# dangling symlink (e.g. to /etc/cron.d/pwn), and the next restart's fallback
+# cp (triggered because the dangling link fails [ -s ]) would otherwise write
+# configs/intel/intel.seed.dat's content THROUGH that symlink as root.
+# --remove-destination unlinks the destination path first instead, so a
+# planted symlink is deleted, not written through — same reasoning as the
+# config.zeek cp's own --remove-destination above.
+ExecStartPre=/bin/bash -c 'set -e; cp -r --remove-destination ${SOC_REPO}/configs/intel/* /storage/PCAP/intel/ 2>/dev/null || true; [ -s /storage/PCAP/intel/intel.dat ] || cp --remove-destination ${SOC_REPO}/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat; grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek || { echo "FATAL: deployed config.zeek is missing an expected at-load line - stale copy" >&2; exit 1; }'
 # intel-refresh.service (configs/systemd/intel-refresh.service) runs as the
 # unprivileged repo-owner user and needs to WRITE intel.dat into this same
 # directory on every scheduled refresh, not just at Zeek's own startup — but
@@ -305,6 +315,22 @@ ExecStartPre=/bin/bash -c 'set -e; cp -r --remove-destination ${SOC_REPO}/config
 # sensor. A failure here degrades to refresh_intel.sh's own tagged "stale"
 # status (visible via slo_metrics.py's metric_intel_feed_stale_heartbeats(),
 # #358), not a capture outage.
+# #321: chown -h above already refuses to dereference a symlink AT
+# /storage/PCAP/intel itself, but chmod's total lack of a "-h" equivalent
+# (see above) means the real risk window is between these two commands —
+# tjlam (sticky-bit write access to the directory, not root) could unlink
+# /storage/PCAP/intel and replant it as a symlink to e.g. /etc/cron.d in the
+# instant after chown succeeds but before chmod runs, redirecting the chmod
+# onto an attacker-controlled target. This hard (non-"-"-prefixed) guard
+# runs first and hard-fails ExecStart if the path is missing or is already
+# a symlink, narrowing — not eliminating, since the swap could still race
+# in between this check and the chown/chmod line below — the window an
+# attacker gets to act in. Deliberately NOT "-"-prefixed: unlike the
+# self-heal chain below, a symlink found here means the directory is
+# already compromised, and starting capture against it would be worse than
+# refusing to start (security-auditor review, per issue #321's own
+# suggested fix).
+ExecStartPre=/bin/bash -c '[ -d /storage/PCAP/intel ] && [ ! -L /storage/PCAP/intel ]'
 ExecStartPre=-/bin/bash -c 'chown -h root:${SOC_USER} /storage/PCAP/intel && chmod 1775 /storage/PCAP/intel'
 # intel.dat itself (not just the directory) needs to be tjlam-OWNED, not
 # merely group-writable: refresh_intel.sh's live sync writes a temp file

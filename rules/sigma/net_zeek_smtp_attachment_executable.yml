@@ -93,6 +93,14 @@ description: |
     into docs/detections/SIEM_KQL_Documentation.md (title/tags/query only)
     — fixed (#410) by moving the scope limit into the rule title itself,
     the one field every downstream rendering keeps.
+    #418 decision (same base-rate-flattening finding, this rule shares
+    the identical mime_type list with its HTTP sibling): not split into
+    a sibling rule — see net_zeek_executable_download.yml's own
+    description for the full decision and the per-entry fidelity
+    breakdown, which applies identically here. HIGH-FIDELITY entries in
+    this rule's mime_type list: application/x-ms-shortcut,
+    application/x-mach-o-executable. Everything else is low-fidelity/
+    high-base-rate.
 references:
     - https://attack.mitre.org/techniques/T1566/001/
     - https://docs.zeek.org/en/master/logs/files.html

@@ -147,7 +147,7 @@ NIST_CSF_Control  : DE.CM-09
 [EMULATION: DISCOVERY_DOMAIN_GROUPS]
 Execution_Vector  : tests/anomaly_simulation/sim_win_domain_group_discovery.ps1
 Log_Source        : configs/endpoint/winlogbeat.yml -> sysmon
-ECS_Mapping       : threat.technique.id = "T1087.002" | threat.tactic.name = "Discovery"
+ECS_Mapping       : threat.technique.id = "T1069.002" | threat.tactic.name = "Discovery"
 Target_Sigma_Rule : rules/sigma/proc_creation_win_domain_group_discovery.yml
 NIST_CSF_Control  : DE.CM-01
 
@@ -189,7 +189,7 @@ NIST_CSF_Control  : DE.AE-02
 [EMULATION: LATERAL_MOVEMENT_RDP_HIJACK]
 Execution_Vector  : tests/anomaly_simulation/sim_win_rdp_hijack_tscon.ps1
 Log_Source        : configs/endpoint/winlogbeat.yml -> sysmon
-ECS_Mapping       : threat.technique.id = "T1574" | threat.tactic.name = "Lateral Movement"
+ECS_Mapping       : threat.technique.id = "T1563.002" | threat.tactic.name = "Lateral Movement"
 Target_Sigma_Rule : rules/sigma/proc_creation_win_rdp_hijack_tscon.yml
 NIST_CSF_Control  : DE.CM-01
 

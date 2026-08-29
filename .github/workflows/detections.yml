@@ -191,3 +191,15 @@ jobs:
         # _sigma_binary() relies on that to skip its local-dev-only .venv-detections
         # fallback path here, using only the pip-installed sigma-cli on PATH.
         run: python -m pytest tests/detections/test_live_fire.py -v
+
+      - name: Install tcpdump (issue #411 — real packet capture for the Zeek mime-detection live-fire test)
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends tcpdump
+
+      - name: Zeek mime-detection live-fire tests against the pinned image (issue #411)
+        # Same non-required-job placement as the ES live-fire step above, and for the
+        # identical reason (this job's header comment): a Docker image-pull or
+        # loopback-capture-permission flake here must never block an unrelated PR via
+        # the required `detections` job's tests/pipeline glob. SKIPS (not fails) if
+        # docker/tcpdump/the pinned image aren't usable on this runner — see the test
+        # module's own docstring.
+        run: python -m pytest tests/detections/test_zeek_mime_detection.py -v

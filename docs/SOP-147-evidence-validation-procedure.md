@@ -83,10 +83,10 @@ ES "$ES_URL/_cluster/health?pretty"                # status: green/yellow, no un
 
 ### Step 0.4 — Confirm the emulation→detection wiring (static precondition)
 ```bash
-python tests/validate_emulation_map.py             # expect 22/22 green
+python tests/validate_emulation_map.py             # expect 24/24 green
 ```
 This proves every sim, log-source config, and Sigma rule in `configs/detections/emulation_telemetry.map` exists and ATT&CK tags match — **before** you spend a capture window. It does NOT prove an emulation's actual telemetry output matches its paired rule's detection logic — check the `.map` file itself for `# BROKEN PAIRING`/caveat comments above a section before running that specific scenario (e.g. `EXPLOITATION`, #383: structurally green here, confirmed NOT to produce matching telemetry).
-✅ **Done when:** 22/22 pass.
+✅ **Done when:** 24/24 pass.
 
 ### Step 0.5 — Generate real telemetry (pick Path A or Path B)
 
@@ -229,6 +229,14 @@ Evidence: ≥5 `zeek.ssh` sessions from one source → SOAR draft → Case → `
 ```
 Evidence: the `zeek.files` doc with `application/zip` MIME indexed. Screenshot the file doc.
 
+**#383/#413: this validates telemetry delivery only, not the T1105 detection
+rule.** `application/zip` is not in `net_zeek_executable_download.yml`'s
+`mime_type` list, so this scenario's `files.log` doc — real telemetry,
+correctly typed — will never make that rule fire. See
+`configs/detections/emulation_telemetry.map`'s `EXPLOITATION_UNVERIFIED`
+section for the full disclosure. The rule itself is separately verified
+against a real Elasticsearch (`tests/detections/test_live_fire.py`).
+
 ### Step A.4 — Live intel match
 ```bash
 ./sim_intel_match.sh          # uses refreshed feed OR seeded 198.51.100.66
@@ -323,7 +331,7 @@ Capture **real measured values** from the evidenced window (not targets) and log
 cd scripts/setup/ai_agent && python slo_metrics.py        # MTTD/MTTR/SLO from soar-actions-* + data-quality
 ```
 Record:
-- **Detection:** MTTD, ATT&CK technique coverage (techniques actually fired vs the **24** in `docs/detections/attack-coverage.md`; the 22 emulation→detection pairs span 21 of them), alert volume, false-positive rate.
+- **Detection:** MTTD, ATT&CK technique coverage (techniques actually fired vs the **24** in `docs/detections/attack-coverage.md`; the 24 emulation→detection pairs span 21 of them), alert volume, false-positive rate.
 - **Response:** MTTR / containment latency (`soar-actions-*` `response.latency_seconds`), automation rate (autonomous vs human-approved).
 - **Operational:** ingest throughput, ingest lag (UTC Document-Lag), parse-error %, data-stream health, SLO attainment vs configured targets.
 

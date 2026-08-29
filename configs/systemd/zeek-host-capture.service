@@ -62,18 +62,36 @@
 #      logs' key sets and the specific values rule logic depends on. `zeek -e 'print
 #      SSH::Password_Guessing; print Intel::ADDR'` (loading the relevant policy first)
 #      is a fast spot-check for enum-shaped dependencies specifically.
+#      #411: the fixture PCAP(s) here must include an SMTP-carried attachment, not
+#      just an HTTP download — files.log's mime_type/source pair is verified
+#      separately for each transport (net_zeek_executable_download.yml vs.
+#      net_zeek_smtp_attachment_executable.yml's selection_transport), and #382 found
+#      real, protocol-specific behavior (source tagging) that an HTTP-only fixture
+#      set can never exercise. tests/detections/test_zeek_mime_detection.py (step 3
+#      below) covers both transports for exactly this reason — run it as part of this
+#      diff, not as a separate afterthought.
 #   3. tests/detections/test_live_fire.py does NOT invoke Zeek — it indexes repo-
 #      authored fixtures straight into Elasticsearch, so it passes identically
 #      regardless of which Zeek image (or none) is installed. It's still worth
 #      re-running (confirms the ES/Sigma half didn't regress), but it is not evidence
 #      about the image itself — only the golden-output diff in step 2 is.
+#      tests/detections/test_zeek_mime_detection.py (#411), by contrast, DOES invoke
+#      the pinned image for real (a real HTTP download + a real SMTP-delivered MIME
+#      attachment, both captured live and replayed through it) — run this one
+#      specifically as evidence about the image itself, covering both the HTTP and
+#      SMTP files.log mime_type/source assumptions step 2's manual diff also checks.
+#      Needs a working Docker daemon, `tcpdump` on PATH, and loopback-capture
+#      privileges; SKIPS (not fails) otherwise — see that test module's own
+#      docstring. Wired into the non-required `live-fire` CI job
+#      (.github/workflows/detections.yml), same as test_live_fire.py.
 #   4. Update all 4 real capture paths together, plus EXPECTED_TAG/EXPECTED_DIGEST in
-#      tests/pipeline/test_zeek_image_pin.py, plus the example in
-#      docs/Zeek_ELK_Pipeline.md (not a real capture path, not covered by
-#      test_zeek_image_pin.py, but a tracked sync target since #293 — a prior bump
-#      missed it). docs/SOP-147-evidence-validation-procedure.md's evidence-collection
-#      commands filter on `--filter name=zeek-` (#364), not the image tag, so they no
-#      longer need touching on future bumps.
+#      tests/pipeline/test_zeek_image_pin.py (also duplicated, with a cross-reference
+#      comment, at the top of tests/detections/test_zeek_mime_detection.py — update
+#      that too), plus the example in docs/Zeek_ELK_Pipeline.md (not a real capture
+#      path, not covered by test_zeek_image_pin.py, but a tracked sync target since
+#      #293 — a prior bump missed it). docs/SOP-147-evidence-validation-procedure.md's
+#      evidence-collection commands filter on `--filter name=zeek-` (#364), not the
+#      image tag, so they no longer need touching on future bumps.
 #   5. Re-run test_zeek_image_pin.py.
 #
 # #364: bumped 8.1.1 -> 8.2.1 (OpenSSL 3.0.13 -> 3.5.6) to close 7 real CRITICAL CVEs

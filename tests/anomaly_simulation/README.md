@@ -18,7 +18,7 @@ production or third-party infrastructure.
 |---|---|---|
 | Network recon | `sim_portscan.sh` | Zeek `notice.log` → `Scan::Port_Scan` |
 | SSH brute force | `sim_brute_ssh.sh` | Zeek `ssh.log` → 5+ rows with `auth_success=F` |
-| Suspicious download | `sim_malware_download.sh` | Zeek `files.log` → `mime_type=application/zip` |
+| Suspicious download | `sim_malware_download.sh` | Zeek `files.log` → `mime_type=application/zip` (telemetry only — **not** a `net_zeek_executable_download.yml` T1105 rule hit, #383/#413) |
 
 ## Setup
 

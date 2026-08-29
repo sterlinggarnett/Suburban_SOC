@@ -331,10 +331,23 @@ def harvest():
         # valid first tactic tag and a typo'd SECOND one shipped silently.
         unresolved = [tac for tac in tacs_raw if tac not in TACTICS]
         if not tacs_raw or unresolved:
+            # #436: tacs_raw's strict `[a-z_]+` pattern can't even capture a
+            # hyphenated or mixed-case typo (e.g. attack.privilege-escalation)
+            # as a CANDIDATE — it just silently isn't there, so `tacs_raw`
+            # reports [] and the error shows "found: None"/"found: []"
+            # instead of the actual mistyped text a maintainer needs to see.
+            # Diagnostic-only broader capture just for this message — never
+            # used to resolve a real tactic (kept separate from tacs_raw/
+            # TACTICS lookups above). Filters out technique-shaped matches
+            # (attack.t1046 etc.) so a rule's own technique tags don't show
+            # up here as bogus "tactic" candidates.
+            diag_raw = list(dict.fromkeys(
+                m.lower() for m in re.findall(r"attack\.([A-Za-z0-9_.-]+)\s*$", t, re.M)
+                if not re.fullmatch(r"t\d{4}(\.\d{3})?", m, re.I)))
             raise ValueError(
                 f"rules/sigma/{f.name}: has an attack.<technique> tag but no "
                 f"resolvable attack.<tactic> tag (found: "
-                f"{tacs_raw or None!r}, unresolved: {unresolved!r}) — every "
+                f"{diag_raw or None!r}, unresolved: {unresolved!r}) — every "
                 f"rule with a technique tag needs a matching tactic tag from "
                 f"TACTICS, or it silently renders as a dead Navigator cell")
         tactic_names = [TACTICS[tac][0] for tac in tacs_raw]
@@ -558,6 +571,18 @@ def navigator_layer(rows):
     }
 
 
+def _md_cell(value):
+    """#431: escape a literal '|' so it can't corrupt markdown() 's table
+    structure. _validate_title() already bans '|' from rule TITLES (a
+    row-construction-time check), but source/rule/test reach the table
+    with no such guard — source in particular is built from regex captures
+    using \\S+ (logsource_label()), so a Sigma rule with e.g.
+    `category: proc|creation` would land here unescaped. Escaping at
+    render time (rather than extending _validate_title()-style validation
+    to every field) can't be forgotten if a future column is added."""
+    return str(value).replace("|", "\\|")
+
+
 def markdown(rows):
     by_tactic = {}
     for r in rows:
@@ -584,8 +609,8 @@ def markdown(rows):
     for tactic in sorted(by_tactic):
         for r in sorted(by_tactic[tactic], key=lambda x: x["technique"]):
             lines.append(
-                f"| {r['tactic']} | `{r['technique']}` | {r['title']} | "
-                f"{r['source']} | `{r['rule']}` | {r['test']} |")
+                f"| {r['tactic']} | `{r['technique']}` | {_md_cell(r['title'])} | "
+                f"{_md_cell(r['source'])} | `{_md_cell(r['rule'])}` | {_md_cell(r['test'])} |")
     covered = sorted({r["tactic"] for r in rows})
     gaps = [t for t in BACKLOG_TACTICS if t not in covered]
     lines += [

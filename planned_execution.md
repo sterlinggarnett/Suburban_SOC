@@ -27,7 +27,7 @@ matching the M12/M13/M14 pattern.
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
-| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ⏳ 2/6 closed — 4 open (corrected 2026-08-29: this doc's "3" undercounted; the milestone's own issue list has 6: #308, #309, #312, #373, #376, #424) | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision, delete-by-query timeout handling, SLO dashboard/audit gaps |
+| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ⏳ 3/6 closed — 3 open (corrected 2026-08-29: this doc's "3" undercounted; the milestone's own issue list has 6: #308, #309, #312, #373, #376, #424) | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
@@ -314,6 +314,35 @@ unattended multi-issue runs.
   comment's margin claim, and a dead code branch in a ported test
   helper), both fixed in the same commit — no blocking findings on
   either the fix's correctness or its scope.
+
+- [x] **#373 (security, priority:low) — COMPLETE, MERGED (PR #469)** —
+  `vanished_claims` (a detection signal: `checkpoints.py` never deletes
+  a `.claim` doc through its own API, so a vanished CLAIMED/RESOLVED
+  claim is itself the anomaly) is edge-triggered — once the prior-
+  sample baseline rolls forward past a deleted claim doc, the metric
+  returns to 0 on the very next run regardless of whether anyone
+  investigated, unlike `stuck_approval_claims`/`orphaned_claims`, which
+  stay in breach until an operator acts. Two gaps: no
+  `slo_dashboard.ndjson` panel existed for it at all (the metric
+  alerted via ntfy but the dashboard showed nothing), and the persisted
+  `soc-slo-metrics` doc for a breaching run carried only the bare
+  integer count, not which specific document(s) vanished, so a post-
+  incident investigation had nothing to go on once the baseline rolled
+  forward. Added a `slo-vanished-claims` panel matching every sibling
+  panel's shape and actually wired into the dashboard. Refactored
+  `metric_vanished_claims()` into a thin wrapper (unchanged public
+  contract — still just the count, still driving the same breach/ntfy
+  path) over a new `_vanished_claims_detail()` returning `(count,
+  vanished)`, where `vanished` is the `{index, id}` pairs for the docs
+  confirmed gone (same plain-key convention as `_claimed_snapshot()`).
+  `main()` persists `vanished_claim_docs` onto the CURRENT run's own
+  doc (not a future baseline) via a second best-effort call, only when
+  non-empty. Parallel review both came back clean; code review's one
+  hardening suggestion (guard against a malformed/truncated mget
+  response before positionally attributing `_index`/`_id` via `zip()`)
+  was fixed in the same commit. Deliberately scoped to `vanished_claims`
+  only — the issue's "ideally its siblings `orphaned_claims`/
+  `stuck_approval_claims`" note is a separate, smaller follow-up.
 
 **M18 progress:**
 

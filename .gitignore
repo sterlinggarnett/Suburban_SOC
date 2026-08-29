@@ -110,5 +110,7 @@ scripts/hive-mind-broker/inventory.yaml
 # not a deliverable. A prior manual run got swept into git by an unrelated
 # commit; untracked here so the scheduled refresh doesn't leave a permanent
 # uncommitted diff. intel.seed.dat (the curated, deterministic source) stays
-# tracked.
-configs/intel/intel.dat
+# tracked. #270: moved to its own data/ subdirectory, separate from
+# config.zeek/refresh_intel.sh (code) — see configs/systemd/
+# intel-refresh.service's ReadWritePaths comment.
+configs/intel/data/intel.dat

@@ -132,11 +132,21 @@ class IntelDatFallbackCpHardeningTests(unittest.TestCase):
                 return line
         raise AssertionError("could not find the intel.dat-sync ExecStartPre line")
 
-    def test_both_cp_invocations_use_remove_destination(self):
+    def test_all_three_cp_invocations_use_remove_destination(self):
+        # #270 split the old single `cp -r configs/intel/*` into three
+        # explicit single-file copies (config.zeek; the live intel.dat, now
+        # from configs/intel/data/; the intel.seed.dat fallback) — all three
+        # must keep --remove-destination, not just the fallback #321 added
+        # it to originally.
         line = self._intel_sync_execstartpre()
         self.assertIn(
-            "cp -r --remove-destination", line,
-            "the primary config-sync 'cp -r' should keep --remove-destination",
+            "cp --remove-destination ${SOC_REPO}/configs/intel/config.zeek", line,
+            "the config.zeek copy is missing --remove-destination",
+        )
+        self.assertIn(
+            "cp --remove-destination ${SOC_REPO}/configs/intel/data/intel.dat", line,
+            "the live intel.dat copy (from configs/intel/data/, #270) is "
+            "missing --remove-destination",
         )
         self.assertIn(
             "cp --remove-destination ${SOC_REPO}/configs/intel/intel.seed.dat", line,

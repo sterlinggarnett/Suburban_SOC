@@ -102,7 +102,9 @@ class DeployedConfigVerificationTests(unittest.TestCase):
                             ("stream_capture.sh", STREAM_CAPTURE),
                             ("zeek_connect_host.sh", ZEEK_CONNECT_HOST)):
             guard_pos = text.index("if [ -L /storage/PCAP/intel/config.zeek ]")
-            cp_pos = text.index("sudo cp -r --remove-destination")
+            # #270: the guard protects config.zeek specifically, so pin against
+            # that cp precisely rather than either cp in the (now two-line) pair.
+            cp_pos = text.index("sudo cp --remove-destination")
             self.assertLess(guard_pos, cp_pos, f"{label}: symlink guard must run before the cp")
 
     def test_shell_scripts_check_the_intel_directory_itself_for_symlinks(self):
@@ -172,7 +174,7 @@ class DeployedConfigVerificationTests(unittest.TestCase):
         # ExecStartPre failing blocks ExecStart entirely (systemd default) —
         # the loud failure this finding asked for. If the check were only in
         # ExecStart, Zeek would already be starting by the time it ran.
-        execstartpre_pos = ZEEK_HOST_CAPTURE_SERVICE.index("ExecStartPre=/bin/bash -c 'set -e; cp -r")
+        execstartpre_pos = ZEEK_HOST_CAPTURE_SERVICE.index("ExecStartPre=/bin/bash -c 'set -e; cp --remove-destination")
         check_pos = ZEEK_HOST_CAPTURE_SERVICE.index("policy/misc/capture-loss")
         execstart_pos = ZEEK_HOST_CAPTURE_SERVICE.index("\nExecStart=")
         self.assertLess(execstartpre_pos, check_pos)

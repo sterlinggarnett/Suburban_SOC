@@ -31,7 +31,7 @@ harden_intel_dir_perms /storage/PCAP/intel "${SOC_USER:-tjlam}"
 # reasoning as configs/systemd/zeek-host-capture.service's own
 # ExecStartPre steps. --remove-destination is the one that actually
 # prevents cp from writing THROUGH an existing symlink at this path
-# instead of replacing it (verified directly: cp -r --remove-destination
+# instead of replacing it (verified directly: cp --remove-destination
 # alone already unlinks a symlinked destination before writing); the
 # explicit guard here is defense-in-depth matching the systemd unit's own
 # belt-and-suspenders design (a symlink sweep alongside its own
@@ -41,7 +41,13 @@ if [ -L /storage/PCAP/intel/config.zeek ]; then
   echo "[FATAL] /storage/PCAP/intel/config.zeek is a symlink, refusing to follow it" >&2
   exit 1
 fi
-sudo cp -r --remove-destination "${SCRIPT_DIR}/../../configs/intel/"* /storage/PCAP/intel/ 2>/dev/null || true
+# #270: two explicit, single-file copies instead of one blanket `cp -r
+# configs/intel/*` — intel.dat now lives in its own configs/intel/data/
+# subdirectory (see configs/systemd/intel-refresh.service's ReadWritePaths
+# comment for why), so the old wildcard copy would silently stop picking it
+# up at all. Matches zeek-host-capture.service's own equivalent split.
+sudo cp --remove-destination "${SCRIPT_DIR}/../../configs/intel/config.zeek" /storage/PCAP/intel/config.zeek 2>/dev/null || true
+sudo cp --remove-destination "${SCRIPT_DIR}/../../configs/intel/data/intel.dat" /storage/PCAP/intel/intel.dat 2>/dev/null || true
 
 # #288: the cp above is deliberately best-effort (a transient permissions/
 # stale-mount failure should not block analysis outright when the deployed

@@ -98,6 +98,26 @@ RuntimeDirectoryMode=0700
 # The stack CA lives only in a docker volume (no stable host path under Docker Desktop/WSL),
 # so pull it from the ES container each run. Idempotent.
 ExecStartPre=/usr/bin/docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt /run/suburban-soc-slo/ca.crt
+# #270 (security-auditor review): the docker cp above re-fetches the ES CA
+# from the `elasticsearch` container on EVERY run with no verification —
+# whatever sits at that container path becomes the sole trust anchor for a
+# request carrying the slo_metrics credential. An attacker able to write
+# into that container path, or start a container named `elasticsearch`
+# first, could MITM the connection and harvest it. scripts/setup/
+# verify_ca_fingerprint.sh pins the fingerprint seen on the FIRST run this
+# host ever makes (a repo-committed static pin isn't possible — the real
+# value depends on each deployment's own generated CA, which this repo has
+# no access to) and hard-fails + deletes ca.crt on any later mismatch.
+# StateDirectory (NOT RuntimeDirectory, which is torn down between every
+# Type=oneshot run) persists that pin across runs so a LATER swap is still
+# caught — see the script's own header for the full reasoning. Deliberately
+# NOT "-"-prefixed, unlike intel-refresh.service's identical step: this
+# unit's sole purpose is indexing into ES, so — same as the docker cp
+# above, which is also not "-"-prefixed — there is no degraded-but-useful
+# mode to preserve if the CA can't be trusted; hard-failing here is exactly
+# as consistent with this unit's existing all-or-nothing posture as that cp.
+StateDirectory=suburban-soc-slo
+ExecStartPre=/usr/bin/bash /home/tjlam/projects/Suburban-SOC/scripts/setup/verify_ca_fingerprint.sh /run/suburban-soc-slo/ca.crt /var/lib/suburban-soc-slo/ca_fingerprint.sha256
 ExecStart=/usr/bin/python3 /home/tjlam/projects/Suburban-SOC/scripts/setup/ai_agent/slo_metrics.py
 # slo_metrics.py exits 2 when an SLO is breaching — that's a successful run reporting a
 # breach, not a job failure. Treat 0 and 2 as success so the timer isn't marked failed.

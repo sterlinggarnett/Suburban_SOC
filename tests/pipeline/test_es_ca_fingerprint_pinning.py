@@ -23,6 +23,23 @@ Two kinds of checks:
      to end against real self-signed certs — a purely static check can't
      catch a logic bug in the TOFU compare/persist/delete behavior itself.
 
+Also covers a real bug the round-1 security review found in this same
+change: refresh_intel.sh SOURCES scripts/setup/lib/es_common.sh (not a
+subshell), and es_common.sh does its own hard `exit 1` when ES_CA is
+missing/unreadable — appropriate for es_common.sh's other, ES-only callers,
+but sourcing it directly means that exit unwinds refresh_intel.sh's WHOLE
+PROCESS too. Before this change, ES_CA could only go missing via a rare
+docker-cp extraction failure; verify_ca_fingerprint.sh's TOFU check now
+DELETES ca.crt on every legitimate CA rotation (an expected, documented
+case), which would otherwise turn every rotation into refresh_intel.sh
+exiting 1 — and intel-refresh.service's SuccessExitStatus=0 2 does not cover
+1, so systemd would report the whole unit FAILED over what is supposed to
+be a "skip indexing only" case. Fixed by checking ES_CA usability in
+refresh_intel.sh's own gate BEFORE ever sourcing es_common.sh.
+TofuMismatchDoesNotCrashRefreshScriptTests below reproduces this exact
+mechanism with a stand-in es_common.sh (no real ES/network needed) and
+confirms it no longer fires.
+
 Run:  python tests/pipeline/test_es_ca_fingerprint_pinning.py  (or: pytest tests/pipeline)
 """
 
@@ -34,6 +51,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "setup" / "verify_ca_fingerprint.sh"
+REFRESH_INTEL_SH = ROOT / "configs" / "intel" / "refresh_intel.sh"
 INTEL_REFRESH_SERVICE = (ROOT / "configs" / "systemd" / "intel-refresh.service").read_text(encoding="utf-8")
 SLO_METRICS_SERVICE = (ROOT / "configs" / "systemd" / "slo-metrics.service").read_text(encoding="utf-8")
 
@@ -182,6 +200,84 @@ class TofuBehaviorFunctionalTests(unittest.TestCase):
             capture_output=True, text=True, timeout=30, check=True,
         ).stdout.strip().split("=", 1)[1]
         self.assertEqual(cert_fp, pinned)
+
+
+@unittest.skipUnless(shutil.which("bash"), "bash not available")
+class TofuMismatchDoesNotCrashRefreshScriptTests(unittest.TestCase):
+    """Reproduces the exact round-1-security-review bug this diff fixes:
+    refresh_intel.sh SOURCES scripts/setup/lib/es_common.sh (not a subshell),
+    and es_common.sh does its own `exit 1` when ES_CA is unreadable —
+    appropriate for es_common.sh's other, ES-only callers, but sourcing it
+    directly means that exit unwinds refresh_intel.sh's WHOLE PROCESS too.
+    A TOFU-mismatch-deleted ca.crt would otherwise turn every legitimate CA
+    rotation into refresh_intel.sh exiting 1, which intel-refresh.service's
+    SuccessExitStatus=0 2 does not cover — systemd would report the whole
+    unit FAILED over what is supposed to be a "skip indexing only" case.
+
+    Builds a minimal repo skeleton (real refresh_intel.sh, a real
+    intel.seed.dat, and a STAND-IN es_common.sh that unconditionally exits 1
+    and leaves a marker file if sourced — reproducing es_common.sh's actual
+    failure mode without needing real ES or network access) and runs the
+    real script against it with ES_CA pointing at a nonexistent file (the
+    exact post-TOFU-mismatch state) — no live ES/Docker/network needed."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / "configs" / "intel").mkdir(parents=True)
+        (self.tmp / "scripts" / "setup" / "lib").mkdir(parents=True)
+        real_script = REFRESH_INTEL_SH.read_text(encoding="utf-8")
+        (self.tmp / "configs" / "intel" / "refresh_intel.sh").write_text(real_script, encoding="utf-8")
+        (self.tmp / "configs" / "intel" / "intel.seed.dat").write_text(
+            "#fields\tindicator\tindicator_type\tmeta.source\tmeta.desc\n"
+            "198.51.100.66\tIntel::ADDR\ttest\ttest indicator\n",
+            encoding="utf-8",
+        )
+        self.marker = self.tmp / "es_common_was_sourced"
+        (self.tmp / "scripts" / "setup" / "lib" / "es_common.sh").write_text(
+            f'touch "{self.marker}"\n'
+            'echo "ERROR: no readable CA -- refusing to skip TLS verification." >&2\n'
+            "exit 1\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, es_pass, es_ca):
+        env = {
+            "PATH": "/usr/bin:/bin",
+            "ES_PASS": es_pass,
+            "ES_CA": es_ca,
+            # Fails fast (connection refused), no real network dependency —
+            # the fetches themselves are irrelevant to this bug.
+            "FEODO_URL": "http://127.0.0.1:1/",
+            "ET_COMPROMISED_URL": "http://127.0.0.1:1/",
+        }
+        return subprocess.run(
+            ["bash", str(self.tmp / "configs" / "intel" / "refresh_intel.sh")],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+
+    def test_unreadable_ca_skips_indexing_without_crashing_the_whole_script(self):
+        # The post-TOFU-mismatch state: ES_PASS is set (indexing was
+        # intended) but ES_CA points at nothing readable.
+        result = self._run(es_pass="fake-password", es_ca=str(self.tmp / "does-not-exist.crt"))
+        self.assertFalse(self.marker.exists(),
+                          "es_common.sh was sourced despite an unreadable ES_CA -- "
+                          "its own hard exit 1 would crash this whole script")
+        self.assertEqual(2, result.returncode,
+                          f"expected exit 2 (stale-but-successful, matching "
+                          f"SuccessExitStatus=0 2), got {result.returncode}. "
+                          f"stderr: {result.stderr}")
+        self.assertIn("ES_CA", result.stdout)
+
+    def test_es_pass_unset_still_skips_cleanly(self):
+        # Unrelated pre-existing path — confirms the fix didn't disturb the
+        # ES_PASS-unset case, which is a deliberate no-ES choice, not a
+        # degraded one (no status=stale expected here).
+        result = self._run(es_pass="", es_ca=str(self.tmp / "does-not-exist.crt"))
+        self.assertFalse(self.marker.exists())
+        self.assertIn("ES_PASS unset", result.stdout)
 
 
 if __name__ == "__main__":

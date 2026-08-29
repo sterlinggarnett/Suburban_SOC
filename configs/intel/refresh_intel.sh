@@ -184,7 +184,24 @@ if [[ -d "$LIVE_DIR" ]]; then
 fi
 
 # --- 3. Index indicators + a freshness heartbeat into Elasticsearch ----------
-if [[ -n "$ES_PASS" ]]; then
+# #270 (security-auditor review): es_common.sh (sourced below, not run in a
+# subshell) does its OWN hard `exit 1` when ES_CA is missing/unreadable and
+# ES_INSECURE isn't "true" — appropriate for a script whose sole purpose IS
+# talking to ES, but sourcing it directly means that exit unwinds THIS WHOLE
+# SCRIPT too, not just the indexing step. Before this fix, that only bit on a
+# rare docker-cp extraction failure; scripts/setup/verify_ca_fingerprint.sh's
+# TOFU check now DELETES ca.crt outright on every legitimate CA rotation
+# (its own header comment documents this as the expected, deliberate
+# re-pinning path), which would otherwise turn every rotation into this
+# script exiting 1 — and intel-refresh.service's SuccessExitStatus=0 2 does
+# NOT cover 1, so systemd would report the whole unit FAILED over what is
+# supposed to be a "skip indexing, feed refresh unaffected" case (the exact
+# opposite of what this fix, and this file's own long-standing "refresh_intel.sh
+# already degrades gracefully with no ES creds at all" framing, both intend).
+# Checking ES_CA usability HERE, before ever sourcing es_common.sh, keeps
+# that hard-fail-on-bad-CA behavior exactly where it belongs (unchanged for
+# es_common.sh's other, ES-only callers) without this script inheriting it.
+if [[ -n "$ES_PASS" ]] && { [[ -r "$ES_CA" ]] || [[ "${ES_INSECURE:-false}" == "true" ]]; }; then
   # No hardcoded Content-Type — each call sets its own (bulk=x-ndjson, doc=json),
   # so we never send two Content-Type headers (ES rejects that).
   # Shared ES creds + TLS + es()/es_bulk() (issue #156). Sourced inside the
@@ -253,6 +270,14 @@ if [[ -n "$ES_PASS" ]]; then
     # it just failed to write. Loud enough to be found in the unit's journal.
     log "ERROR: heartbeat write to threat-intel-meta failed (HTTP $heartbeat_code) — slo_metrics.py's metric_intel_feed_stale_heartbeats() will eventually catch this via the missing heartbeat itself"
   fi
+elif [[ -n "$ES_PASS" ]]; then
+  # ES_PASS WAS set (indexing was intended) but ES_CA isn't usable — unlike
+  # the "ES_PASS unset" case below (a deliberate no-ES deployment choice,
+  # not a degraded one), this means something that was supposed to work
+  # didn't, so it's flagged the same way the other degraded-but-not-fatal
+  # cases above are (status=stale + a WARN), not silently skipped.
+  status="stale"
+  log "WARN: ES_CA (${ES_CA:-unset}) missing or unreadable and ES_INSECURE not set -- skipped ES indexing (feed file still updated)"
 else
   log "NOTE: ES_PASS unset — skipped ES indexing (feed file still updated)"
 fi

@@ -31,7 +31,7 @@ harden_intel_dir_perms /storage/PCAP/intel "${SOC_USER:-tjlam}"
 # reasoning as configs/systemd/zeek-host-capture.service's own
 # ExecStartPre steps. --remove-destination is the one that actually
 # prevents cp from writing THROUGH an existing symlink at this path
-# instead of replacing it (verified directly: cp -r --remove-destination
+# instead of replacing it (verified directly: cp --remove-destination
 # alone already unlinks a symlinked destination before writing); the
 # explicit guard here is defense-in-depth matching the systemd unit's own
 # belt-and-suspenders design (a symlink sweep alongside its own

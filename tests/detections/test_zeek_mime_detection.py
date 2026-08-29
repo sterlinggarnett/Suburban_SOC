@@ -169,13 +169,27 @@ def _run_zeek_over_pcap(tmpdir: Path, pcap_name: str, out_subdir: str) -> list:
         f"zeek replay of {pcap_name} failed (exit {r.returncode}): "
         f"{r.stderr.decode(errors='replace')[:2000]}")
     files_log = out_dir / "files.log"
-    if not files_log.exists():
-        return []
     records = []
-    for line in files_log.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            records.append(json.loads(line))
+    if files_log.exists():
+        for line in files_log.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+    if not records:
+        # Diagnostic-rich failure (caught live: files.log came back empty
+        # on the SMTP pcap with no other error) — lists every log Zeek DID
+        # produce (e.g. conn.log present but no smtp.log at all would mean
+        # Zeek never recognized the session as SMTP; smtp.log present but
+        # no files.log would mean the session was recognized but no MIME
+        # entity was extracted) plus zeek's own stdout, so an empty result
+        # is diagnosable from the CI log directly instead of needing a
+        # second blind guess. Caller still decides pass/fail (some callers
+        # may legitimately expect zero records); this only enriches what
+        # gets shown when they don't.
+        produced = sorted(p.name for p in out_dir.iterdir())
+        print(f"NOTE: zeek replay of {pcap_name} produced zero files.log records. "
+              f"Logs actually produced in {out_dir}: {produced}. "
+              f"zeek stdout: {r.stdout.decode(errors='replace')[:2000]!r}")
     return records
 
 

@@ -26,7 +26,7 @@ matching the M12/M13/M14 pattern.
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
-| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ⏳ 4/7 closed — 3 open (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
+| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ⏳ 5/7 closed — 2 open (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
@@ -146,6 +146,38 @@ unattended multi-issue runs.
   stderr line + exit code 3 fire end-to-end on a simulated failure.
   ES's `_has_privileges` response shape is assumed per its documented
   API, not live-verified here (no Docker/ES daemon available).
+
+- [x] **#306 (security, priority:medium) — COMPLETE, MERGED (PR #458)** —
+  two findings. (1) `docker-compose.yml`'s `provision` service still
+  Compose-time-interpolated (single-`$`) most password references in
+  its command block, splicing cleartext values into the container's
+  command text before it starts (readable via `docker inspect`/`ps
+  --no-trunc` for as long as the one-shot container persists, #303).
+  Converted every remaining occurrence (`ELASTIC_PASSWORD`,
+  `KIBANA_PASSWORD`, `LOGSTASH_PASSWORD`, `SOC_AGENT_KIBANA_PASSWORD`,
+  `BROKER_AUDIT_PASSWORD`, `SLO_METRICS_PASSWORD`) to `$$` — the
+  issue's own named 5 services predated several accounts added since
+  filing, so fixed every remaining occurrence rather than just those
+  five. Left `setup`'s own deliberately-different single-`$` exception
+  and `provision`'s `environment:` block (the correct, required
+  mechanism for passing a host `.env` value into the container) alone.
+  (2) `logstash_writer.json` granted `manage` (includes delete) on
+  `soc-agent-health-*`/`asset-inventory-*`; split into two indices
+  entries so `logstash-*`/`soar-actions-*` keep full write/manage while
+  those two are narrowed to `create_index/create/auto_configure`,
+  verified via static code analysis (agent.py's audit-health-marker
+  write is create-only; no production code writes `asset-inventory-*`
+  at all; `erase_tenant.sh`'s deletes run as the `elastic` superuser,
+  not `logstash_internal`). Two independent parallel reviews
+  (security-focused, code-quality-focused) **both independently caught
+  the same real regression**: `BROKER_AUDIT_PASSWORD` was converted to
+  `$$` without being added to `provision`'s `environment:` block, so it
+  would have silently expanded to empty at runtime and disabled all
+  `hive_mind_broker` provisioning — fixed, with a dedicated regression
+  test verified to fail on the exact bug and pass once fixed. Per the
+  security review's gap note, also strengthened the existing live
+  `tests/rbac/test_rbac.sh` to directly exercise the privilege
+  narrowing (not run in this environment — no live cluster available).
 
 **M18 progress:**
 

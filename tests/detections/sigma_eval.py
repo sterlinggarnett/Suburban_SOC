@@ -144,12 +144,22 @@ _NUMERIC_MODS = {"gt", "gte", "lt", "lte"}
 # query_string term (`message:su`), distinct from `contains`'s unanalyzed
 # wildcard (`message:*su*`), which is unsafe here for a different reason
 # (wildcard/regexp queries are NOT analyzed, so they'd need to match
-# already-tokenized, already-lowercased index terms exactly - see the
-# per-rule descriptions in rules/sigma/auth_linux_*.yml for the full
-# reasoning). This set exists so sigma_eval.py can mirror THAT specific
-# real-backend behavior for `message` without changing bare-equality
-# semantics for every other (keyword-mapped) field a bare match already
-# correctly treats as exact equality.
+# already-tokenized, already-lowercased index terms exactly). This set
+# exists so sigma_eval.py can mirror THAT specific real-backend behavior
+# for `message` without changing bare-equality semantics for every other
+# (keyword-mapped) field a bare match already correctly treats as exact
+# equality.
+# #299: this comment is the canonical explanation of why rules/sigma/
+# auth_linux_*.yml use bare equality here instead of contains — those
+# rules used to repeat this reasoning inline in their own analyst-facing
+# `description:` field. Sigma's description field renders VERBATIM in the
+# Kibana Detection Engine alert flyout — it's runtime text an analyst
+# reads at triage, not a code comment — so 15-30 lines of ES-analyzer
+# internals were shipping straight to a 3am analyst who doesn't need them
+# to act on the alert. Those rules now carry a single-line pointer back
+# here instead; genuinely operational scope-limit disclosures (e.g. a
+# rule's own coverage gaps) stay in their own description, since an
+# analyst does need those at triage time.
 _TEXT_MAPPED_FIELDS = {"message"}
 
 

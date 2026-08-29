@@ -13,13 +13,11 @@ description: |
     'session' + 'opened' alone, since sshd logs an identically-worded
     "session opened for user X by (uid=0)" line for every ordinary
     successful SSH login (also via pam_unix). The 'su' token is what
-    isolates su-specific sessions from that much more common sshd case;
-    it's a safe, non-colliding exact-token match (not a substring wildcard)
-    since 'su', 'sudo', and 'sshd' are three distinct tokens after the
-    standard analyzer processes them, not overlapping substrings of one
-    another at the token level. See auth_linux_ssh_authorized_keys_change.yml's
-    description for why bare equality (not `contains`) is required against
-    this stack's `text`-mapped `message` field in general.
+    isolates su-specific sessions from that much more common sshd case.
+    See tests/detections/sigma_eval.py's _TEXT_MAPPED_FIELDS comment
+    (#299) for why bare equality (not `contains`) is required against
+    this stack's text-mapped message field, and why 'su'/'sudo'/'sshd'
+    don't collide as separate tokens.
 references:
     - https://attack.mitre.org/techniques/T1078/003/
 author: Suburban-SOC

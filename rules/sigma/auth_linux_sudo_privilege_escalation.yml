@@ -9,14 +9,9 @@ description: |
     needing new log parsing.
     Uses two bare-equality (no modifier) selectors on `message`, ANDed,
     rather than one `contains` value spanning both words — see
-    auth_linux_ssh_authorized_keys_change.yml's description for why a
-    `contains`/wildcard match against this stack's `text`-mapped `message`
-    field is unsafe, and why bare equality against a single token is the
-    safe alternative. Splitting into two single-token selectors (rather
-    than one two-word bare-equality value) avoids relying on how
-    Elasticsearch's query_string parser would combine an unquoted
-    multi-token term internally, which isn't something this repo could
-    verify without a real cluster.
+    tests/detections/sigma_eval.py's _TEXT_MAPPED_FIELDS comment (#299)
+    for why bare equality is required here, and why two single-token
+    selectors are used instead of one two-word value.
     Deliberately broad, not narrowed to specific commands: this flags every
     logged sudo invocation, not just suspicious ones. Baselining routine
     sudo usage per host/account and tuning from there is expected — this is

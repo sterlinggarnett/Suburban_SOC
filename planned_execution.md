@@ -29,7 +29,7 @@ matching the M12/M13/M14 pattern.
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
-| [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
+| [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ⏳ 2/7 closed — 5 open (#439, #380, #378, #299, #296) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -49,7 +49,10 @@ actionable work left — #326 externally blocked on real telemetry,
 of the fixes that found them, not active gaps). **M19 closed out
 2026-08-29** (7/7, see M19 progress below). **M20 closed out 2026-08-29**
 (6/6, see M20 progress below). **M21 closed out 2026-08-29** (3/3, see
-M21 progress below). M22 remains open, not yet started.
+M21 progress below). **M22 started 2026-08-29** (see M22 progress
+below) — #439 skipped (actively claimed by an external contributor,
+ravindharann) and #380 skipped for now (overlaps the exact same
+README lines #439 is already fixing).
 Same approach as M16/M17/M18/M19 whenever the next one starts:
 smallest/most-contained issue first, one at a time, each through the
 full implement → parallel security-auditor + code-reviewer review →
@@ -246,6 +249,40 @@ unattended multi-issue runs.
   review's non-blocking observation (`deploy_detections.sh`'s local
   venv doesn't pin the Python version the way CI does). **This closes
   M19 — 7/7 issues complete.**
+
+**M22 progress:**
+
+- [x] **#379 (tech-debt, reporting accuracy) — COMPLETE, MERGED (PR #484)** —
+  `slo_metrics.py`'s `metric_coverage()` counted
+  `len(attack-coverage.json["techniques"])`, an array keyed on
+  `(techniqueID, tactic)` **pairs** (#281 — ATT&CK Navigator scores a
+  technique per tactic column it's mapped under), so a technique
+  legitimately spanning two tactics (currently just T1078.003) produced
+  two array entries but is one unique technique — this SLO metric read
+  one higher (76) than `build_attack_coverage.py`'s own
+  "Coverage: 75 techniques" line. Added an explicit `unique_techniques`
+  metadata entry to `navigator_layer()`'s output carrying the true unique
+  count (`unique_technique_count(rows)`, the same figure `markdown()`
+  already reports) and had `metric_coverage()` read that field directly
+  instead of re-deriving it, falling back to the old `len()` behavior only
+  if the field is absent (an artifact predating this fix). Regenerated and
+  committed `docs/detections/attack-coverage.json`;
+  `build_attack_coverage.py --check` confirms it stays in sync. Two rounds
+  of parallel security/code review: security came back clean; code
+  quality flagged that the new field was first named `"techniques"` —
+  identical to the top-level array key it exists to disambiguate from,
+  re-introducing the exact ambiguity this issue is about — renamed to
+  `"unique_techniques"`, and flagged a real test-coverage gap (nothing
+  exercised `metric_coverage()` against the real committed artifact and
+  real rule corpus, only synthetic fixtures) — added a regression test,
+  empirically confirmed to fail (76.0 != 75.0) against the pre-fix
+  implementation before finalizing. Two related open M22 issues,
+  **#439 and #380, were deliberately skipped** when picking this
+  milestone's first issue: #439 is actively claimed by an external
+  contributor (ravindharann, who commented their implementation plan and
+  was assigned) and #380 overlaps the exact same `README.md` lines #439
+  is already fixing — working either risks a guaranteed merge conflict
+  with their in-flight PR.
 
 **M21 progress:**
 

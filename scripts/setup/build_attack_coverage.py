@@ -381,10 +381,14 @@ def navigator_layer(rows):
             # — deliberately NOT len(techs)/len(this JSON's own "techniques"
             # array), which is a (techniqueID, tactic) PAIR count (#281) and
             # over-reports by one per technique that legitimately spans more
-            # than one tactic (T1078.003 today). slo_metrics.py's
-            # metric_coverage() reads this field instead of re-deriving it,
-            # so the two can't silently drift apart.
-            {"name": "techniques", "value": str(unique_technique_count(rows))},
+            # than one tactic (T1078.003 today). Named "unique_techniques",
+            # not "techniques", specifically so it can't be confused with
+            # the top-level "techniques" array above — the exact two
+            # different "technique counts" this fix exists to disambiguate
+            # (code-reviewer follow-up). slo_metrics.py's metric_coverage()
+            # reads this field instead of re-deriving it, so the two can't
+            # silently drift apart.
+            {"name": "unique_techniques", "value": str(unique_technique_count(rows))},
         ],
     }
 

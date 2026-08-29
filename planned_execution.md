@@ -29,7 +29,7 @@ matching the M12/M13/M14 pattern.
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
-| [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ⏳ 2/7 closed — 5 open (#439, #380, #378, #299, #296) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
+| [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ⏳ 3/7 closed — 4 open (#439, #380, #378, #296) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -252,6 +252,42 @@ unattended multi-issue runs.
 
 **M22 progress:**
 
+- [x] **#299 (cosmetic/operability) — COMPLETE, MERGED (PR #486)** — Sigma's
+  `description:` field renders VERBATIM in the Kibana Detection Engine
+  alert flyout — analyst-facing runtime text, not a code comment. 4 Linux
+  auth rules (`auth_linux_ssh_authorized_keys_change.yml`,
+  `auth_linux_sudo_privilege_escalation.yml`,
+  `auth_linux_invalid_user_ssh_attempt.yml`,
+  `auth_linux_su_session_opened.yml`) each carried 15-30 lines explaining
+  Elasticsearch `query_string`/analyzer internals (why `contains` is
+  unsafe against a `text`-mapped field, why bare equality was split into
+  separate selectors) inline — reasoning useful to a rule author/reviewer,
+  not an analyst at 3am. Consolidated the shared rationale into
+  `tests/detections/sigma_eval.py`'s existing `_TEXT_MAPPED_FIELDS`
+  comment (already had most of it; removed a stale forward-pointer to the
+  rule descriptions since the direction now flips), with each rule
+  carrying a short pointer back instead. Genuinely operational content
+  (a real auditd/file-integrity-monitoring scope-limit disclosure; the
+  reasoning for why one rule needs 3 tokens not 2 to avoid colliding with
+  ordinary sshd sessions) stayed in the descriptions. A 5th "sibling" rule
+  the issue names, `auth_linux_ssh_root_login.yml`, was inspected and left
+  unchanged — it selects on keyword-mapped ECS fields, not `message`, and
+  never had the ES-analyzer problem; it now carries a short YAML comment
+  recording this so the exclusion reads as deliberate. Two rounds of
+  parallel security/code review both surfaced real findings fixed before
+  merging: round 1 found that consolidating had, in two cases, actually
+  DELETED real reasoning rather than migrated it (the "why ANDed single-
+  token selectors instead of one multi-word value" caveat, and the
+  authorized_keys rule's own verified-single-token fact) — fixed by
+  migrating both properly, and strengthened the new test file to assert
+  the migrated reasoning is actually *present* in `sigma_eval.py`, not
+  just that jargon strings are *absent* from the rule descriptions
+  (empirically confirmed the strengthened tests fail against the pre-fix
+  content). Round 1 also caught a docstring miscounting "5 rules" against
+  the 4 actually touched and an imprecise wildcard reference. Only
+  `description:` text changed in the 4 edited rules — no detection logic
+  changed; `detections`/`live-fire` CI (which run the real sigma-cli
+  conversion) both passed.
 - [x] **#379 (tech-debt, reporting accuracy) — COMPLETE, MERGED (PR #484)** —
   `slo_metrics.py`'s `metric_coverage()` counted
   `len(attack-coverage.json["techniques"])`, an array keyed on

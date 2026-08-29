@@ -343,12 +343,31 @@ class AlertResponseTests(unittest.TestCase):
         # The broker blocks by IP — the attacker IP is the first positional arg.
         self.assertEqual(self.mock_dispatch.call_args[0][0], "1.2.3.4")
 
-    def test_autonomous_flag_still_blocks_invalid_mac(self):
+    def test_autonomous_flag_still_blocks_invalid_mac_on_internal_ip(self):
+        # #312: an INTERNAL target still always needs device-level MAC
+        # attribution before the agent may act alone — a private test IP,
+        # unlike "1.2.3.4" elsewhere in this file, so this test still means
+        # what it says post-#312.
+        with mock.patch.object(agent, "AUTONOMOUS_ISOLATION", True):
+            r = self._post({"severity": "critical", "source_ip": "10.20.30.40",
+                            "source_mac": "not-a-mac"})
+        self.assertEqual(r.status_code, 200)
+        self.mock_dispatch.assert_not_called()     # no valid MAC, internal IP -> never dispatches
+
+    def test_autonomous_flag_dispatches_on_confirmed_external_ip_without_mac(self):
+        # #312: the fix's whole point — a confirmed-EXTERNAL target may now
+        # autonomously dispatch on IP alone (the lower-blast-radius,
+        # reversible action), even with no MAC at all. "1.2.3.4" is a public
+        # IP, so this exercises the NEW `not _is_private_ip(...)` half of
+        # the gate specifically (test_autonomous_flag_dispatches_to_broker
+        # above already covers the MAC half).
         with mock.patch.object(agent, "AUTONOMOUS_ISOLATION", True):
             r = self._post({"severity": "critical", "source_ip": "1.2.3.4",
                             "source_mac": "not-a-mac"})
         self.assertEqual(r.status_code, 200)
-        self.mock_dispatch.assert_not_called()     # no valid MAC -> never dispatches
+        self.assertEqual(r.get_json()["status"], "auto_isolated")
+        self.mock_dispatch.assert_called_once()
+        self.assertEqual(self.mock_dispatch.call_args[0][0], "1.2.3.4")
 
     # --- §12.4 exclusion list ------------------------------------------------
     def test_excluded_asset_never_acted_on(self):
@@ -521,6 +540,33 @@ class TenantResolverTests(unittest.TestCase):
         self.assertTrue(agent._ip_excluded("2001:db8::1", entries)) # IPv6 in /32
         self.assertTrue(agent._ip_excluded("8.8.8.8", entries))     # exact
         self.assertFalse(agent._ip_excluded("nonsense", entries))
+
+    def test_is_private_ip_true_for_private_link_local_and_loopback(self):
+        # #312: the autonomous-isolation gate's "confirmed external" check —
+        # every RFC1918/link-local/loopback range must read as NOT external.
+        self.assertTrue(agent._is_private_ip("192.168.1.50"))
+        self.assertTrue(agent._is_private_ip("10.0.0.5"))
+        self.assertTrue(agent._is_private_ip("172.16.0.1"))
+        self.assertTrue(agent._is_private_ip("169.254.1.1"))   # link-local
+        self.assertTrue(agent._is_private_ip("127.0.0.1"))     # loopback
+        self.assertTrue(agent._is_private_ip("fe80::1"))       # IPv6 link-local
+        self.assertTrue(agent._is_private_ip("::1"))           # IPv6 loopback
+
+    def test_is_private_ip_false_for_public_addresses(self):
+        self.assertFalse(agent._is_private_ip("1.2.3.4"))
+        self.assertFalse(agent._is_private_ip("8.8.8.8"))
+        # 2001:db8::/32 is the RFC 3849 documentation range — Python's
+        # ipaddress module treats it as private/non-globally-reachable, so a
+        # genuinely public IPv6 address is used here instead.
+        self.assertFalse(agent._is_private_ip("2606:4700:4700::1111"))
+
+    def test_is_private_ip_fails_closed_on_unparseable_input(self):
+        # An unparseable target_ip must never be treated as "confirmed
+        # external" and used to justify autonomous action against it — the
+        # only safe default here is "assume private/unknown".
+        self.assertTrue(agent._is_private_ip("not-an-ip"))
+        self.assertTrue(agent._is_private_ip(""))
+        self.assertTrue(agent._is_private_ip("unknown"))
 
     def test_dispatch_fails_closed_without_secret(self):
         # #109: no HIVE_MIND_SECRET => the agent never dispatches (fails closed).

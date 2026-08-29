@@ -29,7 +29,7 @@ matching the M12/M13/M14 pattern.
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
-| [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ⏳ 3/7 closed — 4 open (#439, #380, #378, #296) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
+| [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ⏳ 4/7 closed — 1 open (#296), 2 blocked on an external contributor's in-flight PR (#439/#380) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -319,6 +319,37 @@ unattended multi-issue runs.
   was assigned) and #380 overlaps the exact same `README.md` lines #439
   is already fixing — working either risks a guaranteed merge conflict
   with their in-flight PR.
+- [x] **#378 (priority:low, tech-debt, detection) — COMPLETE, MERGED (PR
+  #488)** — `build_attack_coverage.py`'s `harvest()` used `re.search()`
+  (first-match-only) to extract a Sigma rule's `attack.<technique>`/
+  `attack.<tactic>` tags, silently discarding every tag after the first of
+  each kind: 21 of 108 rules carry 2+ tactic tags, 6 carry 2+ technique
+  tags, so a real dual-tactic rule like
+  `auth_linux_ssh_root_login.yml` (Initial Access + Persistence) only ever
+  surfaced its first tactic on the published coverage heatmap. Switched to
+  `re.findall()` plus a new `_technique_tactic_pairs()` helper emitting one
+  row per legitimate technique/tactic pairing — broadcasts a lone
+  technique/tactic across the rest when unambiguous, positionally zips
+  equal-length multi/multi lists (the corpus's own tactics-then-techniques
+  listing convention), and fails loudly on an unequal multi/multi shape
+  rather than guessing. An adversarial security review of that first pass
+  found the broadcast logic could still assert a technique/tactic pair
+  that isn't real per MITRE ATT&CK (a rule's tactic tags can describe the
+  detection's broader relevance without matching a specific technique's
+  official tactic membership) — added a `TECHNIQUE_TACTICS` ground-truth
+  table (verified against attack.mitre.org) that rejects any broadcast
+  pair it doesn't confirm, and fixed the 8 real corpus rules this
+  uncovered (6 had an extra invalid tactic tag, 2 were missing one).
+  Regenerated `docs/detections/attack-coverage.json`/`.md` (technique
+  count 75 → 78) and fixed every stale tactic reference in
+  `docs/playbooks/IR_Sigma_Playbook.md`. Two rounds of adversarial
+  security + code-quality review; full test suite passed
+  (`build_attack_coverage.py --check` confirms the matrix stays in sync).
+  PR was left in draft with CI green and no review comments when the
+  session that opened it ended; picked up, marked ready, and merged in
+  this session — GitHub's auto-close didn't fire (the PR body never
+  contained a literal "Closes #378"), so the issue was closed manually
+  after confirming the merge.
 
 **M21 progress:**
 

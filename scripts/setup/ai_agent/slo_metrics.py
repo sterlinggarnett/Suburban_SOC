@@ -710,10 +710,35 @@ def _claimed_snapshot(size=200):
 
 
 def metric_vanished_claims():
-    """Count of CLAIMED-or-RESOLVED claim docs from the PRIOR sample that no
-    longer exist at all (#361, follow-up from #357's security-auditor
-    review; RESOLVED coverage added after a tester-debugger live-
-    verification finding during this same issue's review).
+    """Thin wrapper over `_vanished_claims_detail()` returning just the
+    count — the shape every other metric_fns entry returns, and the one
+    `main()`'s generic breach-comparison loop expects. `main()` itself
+    calls `_vanished_claims_detail()` directly instead (not through this
+    wrapper) so it can ALSO persist which specific docs vanished (#373) —
+    see that function's own docstring."""
+    return _vanished_claims_detail()[0]
+
+
+def _vanished_claims_detail():
+    """Count of, AND the specific identifiers for, CLAIMED-or-RESOLVED claim
+    docs from the PRIOR sample that no longer exist at all (#361, follow-up
+    from #357's security-auditor review; RESOLVED coverage added after a
+    tester-debugger live-verification finding during this same issue's
+    review; #373 added returning which docs, not just how many, alongside
+    a `slo_dashboard.ndjson` panel — this metric was previously edge-
+    triggered with no durable record of which claim vanished, so a
+    post-incident investigation had nothing to go on beyond ntfy alert
+    text once the baseline rolled forward).
+
+    Returns `(count, vanished)` where `vanished` is a list of
+    `{"index", "id"}` dicts (same plain-key convention as
+    `_claimed_snapshot()`'s own return shape, for the same ES reserved-
+    field-name reason documented there) for exactly the docs this run
+    confirmed gone — `main()` persists this list onto the CURRENT run's
+    own `soc-slo-metrics` doc (not a future baseline) when non-empty, so
+    an investigator doesn't need to reconstruct the vanished doc's
+    `_index`/`_id` from ntfy alert text after the next run's baseline has
+    already rolled past it.
 
     #357 made `agent_checkpoints_compactor` (read+delete on
     `agent-checkpoints-*`, no document-level restriction under this stack's
@@ -828,7 +853,7 @@ def metric_vanished_claims():
              and entry["index"].startswith("agent-checkpoints-")
              and entry["id"].endswith(".claim")]
     if not prior:
-        return 0
+        return 0, []
 
     try:
         r = es("POST", "/_mget", {"docs": prior})
@@ -845,7 +870,26 @@ def metric_vanished_claims():
         raise MetricUnavailable(
             f"vanished-claims mget: {len(errored)} doc(s) unreadable, "
             f"first: {errored[0].get('error')}")
-    return sum(1 for d in results if not d.get("found"))
+    # code-reviewer follow-up: _mget's response `docs` array preserves the
+    # SAME order as the request `docs` array (`prior`) — the pre-existing
+    # metric_orphaned_claims() above already implicitly relies on the same
+    # correspondence for its own count, where a length mismatch would only
+    # under/over-count. Here, zip() uses that same ordering to positionally
+    # ATTRIBUTE a specific _index/_id to each "vanished" verdict — a
+    # silently truncated/malformed response (results shorter than prior)
+    # would zip() into a wrong-but-plausible-looking attribution instead of
+    # visibly failing. This file's own standard (MetricUnavailable over a
+    # silently-wrong value) applies here too.
+    if len(results) != len(prior):
+        raise MetricUnavailable(
+            f"vanished-claims mget: expected {len(prior)} result(s), got "
+            f"{len(results)} — cannot reliably attribute _index/_id to "
+            f"each vanished doc")
+    # Plain index/id keys (not _index/_id), matching _claimed_snapshot()'s
+    # own convention.
+    vanished = [{"index": p["_index"], "id": p["_id"]}
+                for p, d in zip(prior, results) if not d.get("found")]
+    return len(vanished), vanished
 
 
 def metric_raw_alert_volume():
@@ -1512,6 +1556,30 @@ def main():
         print(f"  -> claimed-snapshot capture failed (next vanished_claims "
               f"check will compare against an older baseline, if still "
               f"within its freshness window): {e}", file=sys.stderr)
+
+    # #373: this run's own vanished-doc identifiers, persisted onto THIS
+    # run's doc (not a future baseline, unlike claimed_snapshot above) so a
+    # post-incident investigation doesn't need to reconstruct which
+    # specific claim disappeared from ntfy alert text alone, after the
+    # NEXT run's own claimed_snapshot has already rolled the baseline
+    # forward past it. Only set when non-empty — every healthy run finding
+    # nothing vanished shouldn't carry a redundant empty array. Recomputes
+    # via a second call to _vanished_claims_detail() rather than reusing
+    # `values["vanished_claims"]` from the metric_fns loop above (deliberately
+    # kept separate/unchanged there, matching every other metric's plain-int
+    # contract) — a second read-only query, not a second decision; best-
+    # effort like claimed_snapshot/intel_indicator_actual_count above, since
+    # a capture failure here costs only forensic detail, not this run's own
+    # otherwise-successful breach detection (values["vanished_claims"] is
+    # already set from the loop regardless of whether this block succeeds).
+    try:
+        _, vanished_docs = _vanished_claims_detail()
+        if vanished_docs:
+            doc["vanished_claim_docs"] = vanished_docs
+    except MetricUnavailable as e:
+        print(f"  -> vanished-claims detail capture failed (breach count "
+              f"above is still accurate; only the specific doc identifiers "
+              f"for this run are unavailable): {e}", file=sys.stderr)
 
     # #358: this run's own real threat-intel-indicators count, persisted for
     # metric_intel_indicator_count_drop_pct()'s run-over-run comparison —

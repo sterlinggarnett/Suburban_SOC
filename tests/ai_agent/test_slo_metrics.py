@@ -464,6 +464,54 @@ class MetricFunctionTests(unittest.TestCase):
             {"_index": "agent-checkpoints-home-jones", "_id": "def456.claim"},
         ])
 
+    def test_vanished_claims_detail_returns_the_specific_vanished_identifiers(self):
+        # #373: _vanished_claims_detail() returns WHICH docs vanished, not
+        # just how many — metric_vanished_claims() itself still returns
+        # only the count (see that function's own docstring for why).
+        prior_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"claimed_snapshot": [
+                {"index": "agent-checkpoints-home-smith", "id": "abc123.claim"},
+                {"index": "agent-checkpoints-home-jones", "id": "def456.claim"},
+            ]}},
+        ]}})
+        mget_resp = _FakeResponse(200, {"docs": [{"found": False}, {"found": True}]})
+        with mock.patch.object(slo_metrics, "es", side_effect=[prior_resp, mget_resp]):
+            count, vanished = slo_metrics._vanished_claims_detail()
+        self.assertEqual(count, 1)
+        self.assertEqual(vanished, [{"index": "agent-checkpoints-home-smith", "id": "abc123.claim"}])
+
+    def test_vanished_claims_detail_returns_empty_list_when_nothing_vanished(self):
+        prior_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"claimed_snapshot": [
+                {"index": "agent-checkpoints-home-smith", "id": "abc123.claim"},
+            ]}},
+        ]}})
+        mget_resp = _FakeResponse(200, {"docs": [{"found": True}]})
+        with mock.patch.object(slo_metrics, "es", side_effect=[prior_resp, mget_resp]):
+            count, vanished = slo_metrics._vanished_claims_detail()
+        self.assertEqual(count, 0)
+        self.assertEqual(vanished, [])
+
+    def test_vanished_claims_detail_returns_empty_tuple_on_first_run(self):
+        with mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(200, {})):
+            self.assertEqual(slo_metrics._vanished_claims_detail(), (0, []))
+
+    def test_vanished_claims_detail_raises_on_mget_response_length_mismatch(self):
+        # code-reviewer follow-up: zip(prior, results) positionally
+        # attributes a specific _index/_id to each vanished verdict — a
+        # malformed/truncated mget response (fewer docs than requested)
+        # must fail loudly, not silently mis-attribute or drop identifiers.
+        prior_resp = _FakeResponse(200, {"hits": {"hits": [
+            {"_source": {"claimed_snapshot": [
+                {"index": "agent-checkpoints-home-smith", "id": "abc123.claim"},
+                {"index": "agent-checkpoints-home-jones", "id": "def456.claim"},
+            ]}},
+        ]}})
+        mget_resp = _FakeResponse(200, {"docs": [{"found": False}]})  # only 1, expected 2
+        with mock.patch.object(slo_metrics, "es", side_effect=[prior_resp, mget_resp]):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._vanished_claims_detail()
+
     def test_vanished_claims_raises_on_mget_non_200(self):
         prior_resp = _FakeResponse(200, {"hits": {"hits": [
             {"_source": {"claimed_snapshot": [
@@ -1586,6 +1634,61 @@ class MainExitCodeTests(unittest.TestCase):
                 stack.enter_context(p)
             code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
+
+
+class VanishedClaimDocsPersistenceTests(unittest.TestCase):
+    """#373: main() persists the specific vanished {index, id} pairs onto
+    THIS run's own soc-slo-metrics doc (not a future baseline, unlike
+    claimed_snapshot) when _vanished_claims_detail() finds any — a
+    post-incident investigation shouldn't need to reconstruct which
+    specific claim disappeared from ntfy alert text alone, after the NEXT
+    run's own claimed_snapshot has already rolled the comparison baseline
+    forward past it."""
+
+    def _run_and_capture_indexed_doc(self, vanished_docs):
+        captured = {}
+
+        def fake_es(method, path, body=None):
+            if path == "/soc-slo-metrics/_doc":
+                captured["doc"] = body
+                return _FakeResponse(200, {})
+            return _fake_es_healthy_default(method, path, body)
+
+        with contextlib.ExitStack() as stack:
+            for p in _mock_all_metrics():
+                stack.enter_context(p)
+            stack.enter_context(mock.patch.object(slo_metrics, "es", side_effect=fake_es))
+            stack.enter_context(mock.patch.object(
+                slo_metrics, "_vanished_claims_detail",
+                return_value=(len(vanished_docs), vanished_docs)))
+            stack.enter_context(mock.patch.object(slo_metrics, "NTFY_TOPIC", ""))
+            _run_main_capturing_exit()
+        return captured.get("doc")
+
+    def test_persists_vanished_claim_docs_when_nonzero(self):
+        vanished = [{"index": "agent-checkpoints-home-smith", "id": "abc123.claim"}]
+        doc = self._run_and_capture_indexed_doc(vanished)
+        self.assertEqual(doc.get("vanished_claim_docs"), vanished)
+
+    def test_does_not_persist_vanished_claim_docs_key_when_empty(self):
+        # Every healthy run finding nothing vanished shouldn't carry a
+        # redundant empty array on its own doc.
+        doc = self._run_and_capture_indexed_doc([])
+        self.assertNotIn("vanished_claim_docs", doc)
+
+    def test_capture_failure_does_not_fail_the_run_or_lose_the_breach_count(self):
+        # Best-effort, matching claimed_snapshot/intel_indicator_actual_count's
+        # own pattern: a failure here costs only forensic detail, never this
+        # run's own otherwise-successful breach detection.
+        with contextlib.ExitStack() as stack:
+            for p in _mock_all_metrics(vanished_claims=1.0):
+                stack.enter_context(p)
+            stack.enter_context(mock.patch.object(
+                slo_metrics, "_vanished_claims_detail",
+                side_effect=slo_metrics.MetricUnavailable("mget down")))
+            stack.enter_context(mock.patch.object(slo_metrics, "NTFY_TOPIC", ""))
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 2)  # vanished_claims=1.0 still breaches
 
 
 class PrivilegeSelfCheckTests(unittest.TestCase):

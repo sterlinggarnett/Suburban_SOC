@@ -165,6 +165,41 @@ class MetricFunctionTests(unittest.TestCase):
                                return_value=_FakeResponse(200, {"count": 0})):
             self.assertEqual(slo_metrics.metric_audit_write_failures(), 0)
 
+    # --- #309: broker response tampering ------------------------------------
+    def test_broker_response_tampering_raises_on_es_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_broker_response_tampering()
+
+    def test_broker_response_tampering_returns_count_on_success(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 2})):
+            self.assertEqual(slo_metrics.metric_broker_response_tampering(), 2)
+
+    def test_broker_response_tampering_returns_zero_when_healthy(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 0})):
+            self.assertEqual(slo_metrics.metric_broker_response_tampering(), 0)
+
+    def test_broker_response_tampering_queries_both_action_names_and_unknown_outcome(self):
+        # Exact-match idiom for soc-audit-*'s dynamically-mapped string
+        # fields (no explicit index template exists for it, unlike
+        # agent-checkpoints-* — see the metric's own docstring): the bare
+        # field names are analyzed text, so the query must target the
+        # automatic `.keyword` sub-fields, not `event.action`/`event.outcome`
+        # directly.
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 0})) as mock_es:
+            slo_metrics.metric_broker_response_tampering()
+        query = mock_es.call_args[0][2]["query"]
+        filters = query["bool"]["filter"]
+        self.assertIn(
+            {"terms": {"event.action.keyword": ["broker_response_signature_invalid",
+                                                 "broker_response_request_id_mismatch"]}},
+            filters)
+        self.assertIn({"term": {"event.outcome.keyword": "unknown"}}, filters)
+        self.assertTrue(any("range" in f and "@timestamp" in f["range"] for f in filters))
+
     # --- #247: stuck approval claims -----------------------------------------
     # A stuck claim is exactly a `phase: "CLAIMED"` doc older than the window —
     # since #247, both resolution paths (checkpoints.resolve_claim() on
@@ -1284,7 +1319,8 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                        field_truncation_count=0, field_byte_clamp_count=0,
                        oversized_dns_answer_count=0, zeek_path_nomatch_count=0,
                        capture_loss_max_pct=0.0, intel_feed_stale_heartbeats=1.0,
-                       intel_indicator_count_drop_pct=0.0):
+                       intel_indicator_count_drop_pct=0.0,
+                       broker_response_tampering_count=0.0):
     # Module-level, not a TestCase method: shared verbatim by MainExitCodeTests
     # and PrivilegeSelfCheckMainIntegrationTests below. A TestCase-method
     # version can't be shared across sibling classes without either
@@ -1322,6 +1358,8 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                            return_value=intel_feed_stale_heartbeats),
         mock.patch.object(slo_metrics, "metric_intel_indicator_count_drop_pct",
                            return_value=intel_indicator_count_drop_pct),
+        mock.patch.object(slo_metrics, "metric_broker_response_tampering",
+                           return_value=broker_response_tampering_count),
         mock.patch.object(slo_metrics, "es", side_effect=_fake_es_healthy_default),
     ]
 
@@ -1443,6 +1481,34 @@ class MainExitCodeTests(unittest.TestCase):
             code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
         self.assertIn("audit_write_failures", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_broker_response_tampering_zero_does_not_breach(self):
+        # coverage pinned to the real env's SLO_COVERAGE_MIN, same
+        # pre-existing reason as test_audit_write_failures_below_threshold_
+        # does_not_breach above.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
+            for p in _mock_all_metrics(broker_response_tampering_count=0.0, coverage=105.0):
+                stack.enter_context(p)
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 0)
+
+    def test_broker_response_tampering_any_occurrence_breaches(self):
+        # Regression guard: metric_broker_response_tampering must actually be
+        # wired into main()'s metric_fns dict, not just defined — same bug
+        # shape #216/#247/#257/#288/#361 already guard other metrics against.
+        # Target is 0 (see TARGETS' own comment) — a SINGLE occurrence must
+        # already breach; this is the near-zero-false-positive signal #309
+        # exists to surface, not a tunable threshold.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in _mock_all_metrics(broker_response_tampering_count=1.0):
+                stack.enter_context(p)
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        self.assertIn("broker_response_tampering_count",
+                       ntfy_post.call_args.kwargs["data"].decode())
 
     def test_capture_loss_below_threshold_does_not_breach(self):
         # coverage pinned to the real env's SLO_COVERAGE_MIN, same
@@ -1850,6 +1916,16 @@ class SloMetricsReaderRoleGrantTests(unittest.TestCase):
                        "read grant metric_audit_write_failures() needs (#275 "
                        "regression: this bug produces no runtime error, only a "
                        "silently-wrong healthy reading)")
+
+    def test_role_file_grants_soc_audit(self):
+        # #309: metric_broker_response_tampering() queries soc-audit-* — same
+        # bug shape as the soc-agent-health-* regression above (a missing
+        # grant here 403s the real slo_metrics service account with no
+        # runtime error surfaced by mocked tests alone).
+        self.assertIn("soc-audit-*", self._granted_patterns(),
+                       "slo_metrics_reader.json is missing the soc-audit-* "
+                       "read grant metric_broker_response_tampering() needs (#309)")
+        self.assertIn("read", self._granted_privileges("soc-audit-*"))
 
     def test_role_file_grants_read_on_soc_slo_metrics(self):
         # #361 security-auditor finding: soc-slo-metrics was write-only

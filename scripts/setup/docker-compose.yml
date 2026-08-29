@@ -367,10 +367,21 @@ services:
           # audit records) across every tenant to a compromised slo_metrics
           # credential. Accepted for the same reason as #247 read-only, no
           # write/delete/gate-bypass capability gained.
+          # #309: soc-audit-* read added for metric_broker_response_tampering()
+          # — the "Watcher, or equivalent" detection content for
+          # broker_response_signature_invalid/broker_response_request_id_
+          # mismatch (agent.py write_audit() actions #277/#309 added), since a
+          # real Watcher isn't usable on this stack's Basic license (see
+          # metric_intel_feed_stale_heartbeats()'s own docstring/#358 for the
+          # live-confirmed 403). Same accepted-risk shape as the #247/#275
+          # grants above: read-only, no write/delete/gate-bypass capability
+          # gained, but a compromised slo_metrics credential could _search the
+          # full soc-audit-* audit trail (every tenant), not just the windowed
+          # count metric_broker_response_tampering() itself issues.
           # configs/elasticsearch/roles/slo_metrics_reader.json is authoritative
           # (re-applied by apply_roles.sh), keep this inline bootstrap copy in
           # sync.
-          put "/_security/role/slo_metrics_reader" "{\"indices\":[{\"names\":[\".alerts-security.alerts-*\",\"soar-actions-*\",\"logstash-security-*\"],\"privileges\":[\"read\",\"view_index_metadata\"]},{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-agent-health-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-slo-metrics\"],\"privileges\":[\"create_index\",\"create\",\"read\"]},{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"read\"]}],\"applications\":[{\"application\":\"kibana-.kibana\",\"privileges\":[\"feature_generalCases.read\"],\"resources\":[\"*\"]}]}";
+          put "/_security/role/slo_metrics_reader" "{\"indices\":[{\"names\":[\".alerts-security.alerts-*\",\"soar-actions-*\",\"logstash-security-*\"],\"privileges\":[\"read\",\"view_index_metadata\"]},{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-agent-health-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-audit-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-slo-metrics\"],\"privileges\":[\"create_index\",\"create\",\"read\"]},{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"read\"]}],\"applications\":[{\"application\":\"kibana-.kibana\",\"privileges\":[\"feature_generalCases.read\"],\"resources\":[\"*\"]}]}";
           put "/_security/user/slo_metrics" "{\"password\":\"$${SLO_METRICS_PASSWORD}\",\"roles\":[\"slo_metrics_reader\"],\"full_name\":\"SLO metrics (Suburban-SOC)\"}";
         fi;
         if [ x$${BROKER_AUDIT_PASSWORD} != x ]; then

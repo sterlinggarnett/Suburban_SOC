@@ -759,6 +759,33 @@ class TenantResolverTests(unittest.TestCase):
             with self.assertRaises(agent.IsolationOutcomeUnknown):
                 agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
 
+    def test_dispatch_signature_invalid_audit_detail_includes_request_id(self):
+        # #309: the audit record for a signature-invalid response must carry
+        # THIS call's own request_id — the join key a responder needs to
+        # correlate it against the broker's own queue row for the same call.
+        resp = self._fake_response(200, {"executed": True, "success_count": 1,
+                                          "unknown_count": 0, "message": "blocked"},
+                                   tamper_signature=True)
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent, "write_audit") as mock_audit, \
+             mock.patch.object(agent.requests, "post", return_value=resp) as mock_post:
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+        outbound_request_id = json.loads(mock_post.call_args.kwargs["data"])["request_id"]
+        mock_audit.assert_called_once()
+        self.assertEqual(mock_audit.call_args[0][0], "broker_response_signature_invalid")
+        self.assertIn(f"request_id={outbound_request_id}", mock_audit.call_args.kwargs["detail"])
+
+    def test_dispatch_post_disables_redirects(self):
+        # #309: BROKER_URL defaults to plain http, so an on-path attacker
+        # could otherwise 307/308 this SIGNED request to an arbitrary host.
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", side_effect=self._post_echoing_request_id(
+                 200, {"executed": True, "success_count": 1, "unknown_count": 0,
+                      "message": "blocked"})) as mock_post:
+            agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+        self.assertEqual(mock_post.call_args.kwargs["allow_redirects"], False)
+
     def test_dispatch_unknown_when_signed_with_wrong_secret(self):
         # A response signed with a DIFFERENT secret than the agent's own
         # HIVE_MIND_SECRET (e.g. a compromised/misconfigured broker, or an
@@ -823,6 +850,28 @@ class TenantResolverTests(unittest.TestCase):
              mock.patch.object(agent.requests, "post", return_value=resp):
             with self.assertRaises(agent.IsolationOutcomeUnknown):
                 agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_request_id_mismatch_audit_detail_includes_both_ids(self):
+        # #309: the audit record must carry BOTH this call's own request_id
+        # (the join key against the broker's queue row for the REAL dispatch
+        # this call made) and whatever the replayed response actually echoed
+        # — so a responder can tell which other call the captured response
+        # really answered.
+        mismatched_id = uuid.uuid4().hex
+        resp = self._fake_response(200, {"executed": True, "success_count": 1,
+                                          "unknown_count": 0, "message": "blocked",
+                                          "request_id": mismatched_id})
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent, "write_audit") as mock_audit, \
+             mock.patch.object(agent.requests, "post", return_value=resp) as mock_post:
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+        outbound_request_id = json.loads(mock_post.call_args.kwargs["data"])["request_id"]
+        mock_audit.assert_called_once()
+        self.assertEqual(mock_audit.call_args[0][0], "broker_response_request_id_mismatch")
+        detail = mock_audit.call_args.kwargs["detail"]
+        self.assertIn(f"request_id={outbound_request_id}", detail)
+        self.assertIn(mismatched_id, detail)
 
     def test_dispatch_unknown_on_genuinely_signed_response_missing_request_id(self):
         # #277 round-4: a correctly-signed 200 response that simply omits

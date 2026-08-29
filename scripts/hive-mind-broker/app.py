@@ -146,6 +146,36 @@ def _claimed_approver(payload: dict) -> str | None:
     return cleaned[:_CLAIMED_APPROVER_MAX]
 
 
+# #309: dispatch_block() previously read request_id with no type check, length
+# bound, or sanitization at all — unlike the adjacent _claimed_approver() above.
+# It's echoed into the SIGNED /webhook/dispatch response body (agent.py's
+# dispatch_block_via_broker() binds its replay check to this value, #277
+# round-3), into this process's own logs (_signed_json_response()), and now
+# into the approval queue (see dispatch_block()'s _append_action call below) —
+# every one of those is read by a human or a downstream parser at some point.
+_REQUEST_ID_MAX = 64
+
+
+def _safe_request_id(payload: dict) -> str | None:
+    """Return the caller's request_id, sanitised and bounded — or None if
+    absent/malformed.
+
+    Mirrors _claimed_approver()'s sanitisation (strip Unicode Cc/Cf control
+    characters, truncate) for the same reason: this value is read by a human
+    during an audit, and a bidi override or ANSI escape that renders
+    differently than it stores defeats that. Unlike approver, a non-string
+    request_id carries no adversarial-claim value worth preserving as-is
+    (there's no "identity" being asserted) — agent.py's own mismatch check
+    already treats None the same as any other value it didn't generate:
+    unsafe to trust, not a crash.
+    """
+    raw = payload.get("request_id")
+    if not isinstance(raw, str):
+        return None
+    cleaned = "".join(c for c in raw if unicodedata.category(c) not in ("Cc", "Cf"))
+    return cleaned[:_REQUEST_ID_MAX]
+
+
 def _with_claim(record: dict, claimed: str | None) -> dict:
     """Attach the caller's asserted approver to an audit row, if they sent one.
 
@@ -466,7 +496,9 @@ async def dispatch_block(request: Request):
     # same-IP-different-time replay of a captured earlier response). Falls
     # back to None if an older/different caller doesn't send one, which the
     # agent's mismatch check already treats as unsafe-to-trust, not a crash.
-    request_id = payload.get("request_id")
+    # #309: sanitised/bounded the same way _claimed_approver() sanitises
+    # `approver` — see _safe_request_id()'s own docstring.
+    request_id = _safe_request_id(payload)
     # #273: identity of record comes from the authenticated credential's
     # configured label; the body's "approver" is retained only as a claim
     # (computed below, past the early returns — neither writes an audit row).
@@ -495,6 +527,11 @@ async def dispatch_block(request: Request):
         "id": uuid.uuid4().hex[:12], "ts": time.time(), "status": "executed",
         "approver": approver, "tenant": tenant, "attacker_ip": attacker_ip,
         "result": f"{count}/{len(routers)} routers ({unknown_count} unknown)",
+        # #309: not a secret — already sent in cleartext over the (currently
+        # plain-HTTP) broker channel. The join key a responder investigating a
+        # signature/request_id-mismatch alert needs to correlate this queue
+        # row against the agent's own soc-audit-* record for the same call.
+        "request_id": request_id,
     }, _claimed_approver(payload)))
     logger.info("Dispatched block for %s on tenant '%s' (%d/%d routers, %d unknown) — approver=%s.",
                 attacker_ip, tenant, count, len(routers), unknown_count, approver)

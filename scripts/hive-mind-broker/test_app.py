@@ -275,6 +275,49 @@ def test_dispatch_no_routers_response_echoes_request_id(_no_real_ssh):
     assert r.json()["request_id"] == "abc123"
 
 
+# --- #309: request_id sanitized/bounded the same way _claimed_approver()
+# already sanitises `approver` — unlike approver, dispatch_block() previously
+# read request_id with NO type check, length bound, or sanitization at all,
+# despite echoing it into the SIGNED response body, logs, and (as of #309)
+# the approval queue. ---------------------------------------------------
+def test_safe_request_id_is_bounded():
+    long_id = "A" * 500
+    assert len(broker_app._safe_request_id({"request_id": long_id})) == broker_app._REQUEST_ID_MAX
+
+
+def test_safe_request_id_strips_control_and_bidi_characters():
+    dirty = {"request_id": "abc‮123\x1b[31m\ndef"}
+    assert broker_app._safe_request_id(dirty) == "abc123[31mdef"
+
+
+def test_safe_request_id_rejects_non_string_types():
+    # Unlike _claimed_approver(), a non-string request_id has no adversarial
+    # identity-claim value worth preserving — the agent's own mismatch check
+    # already treats None as unsafe-to-trust like any other wrong value.
+    assert broker_app._safe_request_id({"request_id": {"x": 1}}) is None
+    assert broker_app._safe_request_id({"request_id": ["a"]}) is None
+    assert broker_app._safe_request_id({"request_id": 7}) is None
+    assert broker_app._safe_request_id({"request_id": True}) is None
+    assert broker_app._safe_request_id({}) is None
+    assert broker_app._safe_request_id({"request_id": None}) is None
+
+
+def test_dispatch_response_request_id_is_bounded(_no_real_ssh):
+    long_id = "B" * 500
+    r = _post_dispatch({"attacker_ip": "9.9.9.9", "tenant_id": TENANT, "request_id": long_id})
+    assert len(r.json()["request_id"]) == broker_app._REQUEST_ID_MAX
+
+
+def test_dispatch_executed_queue_row_records_request_id(_no_real_ssh):
+    """#309: the executed queue row must carry request_id so a responder
+    investigating a tampering alert can correlate this row against the
+    agent's own soc-audit-* record for the SAME call."""
+    r = _post_dispatch({"attacker_ip": "9.9.9.9", "tenant_id": TENANT, "request_id": "corr-id-1"})
+    assert r.status_code == 200
+    row = [a for a in _queue_rows() if a.get("status") == "executed"][-1]
+    assert row["request_id"] == "corr-id-1"
+
+
 def test_dispatch_response_signature_is_wrong_against_a_different_secret(_no_real_ssh):
     # An attacker without the real HIVE_MIND_SECRET cannot produce a
     # signature that verifies against it — the actual security property

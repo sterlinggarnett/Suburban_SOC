@@ -73,6 +73,19 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
                                                   that the two metrics above wouldn't see
                                                   (they read the WRITER's belief, not the
                                                   index's actual contents)
+  Broker response tampering count  == 0        — soc-audit-* docs with event.action
+                                                  broker_response_signature_invalid or
+                                                  broker_response_request_id_mismatch
+                                                  and event.outcome:unknown (#309) — the
+                                                  "Watcher, or equivalent" detection
+                                                  content for #277's two new audit
+                                                  actions, on the same infrastructure
+                                                  intel_feed_stale_heartbeats already
+                                                  proved out (a real Watcher isn't usable
+                                                  on this stack's Basic license — #358).
+                                                  Near-zero-false-positive: it only fires
+                                                  when the containment channel is
+                                                  actively being tampered with.
 
 Pure stdlib (requests). Env (auto-loaded from scripts/setup/.env):
   ES_URL, ES_USER, ES_PASS/ELASTIC_PASSWORD, KIBANA_URL, NTFY_TOPIC.
@@ -159,6 +172,11 @@ TARGETS = {
     # count normally sits AT OR ABOVE a single heartbeat's indicator_count,
     # making a meaningful shortfall the real anomaly signal.
     "intel_indicator_count_drop_pct": float(os.environ.get("SLO_INTEL_DROP_MAX_PCT", "50")),
+    # #309: near-zero-false-positive — a nonzero count means the containment
+    # channel between the agent and the broker is actively being tampered
+    # with (forged/replayed response), not routine noise. Target is 0, same
+    # as the claim-integrity metrics above.
+    "broker_response_tampering_count": float(os.environ.get("SLO_BROKER_TAMPER_MAX", "0")),
 }
 # Comparator per metric: True = lower is better (value <= target).
 LOWER_BETTER = {
@@ -167,7 +185,7 @@ LOWER_BETTER = {
     "audit_write_failures": True, "stuck_approval_claims": True,
     "orphaned_claims": True, "vanished_claims": True, "capture_loss_max_pct": True,
     "intel_feed_stale_heartbeats": False, "intel_indicator_count_drop_pct": True,
-    "zeek_path_nomatch_count": True,
+    "zeek_path_nomatch_count": True, "broker_response_tampering_count": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
 # not a benign "n/a". A dead/unreachable pipeline produces no fresh docs, so
@@ -472,6 +490,54 @@ def metric_audit_write_failures():
     """
     win = {"range": {"@timestamp": {"gte": WINDOW}}}
     return _count("soc-agent-health-*", win)
+
+
+def metric_broker_response_tampering():
+    """Count of on-path-tampering indicators against the broker containment
+    channel in the window (#309, follow-up from #277's round-4 security-
+    auditor review).
+
+    agent.py's dispatch_block_via_broker() writes `event.outcome="unknown"`
+    audit rows to soc-audit-{tenant} under exactly two action names when it
+    cannot trust a /webhook/dispatch response: `broker_response_signature_
+    invalid` (HMAC verification failed — possible on-path tampering) and
+    `broker_response_request_id_mismatch` (a genuinely broker-signed response
+    that doesn't answer THIS call — possible replay of a captured earlier
+    one). Nothing else in this pipeline ever writes either action name, so a
+    plain windowed count is exact — same shape as metric_audit_write_
+    failures() above, just filtered to these two action values instead of
+    covering the whole index.
+
+    This is the "Watcher, or equivalent" detection content #309 asks for:
+    Elastic Watcher itself isn't usable on this stack (Basic license — every
+    Watcher API call 403s, live-confirmed for #358's own retired Watcher, see
+    metric_intel_feed_stale_heartbeats()'s docstring) — this metric reuses
+    the same already-proven-out replacement (a scheduled query + ntfy alert +
+    soc-slo-metrics history) rather than reviving that dead end.
+
+    Target is 0: both outcomes only fire when the agent could NOT confirm a
+    dispatch's authenticity, which #277's own threat model treats as active
+    tampering, not a routine/expected condition — see agent.py's own
+    dispatch_block_via_broker() docstring for why every other non-200/
+    unverified case there is a CONFIRMED (not merely suspected) non-dispatch
+    or a genuinely ambiguous outcome, neither of which uses these two action
+    names.
+    """
+    # soc-audit-* has no explicit index template (unlike agent-checkpoints-*,
+    # which maps `phase` as `keyword` — see that template's own mappings) —
+    # write_audit()'s dotted `event.action`/`event.outcome` keys land under
+    # Elasticsearch's default dynamic mapping (`text` + an automatic
+    # `.keyword` sub-field, `ignore_above:256`). Querying the bare field
+    # names would term-match against the ANALYZED text, not an exact value —
+    # `.keyword` is the safe, no-template-change idiom for an exact match here.
+    win = {"range": {"@timestamp": {"gte": WINDOW}}}
+    query = {"bool": {"filter": [
+        win,
+        {"terms": {"event.action.keyword": ["broker_response_signature_invalid",
+                                             "broker_response_request_id_mismatch"]}},
+        {"term": {"event.outcome.keyword": "unknown"}},
+    ]}}
+    return _count("soc-audit-*", query)
 
 
 def metric_stuck_approval_claims():
@@ -1458,6 +1524,7 @@ def main():
         "ingest_lag_seconds": metric_ingest_lag_seconds,
         "parse_error_pct": metric_parse_error_pct,
         "audit_write_failures": metric_audit_write_failures,
+        "broker_response_tampering_count": metric_broker_response_tampering,
         "stuck_approval_claims": metric_stuck_approval_claims,
         "orphaned_claims": metric_orphaned_claims,
         "vanished_claims": metric_vanished_claims,

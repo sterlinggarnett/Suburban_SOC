@@ -401,6 +401,34 @@ def is_valid_ip(value: str) -> bool:
         return False
 
 
+def _is_private_ip(value: str) -> bool:
+    """True for a private/link-local/loopback/reserved address — OR anything
+    that doesn't even parse as an IP at all (#312).
+
+    Used by the autonomous-isolation gate to tell "confirmed external
+    target" (safe to act on IP alone) from "internal, or we don't actually
+    know" — fails CLOSED toward private/unknown on a ValueError, since an
+    unparseable target_ip must never be treated as "confirmed external" and
+    used to justify autonomous action against it.
+
+    Known residual nuance, not a bug relative to #312's chosen policy:
+    CGNAT space (100.64.0.0/10, RFC 6598) evaluates `is_private=False` here
+    (Python's ipaddress module classifies it as "not private" even though
+    it's `is_global=False` too — shared carrier-NAT space, not a normal
+    public address). A target_ip in that range reads as "confirmed
+    external" and becomes autonomously blockable, even though many
+    customers can sit behind the SAME CGNAT address — a materially
+    broader/shared blast radius than blocking one dedicated public IP.
+    Flagged for awareness during #312's security review; the chosen
+    policy's own criterion is exactly `not _is_private_ip(...)`, so this
+    isn't a deviation from it, just a sharper edge on it worth knowing about.
+    """
+    try:
+        return ipaddress.ip_address(value).is_private
+    except ValueError:
+        return True
+
+
 # --- WS0.3: per-tenant response & notification resolution --------------------
 _TENANT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,38}$")
 
@@ -1677,30 +1705,41 @@ class Agent:
             return "NO_ACTION_PROTECTED_ASSET", str(excluded), True, ""
 
         # Autonomous
-        # #286 security-auditor HIGH: `ctx.target_mac` gates autonomous
-        # (zero-human-involvement) execution here as a deliberate,
-        # pre-existing safety requirement — device-level attribution before
-        # letting the agent act alone, not just a spoofable/DHCP-rotatable
-        # IP (_execute_isolation's own docstring: the broker only actually
+        # #286 security-auditor HIGH: `ctx.target_mac` originally gated
+        # autonomous (zero-human-involvement) execution here as a deliberate
+        # safety requirement — device-level attribution before letting the
+        # agent act alone, not just a spoofable/DHCP-rotatable IP
+        # (_execute_isolation's own docstring: the broker only actually
         # NEEDS a valid IP to dispatch a block; MAC is carried for the audit
         # trail). Before #286, source.mac/target_mac was ALWAYS empty (the
         # bug #286 fixes), so this gate was — accidentally — "never auto-
-        # execute" in practice, regardless of AUTONOMOUS_ISOLATION. #286
-        # makes target_mac populate for SOME real matches (only outbound-
-        # direction ones, and only when its own uid-keyed lookup wins a
-        # race against conn.log indexing — see configs/logstash.conf's
-        # KNOWN LIMITATION comment) — so this gate's behavior is now
-        # genuinely non-deterministic per-alert in a way it never was
-        # before, for anyone running with AUTONOMOUS_ISOLATION=true
-        # (default false). This is intentionally NOT changed here: whether
-        # the gate should stay MAC-based, move to is_valid_ip(target_ip)
-        # (weaker — IP alone is spoofable), or an explicit
-        # enrichment-complete signal is a real policy tradeoff for the
-        # security team to decide deliberately, not a plumbing fix to make
-        # silently. The "Draft" fallback below already records WHY
-        # autonomous execution did not fire (recommended_action reflects
-        # target_mac's presence) for the human reviewing it.
-        if AUTONOMOUS_ISOLATION and ctx.severity == "critical" and ctx.target_mac:
+        # execute" in practice, regardless of AUTONOMOUS_ISOLATION.
+        #
+        # #286's fix only populates target_mac for OUTBOUND intel hits
+        # (Conn::IN_RESP — an internal device calling OUT to a bad IP; see
+        # configs/logstash.conf's KNOWN LIMITATION comment on its uid-keyed,
+        # race-dependent correlation) and NEVER for INBOUND hits (an
+        # external attacker connecting IN) — MAC attribution is only
+        # possible for a device on your own network in the first place. A
+        # MAC-only gate therefore inverted the intended risk posture: the
+        # HIGHER-blast-radius action (autonomously cutting off one of YOUR
+        # OWN devices) could fire, while the LOWER-blast-radius, trivially-
+        # reversible one (nftables-blocking an external attacker IP) could
+        # never fire autonomously at all.
+        #
+        # #312 (deliberate policy decision, not a silent plumbing fix):
+        # allow autonomy on IP alone when the target is CONFIRMED EXTERNAL
+        # (`not _is_private_ip(ctx.target_ip)`) — the automatable case
+        # becomes the reversible external-IP block, while autonomously
+        # touching an INTERNAL host still requires device-level MAC
+        # attribution, same bar as before. `_is_private_ip()` fails closed
+        # toward "private" on anything unparseable, so a missing/malformed
+        # target_ip can never masquerade as "confirmed external." The
+        # "Draft" fallback below already records WHY autonomous execution
+        # did not fire (recommended_action reflects both target_mac's
+        # presence and this new external-IP path) for the human reviewing it.
+        if AUTONOMOUS_ISOLATION and ctx.severity == "critical" and (
+                ctx.target_mac or not _is_private_ip(ctx.target_ip)):
             # #247: the autonomous path has no claim/retry concept to protect (it
             # dispatches at most once, inline, no separate approval step) — an
             # ambiguous outcome is handled the same as a confirmed failure here,
@@ -1723,7 +1762,13 @@ class Agent:
                 priority=5, tags="skull,lock,robot" if ok else "warning,lock,robot", tenant=ctx.tenant_id
             )
             send_discord_alert(device_ip=notify_ip, device_mac=notify_mac, ai_summary=ai_summary, tenant=ctx.tenant_id)
-            log_soar_action("quarantine_mac" if ok else "analyst_review", ctx.target_ip, ctx.target_mac, ai_summary, ctx.severity, tenant=ctx.tenant_id, latency_seconds=time.time() - _t0)
+            # #312: this action_type is no longer always MAC-based (a
+            # confirmed-external-IP-only autonomous block never touches a
+            # MAC at all) — "quarantine" alone stays accurate either way.
+            # No dashboard/config hardcodes the old "quarantine_mac" string
+            # as a filter (checked configs/server/executive_dashboard.ndjson),
+            # so this is a safe rename, not a breaking one.
+            log_soar_action("quarantine" if ok else "analyst_review", ctx.target_ip, ctx.target_mac, ai_summary, ctx.severity, tenant=ctx.tenant_id, latency_seconds=time.time() - _t0)
             add_case_comment(ctx.tenant_id, case_id, f"Autonomous isolation {'SUCCEEDED' if ok else 'FAILED'} for `{ctx.target_ip}` / `{ctx.target_mac}` — {detail}")
             if ok:
                 close_case(ctx.tenant_id, case_id, "true_positive_contained")
@@ -1740,7 +1785,13 @@ class Agent:
             "target_ip": ctx.target_ip,
             "target_mac": ctx.target_mac,
             "ai_summary": ai_summary,
-            "recommended_action": "isolate (MAC)" if ctx.target_mac else "review (no valid MAC)",
+            # #312: matches the autonomous gate's own condition above — a
+            # confirmed-external target_ip justifies the same recommendation
+            # as having a MAC, even when this alert didn't reach the
+            # autonomous path (flag off, or severity not critical).
+            "recommended_action": ("isolate (MAC or confirmed-external IP)"
+                                    if (ctx.target_mac or not _is_private_ip(ctx.target_ip))
+                                    else "review (no valid MAC or external IP)"),
             "case_id": case_id,
         }
         _append_pending_action(action)

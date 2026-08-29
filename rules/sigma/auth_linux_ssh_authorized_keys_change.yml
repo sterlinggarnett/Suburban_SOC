@@ -19,22 +19,14 @@ description: |
     repo does not currently collect. Treat this as a narrow, best-effort
     signal, not authorized_keys change detection in general.
     Uses bare Sigma field equality (no `contains`/`endswith` modifier) on
-    `message` deliberately: `message` is mapped `text` in this stack's
-    Elasticsearch index template (configs/elasticsearch/logstash-security-
-    template.json), with no keyword sub-field and no normalizer — the first
-    field this rule corpus has ever selected on with that mapping shape.
-    Confirmed via a real `sigma convert` probe that a WILDCARD-producing
-    modifier like `contains` compiles to an unanalyzed literal-substring
-    match against the field's *stored terms*, which for a `text` field are
-    already tokenized (split on whitespace/most punctuation) — a wildcard
-    containing a space could never match anything, and even a single-word
-    wildcard's case must exactly match the analyzer's lowercased output
-    with no guarantee it does. Bare equality (no modifier) compiles to a
-    plain query_string term instead, which real query_string clauses (as
-    opposed to wildcard/regexp) DO run through the field's analyzer at
-    query time — case-insensitive, exact-token, the same way `match`
-    queries behave. `authorized_keys` survives the standard analyzer as one
-    token (underscores aren't split), so bare equality on it is safe.
+    `message` deliberately — see tests/detections/sigma_eval.py's
+    _TEXT_MAPPED_FIELDS comment (#299) for why that's required in general
+    against this stack's text-mapped message field. Specific to THIS
+    rule's own selector value: `authorized_keys` survives the standard
+    analyzer as one token (underscores aren't split), confirmed via a
+    real `sigma convert` probe — the general rule doesn't by itself say
+    a given value stays a single token, only that IF it does, bare
+    equality matches it safely.
 references:
     - https://attack.mitre.org/techniques/T1098/004/
 author: Suburban-SOC

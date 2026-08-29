@@ -14,11 +14,9 @@ description: |
     the bulk of real-world SSH brute-force/credential-stuffing traffic
     (attackers guessing usernames, not just passwords for known accounts).
     Uses two bare-equality (no modifier) selectors on `message`, ANDed —
-    same reasoning as auth_linux_ssh_authorized_keys_change.yml for why
-    `contains`/wildcard matching is unsafe against this stack's `text`-
-    mapped `message` field, and why two single-token bare-equality
-    selectors (rather than one two-word value) is used instead of relying
-    on unquoted multi-token query_string behavior.
+    see tests/detections/sigma_eval.py's _TEXT_MAPPED_FIELDS comment
+    (#299) for why bare equality is required here instead of one
+    unquoted multi-token value.
 references:
     - https://attack.mitre.org/techniques/T1110/001/
 author: Suburban-SOC

@@ -1,6 +1,10 @@
 title: Direct Root Login via SSH
 id: 3bc9274a-495f-4aa1-887b-0e2b95b0ae00
 status: experimental
+# #299 review note: named as one of the affected "auth_linux_*" siblings,
+# but deliberately left unchanged — this rule selects on keyword-mapped
+# ECS fields (user.name, event.outcome, event.module), not `message`, so
+# it never carried the ES-analyzer/query_string rationale #299 is about.
 description: |
     Detects a successful SSH login directly as root — most security
     baselines disable direct root SSH access (`PermitRootLogin no`) and

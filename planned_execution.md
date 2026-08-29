@@ -27,7 +27,7 @@ matching the M12/M13/M14 pattern.
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
-| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ⏳ 5/6 closed — 1 open (#312) | Autonomous-isolation MAC-gate policy decision |
+| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
@@ -415,6 +415,37 @@ unattended multi-issue runs.
   instead of the clean text). Two full review rounds plus a dedicated
   round-3 verification pass (which empirically confirmed the new tests
   fail against the round-1 code) — all clean by the final pass.
+
+- [x] **#312 (policy decision) — COMPLETE, MERGED (PR #475)** —
+  `agent.py`'s autonomous-isolation gate (`AUTONOMOUS_ISOLATION=true`,
+  default `false`) required a resolved device MAC before letting the
+  agent isolate a host with zero human approval. Since #286, `target_mac`
+  only ever populates for OUTBOUND intel hits (an internal device
+  calling out to a bad IP) — never for INBOUND hits (an external
+  attacker connecting in), since MAC attribution is only possible for a
+  device on your own network. This inverted the intended risk posture:
+  the higher-blast-radius action (autonomously cutting off one of your
+  own devices) could fire, while the lower-blast-radius, trivially-
+  reversible one (blocking an external attacker IP) never could. Unlike
+  every other M20 issue, this one is a genuine policy tradeoff among 3
+  named options (not a technical bug) — asked of the repo owner directly
+  via a structured question rather than decided unilaterally, per this
+  session's standing instruction to ask before deciding on policy
+  questions. Chosen: allow autonomy on IP alone for a CONFIRMED-EXTERNAL
+  target (`ctx.target_mac or not _is_private_ip(ctx.target_ip)`) —
+  autonomous action against an internal host still always requires the
+  MAC. New `_is_private_ip()` helper fails closed toward "private" on
+  any unparseable input. Also renamed a `log_soar_action()` action_type
+  literal (`quarantine_mac` → `quarantine`, no longer always MAC-based;
+  verified not hardcoded as a filter anywhere in `configs/`) and added
+  `AUTONOMOUS_ISOLATION` documentation to `.env.example` (previously
+  undocumented there). Parallel security/code reviews both came back
+  clean; security review flagged one residual nuance for awareness (not
+  a deviation from the chosen policy): CGNAT space (100.64.0.0/10) reads
+  as "not private" under Python's `ipaddress` module despite being
+  shared carrier-NAT space with a broader blast radius than a dedicated
+  public IP — documented in `_is_private_ip()`'s own docstring. **This
+  closes M20 — 6/6 issues complete.**
 
 **M18 progress:**
 

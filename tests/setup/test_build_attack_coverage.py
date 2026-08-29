@@ -684,8 +684,7 @@ class TechniqueTacticsGroundTruthTests(unittest.TestCase):
             bac._technique_tactic_pairs(["T1027", "T1005"], ["Execution", "Collection"], "r.yml")
 
     def test_esentutl_rule_no_longer_tags_credential_access(self):
-        rule_text = (Path("rules/sigma/proc_creation_win_esentutl_locked_file_copy.yml")
-                     .read_text(encoding="utf-8"))
+        rule_text = (bac.SIGMA_DIR / "proc_creation_win_esentutl_locked_file_copy.yml").read_text(encoding="utf-8")
         self.assertNotIn("attack.credential_access", rule_text)
         rows = _harvest_with_rule(rule_text)
         pairs = {(r["technique"], r["tactic"]) for r in rows}

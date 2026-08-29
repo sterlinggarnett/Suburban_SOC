@@ -56,18 +56,21 @@ BACKLOG_TACTICS = ["Collection", "Exfiltration", "Command and Control", "Lateral
 # the same thing as the specific attack.<technique> tag's OFFICIAL MITRE
 # ATT&CK tactic membership. `_technique_tactic_pairs()`'s "broadcast a
 # singleton across every other tag" cases assumed every resulting pair was
-# real; an adversarial review found 6 real corpus rules where it wasn't
-# (e.g. proc_creation_win_esentutl_locked_file_copy.yml tags both
-# attack.collection and attack.credential_access alongside its single
+# real; an adversarial review found 8 real corpus rules where it wasn't —
+# 6 carried an extra attack.<tactic> tag that didn't apply to their single
+# technique (e.g. proc_creation_win_esentutl_locked_file_copy.yml tagged
+# both attack.collection and attack.credential_access alongside its single
 # attack.t1005 tag, but T1005 "Data from Local System" is a Collection-only
-# technique per MITRE ATT&CK — it has no Credential Access tactic entry).
-# This table is real ATT&CK ground truth (verified against
+# technique per MITRE ATT&CK — it has no Credential Access tactic entry),
+# and 2 were missing an attack.<tactic> tag their second technique needed
+# (see `_technique_tactic_pairs()` for that shape). This table is real
+# ATT&CK ground truth (verified against
 # https://attack.mitre.org/techniques/<ID>/, ID slashed for sub-techniques,
 # e.g. T1078.003 -> techniques/T1078/003/) for exactly the technique IDs
 # that `harvest()`'s broadcast cases need to validate against today — not
 # an attempt at a complete 78-technique corpus mirror, which would be
 # unverified guessing for every technique not actually exercising the
-# ambiguity this table exists to close. See `_technique_tactic_pairs()`.
+# ambiguity this table exists to close.
 TECHNIQUE_TACTICS = {
     "T1005": ("Collection",),
     "T1021": ("Lateral Movement",),
@@ -231,25 +234,19 @@ def _technique_tactic_pairs(techs, tacs, rule_name):
 
     #378 round-3 security review finding: a broadcast is only "unambiguous"
     in the sense that every OTHER tag gets paired with the singleton — it
-    is not automatically ATT&CK-real. A rule's attack.<tactic> tags record
-    the tactics the rule's author considers the detection relevant to, not
-    necessarily the specific technique's official MITRE tactic membership;
-    the review found 6 real corpus rules where a broadcast pair was flatly
-    wrong (e.g. T1005 "Data from Local System" is Collection-only, but
-    proc_creation_win_esentutl_locked_file_copy.yml also tags
-    attack.credential_access, which a blind broadcast would have paired
-    with T1005 as a false Navigator cell). So every broadcast pair is now
-    checked against TECHNIQUE_TACTICS before being emitted — a technique
-    missing from that table raises rather than broadcasting unverified
-    (closes the loophole for a future rule, the same way the unequal-length
-    case already refuses to guess); the positional-zip case doesn't require
-    table coverage (dropping/guessing there was never this function's
-    assumption to begin with — it already trusts the corpus's own listed
-    order), but still gets checked opportunistically when the table does
-    cover the technique.
+    is not automatically ATT&CK-real (see TECHNIQUE_TACTICS' own comment
+    for the real corpus example that exposed this). So every broadcast pair
+    is now checked against TECHNIQUE_TACTICS before being emitted — a
+    technique missing from that table raises rather than broadcasting
+    unverified (closes the loophole for a future rule, the same way the
+    unequal-length case already refuses to guess); the positional-zip case
+    doesn't require table coverage (dropping/guessing there was never this
+    function's assumption to begin with — it already trusts the corpus's
+    own listed order), but still gets checked opportunistically when the
+    table does cover the technique.
     """
     if len(techs) == 1 and len(tacs) == 1:
-        # The common case (~85 of 108 rules): nothing to broadcast, no
+        # The common case (~89 of 108 rules): nothing to broadcast, no
         # ambiguity to verify — this IS the pair the rule's author wrote.
         return [(techs[0], tacs[0])]
     if len(techs) == 1:

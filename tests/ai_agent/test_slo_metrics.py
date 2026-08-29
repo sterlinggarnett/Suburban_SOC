@@ -1212,17 +1212,76 @@ class EsKbWrapperTests(unittest.TestCase):
         self.assertEqual(r.json(), {"total": 5})
 
 
+def _run_main_capturing_exit():
+    try:
+        slo_metrics.main()
+    except SystemExit as e:
+        return e.code
+    return None
+
+
+def _fake_es_healthy_default(method, path, body=None):
+    # #305: the privilege self-check runs unconditionally in main(), so
+    # every scenario using this helper needs it to read as healthy by
+    # default unless a test overrides `es` itself to exercise the
+    # precheck's own failure path (see PrivilegeSelfCheckTests below).
+    if path == "/_security/user/_has_privileges":
+        return _FakeResponse(200, {"has_all_requested": True})
+    return _FakeResponse(200, {})
+
+
+def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
+                       ingest_lag=10.0, parse_err=0.0, audit_write_failures=0.0,
+                       orphaned_claims=0.0, vanished_claims=0.0, raw_alert_volume=None,
+                       field_truncation_count=0, field_byte_clamp_count=0,
+                       oversized_dns_answer_count=0, zeek_path_nomatch_count=0,
+                       capture_loss_max_pct=0.0, intel_feed_stale_heartbeats=1.0,
+                       intel_indicator_count_drop_pct=0.0):
+    # Module-level, not a TestCase method: shared verbatim by MainExitCodeTests
+    # and PrivilegeSelfCheckMainIntegrationTests below. A TestCase-method
+    # version can't be shared across sibling classes without either
+    # duplicating every test method via subclassing, or re-binding a
+    # @staticmethod-wrapped function as a class attribute (both tried and
+    # rejected in an earlier draft of this file — see git history).
+    if raw_alert_volume is None:
+        raw_alert_volume = {"zeek_notices": 0, "rule_hits": 0, "value": 0}
+    return [
+        mock.patch.object(slo_metrics, "metric_mttd", return_value=mttd),
+        mock.patch.object(slo_metrics, "metric_mttr", return_value=mttr),
+        mock.patch.object(slo_metrics, "metric_coverage", return_value=coverage),
+        mock.patch.object(slo_metrics, "metric_false_positive_pct", return_value=fp_pct),
+        mock.patch.object(slo_metrics, "metric_ingest_lag_seconds", return_value=ingest_lag),
+        mock.patch.object(slo_metrics, "metric_parse_error_pct", return_value=parse_err),
+        mock.patch.object(slo_metrics, "metric_audit_write_failures",
+                           return_value=audit_write_failures),
+        mock.patch.object(slo_metrics, "metric_orphaned_claims",
+                           return_value=orphaned_claims),
+        mock.patch.object(slo_metrics, "metric_vanished_claims",
+                           return_value=vanished_claims),
+        mock.patch.object(slo_metrics, "metric_raw_alert_volume",
+                           return_value=raw_alert_volume),
+        mock.patch.object(slo_metrics, "metric_field_truncation_count",
+                           return_value=field_truncation_count),
+        mock.patch.object(slo_metrics, "metric_field_byte_clamp_count",
+                           return_value=field_byte_clamp_count),
+        mock.patch.object(slo_metrics, "metric_oversized_dns_answer_count",
+                           return_value=oversized_dns_answer_count),
+        mock.patch.object(slo_metrics, "metric_zeek_path_nomatch_count",
+                           return_value=zeek_path_nomatch_count),
+        mock.patch.object(slo_metrics, "metric_capture_loss_percent",
+                           return_value=capture_loss_max_pct),
+        mock.patch.object(slo_metrics, "metric_intel_feed_stale_heartbeats",
+                           return_value=intel_feed_stale_heartbeats),
+        mock.patch.object(slo_metrics, "metric_intel_indicator_count_drop_pct",
+                           return_value=intel_indicator_count_drop_pct),
+        mock.patch.object(slo_metrics, "es", side_effect=_fake_es_healthy_default),
+    ]
+
+
 class MainExitCodeTests(unittest.TestCase):
     """End-to-end: main() must exit 3 (not the routine breach code 2) when a
     metric could not be measured, and must still behave exactly as before for
     a genuinely healthy, quiet system."""
-
-    def _run_main_capturing_exit(self):
-        try:
-            slo_metrics.main()
-        except SystemExit as e:
-            return e.code
-        return None
 
     def test_total_es_outage_exits_3_not_2(self):
         with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")), \
@@ -1230,7 +1289,7 @@ class MainExitCodeTests(unittest.TestCase):
              mock.patch.object(slo_metrics, "metric_coverage",
                                side_effect=slo_metrics.MetricUnavailable("no file")), \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 3)
 
     def test_healthy_quiet_system_exits_0(self):
@@ -1244,55 +1303,16 @@ class MainExitCodeTests(unittest.TestCase):
                 return _FakeResponse(200, {"hits": {"hits": [{"_source": {"@timestamp": now_iso}}]}})
             if path == "/threat-intel-meta/_count":
                 return _FakeResponse(200, {"count": 1})
+            if path == "/_security/user/_has_privileges":
+                return _FakeResponse(200, {"has_all_requested": True})
             return _FakeResponse(200, {"hits": {"hits": []}, "aggregations": {"avg_lat": {}}})
 
         with mock.patch.object(slo_metrics, "es", side_effect=fake_es), \
              mock.patch.object(slo_metrics, "kb", return_value=_FakeResponse(200, {"total": 0})), \
              mock.patch.object(slo_metrics, "metric_coverage", return_value=105.0), \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 0)
-
-    def _mock_all_metrics(self, mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
-                           ingest_lag=10.0, parse_err=0.0, audit_write_failures=0.0,
-                           orphaned_claims=0.0, vanished_claims=0.0, raw_alert_volume=None,
-                           field_truncation_count=0, field_byte_clamp_count=0,
-                           oversized_dns_answer_count=0, zeek_path_nomatch_count=0,
-                           capture_loss_max_pct=0.0, intel_feed_stale_heartbeats=1.0,
-                           intel_indicator_count_drop_pct=0.0):
-        if raw_alert_volume is None:
-            raw_alert_volume = {"zeek_notices": 0, "rule_hits": 0, "value": 0}
-        return [
-            mock.patch.object(slo_metrics, "metric_mttd", return_value=mttd),
-            mock.patch.object(slo_metrics, "metric_mttr", return_value=mttr),
-            mock.patch.object(slo_metrics, "metric_coverage", return_value=coverage),
-            mock.patch.object(slo_metrics, "metric_false_positive_pct", return_value=fp_pct),
-            mock.patch.object(slo_metrics, "metric_ingest_lag_seconds", return_value=ingest_lag),
-            mock.patch.object(slo_metrics, "metric_parse_error_pct", return_value=parse_err),
-            mock.patch.object(slo_metrics, "metric_audit_write_failures",
-                               return_value=audit_write_failures),
-            mock.patch.object(slo_metrics, "metric_orphaned_claims",
-                               return_value=orphaned_claims),
-            mock.patch.object(slo_metrics, "metric_vanished_claims",
-                               return_value=vanished_claims),
-            mock.patch.object(slo_metrics, "metric_raw_alert_volume",
-                               return_value=raw_alert_volume),
-            mock.patch.object(slo_metrics, "metric_field_truncation_count",
-                               return_value=field_truncation_count),
-            mock.patch.object(slo_metrics, "metric_field_byte_clamp_count",
-                               return_value=field_byte_clamp_count),
-            mock.patch.object(slo_metrics, "metric_oversized_dns_answer_count",
-                               return_value=oversized_dns_answer_count),
-            mock.patch.object(slo_metrics, "metric_zeek_path_nomatch_count",
-                               return_value=zeek_path_nomatch_count),
-            mock.patch.object(slo_metrics, "metric_capture_loss_percent",
-                               return_value=capture_loss_max_pct),
-            mock.patch.object(slo_metrics, "metric_intel_feed_stale_heartbeats",
-                               return_value=intel_feed_stale_heartbeats),
-            mock.patch.object(slo_metrics, "metric_intel_indicator_count_drop_pct",
-                               return_value=intel_indicator_count_drop_pct),
-            mock.patch.object(slo_metrics, "es", return_value=_FakeResponse(200, {})),
-        ]
 
     def test_breach_detected_exits_2_and_sends_ntfy(self):
         # mttd_minutes=999 blows through its <=30min target -> a real breach,
@@ -1300,9 +1320,9 @@ class MainExitCodeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
-            for p in self._mock_all_metrics(mttd=999.0):
+            for p in _mock_all_metrics(mttd=999.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("mttd_minutes", ntfy_post.call_args.kwargs["data"].decode())
@@ -1315,9 +1335,9 @@ class MainExitCodeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
-            for p in self._mock_all_metrics(orphaned_claims=1.0):
+            for p in _mock_all_metrics(orphaned_claims=1.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("orphaned_claims", ntfy_post.call_args.kwargs["data"].decode())
@@ -1329,9 +1349,9 @@ class MainExitCodeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
-            for p in self._mock_all_metrics(vanished_claims=1.0):
+            for p in _mock_all_metrics(vanished_claims=1.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("vanished_claims", ntfy_post.call_args.kwargs["data"].decode())
@@ -1345,9 +1365,9 @@ class MainExitCodeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
-            for p in self._mock_all_metrics(zeek_path_nomatch_count=1):
+            for p in _mock_all_metrics(zeek_path_nomatch_count=1):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("zeek_path_nomatch_count", ntfy_post.call_args.kwargs["data"].decode())
@@ -1361,18 +1381,18 @@ class MainExitCodeTests(unittest.TestCase):
         # field_byte_clamp_count NO_TARGET tests already work around).
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
-            for p in self._mock_all_metrics(audit_write_failures=2.0, coverage=105.0):
+            for p in _mock_all_metrics(audit_write_failures=2.0, coverage=105.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 0)
 
     def test_audit_write_failures_at_threshold_breaches(self):
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
-            for p in self._mock_all_metrics(audit_write_failures=3.0):
+            for p in _mock_all_metrics(audit_write_failures=3.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
         self.assertIn("audit_write_failures", ntfy_post.call_args.kwargs["data"].decode())
 
@@ -1382,9 +1402,9 @@ class MainExitCodeTests(unittest.TestCase):
         # does_not_breach above.
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
-            for p in self._mock_all_metrics(capture_loss_max_pct=4.9, coverage=105.0):
+            for p in _mock_all_metrics(capture_loss_max_pct=4.9, coverage=105.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 0)
 
     def test_capture_loss_over_threshold_breaches(self):
@@ -1395,9 +1415,9 @@ class MainExitCodeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
-            for p in self._mock_all_metrics(capture_loss_max_pct=12.0):
+            for p in _mock_all_metrics(capture_loss_max_pct=12.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("capture_loss_max_pct", ntfy_post.call_args.kwargs["data"].decode())
@@ -1410,9 +1430,9 @@ class MainExitCodeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
-            for p in self._mock_all_metrics(intel_feed_stale_heartbeats=0.0):
+            for p in _mock_all_metrics(intel_feed_stale_heartbeats=0.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("intel_feed_stale_heartbeats", ntfy_post.call_args.kwargs["data"].decode())
@@ -1421,9 +1441,9 @@ class MainExitCodeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
-            for p in self._mock_all_metrics(intel_indicator_count_drop_pct=75.0):
+            for p in _mock_all_metrics(intel_indicator_count_drop_pct=75.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("intel_indicator_count_drop_pct", ntfy_post.call_args.kwargs["data"].decode())
@@ -1436,12 +1456,12 @@ class MainExitCodeTests(unittest.TestCase):
         # does_not_breach above.
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
-            for p in self._mock_all_metrics(
+            for p in _mock_all_metrics(
                     raw_alert_volume={"zeek_notices": 500000, "rule_hits": 499999,
                                        "value": 999999},
                     coverage=105.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 0)
 
     def test_raw_alert_volume_unmeasurable_is_never_silent(self):
@@ -1452,12 +1472,12 @@ class MainExitCodeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
-            for p in self._mock_all_metrics():
+            for p in _mock_all_metrics():
                 stack.enter_context(p)
             stack.enter_context(mock.patch.object(
                 slo_metrics, "metric_raw_alert_volume",
                 side_effect=slo_metrics.MetricUnavailable("es down")))
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 3)
         ntfy_post.assert_called_once()
         self.assertIn("raw_alert_volume", ntfy_post.call_args.kwargs["data"].decode())
@@ -1473,9 +1493,9 @@ class MainExitCodeTests(unittest.TestCase):
         # test_raw_alert_volume_never_breaches_regardless_of_value has).
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
-            for p in self._mock_all_metrics(field_truncation_count=500, coverage=105.0):
+            for p in _mock_all_metrics(field_truncation_count=500, coverage=105.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 0)
 
     def test_field_truncation_count_unmeasurable_is_never_silent(self):
@@ -1486,12 +1506,12 @@ class MainExitCodeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
-            for p in self._mock_all_metrics():
+            for p in _mock_all_metrics():
                 stack.enter_context(p)
             stack.enter_context(mock.patch.object(
                 slo_metrics, "metric_field_truncation_count",
                 side_effect=slo_metrics.MetricUnavailable("es down")))
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 3)
         ntfy_post.assert_called_once()
         self.assertIn("field_truncation_count", ntfy_post.call_args.kwargs["data"].decode())
@@ -1504,9 +1524,9 @@ class MainExitCodeTests(unittest.TestCase):
         # the same pre-existing reason as the sibling test above.
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
-            for p in self._mock_all_metrics(field_byte_clamp_count=500, coverage=105.0):
+            for p in _mock_all_metrics(field_byte_clamp_count=500, coverage=105.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 0)
 
     def test_field_byte_clamp_count_unmeasurable_is_never_silent(self):
@@ -1515,12 +1535,12 @@ class MainExitCodeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
-            for p in self._mock_all_metrics():
+            for p in _mock_all_metrics():
                 stack.enter_context(p)
             stack.enter_context(mock.patch.object(
                 slo_metrics, "metric_field_byte_clamp_count",
                 side_effect=slo_metrics.MetricUnavailable("es down")))
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 3)
         ntfy_post.assert_called_once()
         self.assertIn("field_byte_clamp_count", ntfy_post.call_args.kwargs["data"].decode())
@@ -1535,9 +1555,9 @@ class MainExitCodeTests(unittest.TestCase):
         # pre-existing reason as the sibling tests above.
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
-            for p in self._mock_all_metrics(oversized_dns_answer_count=500, coverage=105.0):
+            for p in _mock_all_metrics(oversized_dns_answer_count=500, coverage=105.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 0)
 
     def test_oversized_dns_answer_count_unmeasurable_is_never_silent(self):
@@ -1546,12 +1566,12 @@ class MainExitCodeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
-            for p in self._mock_all_metrics():
+            for p in _mock_all_metrics():
                 stack.enter_context(p)
             stack.enter_context(mock.patch.object(
                 slo_metrics, "metric_oversized_dns_answer_count",
                 side_effect=slo_metrics.MetricUnavailable("es down")))
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 3)
         ntfy_post.assert_called_once()
         self.assertIn("oversized_dns_answer_count", ntfy_post.call_args.kwargs["data"].decode())
@@ -1562,10 +1582,135 @@ class MainExitCodeTests(unittest.TestCase):
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
              mock.patch.object(slo_metrics.requests, "post",
                                side_effect=ConnectionError("refused")):
-            for p in self._mock_all_metrics(mttd=999.0):
+            for p in _mock_all_metrics(mttd=999.0):
                 stack.enter_context(p)
-            code = self._run_main_capturing_exit()
+            code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
+
+
+class PrivilegeSelfCheckTests(unittest.TestCase):
+    """#305: slo_metrics.py had no live self-check for ES role/privilege
+    regressions — SloMetricsReaderRoleGrantTests below only guards the
+    committed role FILE, with no visibility into a live cluster's actually
+    applied state. These tests cover the new POST /_security/user/
+    _has_privileges self-check directly (unit-level) and its wiring into
+    main() (integration-level)."""
+
+    def test_read_patterns_raises_metric_unavailable_on_unreadable_role_file(self):
+        # Path instances use __slots__, so the path object itself must be
+        # swapped out rather than patching an attribute on it directly.
+        fake_path = mock.Mock(read_text=mock.Mock(side_effect=FileNotFoundError("no such file")))
+        with mock.patch.object(slo_metrics, "_SLO_METRICS_READER_ROLE_PATH", fake_path):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._slo_metrics_reader_read_patterns()
+
+    def test_check_raises_metric_unavailable_when_role_file_grants_no_read_patterns(self):
+        with mock.patch.object(slo_metrics, "_slo_metrics_reader_read_patterns",
+                               return_value=[]):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._check_slo_metrics_reader_privileges()
+
+    def test_read_patterns_derived_from_the_real_role_file(self):
+        # Not a hardcoded list -- this must track whatever the role file
+        # actually grants today, including patterns #305's original issue
+        # text predates (#358 added threat-intel-indicators/-meta since).
+        patterns = slo_metrics._slo_metrics_reader_read_patterns()
+        for expected in (
+            "soc-agent-health-*", "agent-checkpoints-*",
+            ".alerts-security.alerts-*", "soar-actions-*",
+            "logstash-security-*", "soc-slo-metrics",
+            "threat-intel-indicators", "threat-intel-meta",
+        ):
+            self.assertIn(expected, patterns)
+
+    def test_passes_silently_when_fully_authorized(self):
+        with mock.patch.object(
+            slo_metrics, "es",
+            return_value=_FakeResponse(200, {"has_all_requested": True}),
+        ) as m:
+            slo_metrics._check_slo_metrics_reader_privileges()  # must not raise
+        m.assert_called_once()
+        args, _ = m.call_args
+        self.assertEqual(args[:2], ("POST", "/_security/user/_has_privileges"))
+
+    def test_raises_with_the_missing_pattern_named_when_not_fully_authorized(self):
+        response = _FakeResponse(200, {
+            "has_all_requested": False,
+            "index": {
+                "soc-agent-health-*": {"read": False},
+                "agent-checkpoints-*": {"read": True},
+            },
+        })
+        with mock.patch.object(slo_metrics, "es", return_value=response):
+            with self.assertRaises(slo_metrics.MetricUnavailable) as ctx:
+                slo_metrics._check_slo_metrics_reader_privileges()
+        self.assertIn("soc-agent-health-*", str(ctx.exception))
+
+    def test_raises_on_non_200(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(403, text="unauthorized")):
+            with self.assertRaises(slo_metrics.MetricUnavailable) as ctx:
+                slo_metrics._check_slo_metrics_reader_privileges()
+        self.assertIn("403", str(ctx.exception))
+
+    def test_raises_on_request_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._check_slo_metrics_reader_privileges()
+
+    def test_raises_on_non_json_response(self):
+        bad_response = mock.Mock(status_code=200, json=mock.Mock(side_effect=ValueError("boom")))
+        with mock.patch.object(slo_metrics, "es", return_value=bad_response):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics._check_slo_metrics_reader_privileges()
+
+    def test_adds_at_most_one_extra_request(self):
+        # Acceptance criterion: at most one extra HTTP request per run.
+        calls = []
+
+        def counting_es(method, path, body=None):
+            calls.append(path)
+            if path == "/_security/user/_has_privileges":
+                return _FakeResponse(200, {"has_all_requested": True})
+            return _FakeResponse(200, {})
+
+        with mock.patch.object(slo_metrics, "es", side_effect=counting_es):
+            slo_metrics._check_slo_metrics_reader_privileges()
+        self.assertEqual(calls.count("/_security/user/_has_privileges"), 1)
+
+
+class PrivilegeSelfCheckMainIntegrationTests(unittest.TestCase):
+    """Verifies the precheck is actually wired into main(), not just unit-
+    tested in isolation. Uses the same module-level _run_main_capturing_exit/
+    _mock_all_metrics helpers MainExitCodeTests uses above — kept at module
+    level rather than as TestCase methods specifically so both classes can
+    share them without either duplicating every test method via subclassing,
+    or re-binding a method pulled off a sibling class as a class attribute."""
+
+    def test_precheck_failure_exits_3_even_with_every_metric_otherwise_healthy(self):
+        def failing_has_privileges_es(method, path, body=None):
+            if path == "/_security/user/_has_privileges":
+                return _FakeResponse(200, {"has_all_requested": False, "index": {}})
+            return _FakeResponse(200, {})
+
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
+            for p in _mock_all_metrics():
+                stack.enter_context(p)
+            # Override just the shared `es` mock _mock_all_metrics() already
+            # installed, to fail specifically the privileges endpoint.
+            stack.enter_context(mock.patch.object(
+                slo_metrics, "es", side_effect=failing_has_privileges_es))
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 3)
+
+    def test_precheck_success_does_not_affect_a_healthy_run(self):
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
+            for p in _mock_all_metrics():
+                stack.enter_context(p)
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 0)
 
 
 class SloMetricsReaderRoleGrantTests(unittest.TestCase):

@@ -94,6 +94,15 @@ issue's own suggested design.
 Run manually or on a schedule (configs/systemd/checkpoints-compact.timer),
 mirroring intel-refresh.timer / compact_agent_approval_queue.py's cadence.
 
+#376: the actual delete uses wait_for_completion=false + polls Elasticsearch's
+_tasks API for completion (see _wait_for_task()) rather than a single
+synchronous request with a fixed client timeout — a client-side give-up used
+to leave the server-side delete running unbounded, with a re-run doubling the
+work and no record of what the first attempt removed. Ports #358's identical
+fix from this script's compact_threat_intel.py sibling (deliberately scoped
+out of that PR — see this file's own history). AGENT_CHECKPOINTS_COMPACT_
+POLL_TIMEOUT_S / _POLL_INTERVAL_S override the polling budget/cadence.
+
 Usage:
   python compact_agent_checkpoints.py [--tenant TENANT] [--retention-days N] [--dry-run]
 """
@@ -101,8 +110,20 @@ import argparse
 import os
 import re
 import sys
+import time
+from pathlib import Path
 
 import requests
+
+# Shared retrying Session (#170/#358) — see scripts/setup/lib/es_client.py's
+# own docstring for the exact policy (502/503/504 + connection failures
+# retried with backoff; read=0 so a response-read timeout is never
+# retried). Used specifically for _wait_for_task()'s polling below, NOT
+# for this module's other calls (count/delete-kickoff) — a transient blip
+# mid-poll is exactly the case that should retry rather than abort the
+# whole wait, matching compact_threat_intel.py's own #358 fix.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import es_client  # noqa: E402
 
 TERMINAL_CHECKPOINT_PHASES = frozenset({
     "NO_ACTION_PROTECTED_ASSET", "AUTO_ISOLATED", "EXECUTED", "ISOLATION_FAILED",
@@ -142,6 +163,138 @@ ES_USER = os.environ.get("AGENT_CHECKPOINTS_COMPACTOR_ES_USER", "agent_checkpoin
 ES_PASS = os.environ.get("AGENT_CHECKPOINTS_COMPACTOR_ES_PASS", "")
 ES_CA = os.environ.get("ES_CA", "/certs/ca/ca.crt")
 ES_VERIFY = ES_CA if ES_CA else True
+
+# #376: _wait_for_task()'s polling GET is idempotent and read-only — safe to
+# retry transparently, unlike this module's own writes (_delete_by_query),
+# which stay on plain `requests` so this module's existing at-most-once
+# write semantics don't change.
+TASK_POLL_SESSION = es_client.get_session(ES_USER, ES_PASS)
+
+
+# #376: a client-side timeout on a SYNCHRONOUS _delete_by_query does not
+# cancel the task on the ES server — it keeps running regardless, so a run
+# that legitimately exceeds the old fixed 60s (e.g. after a long
+# accumulation gap) surfaced as a client failure while ES kept deleting,
+# and a re-run then doubled the work with no record of what the first
+# attempt actually removed. TASK_POLL_TIMEOUT_SECONDS bounds how long THIS
+# SCRIPT waits for the task to report completed=true (see _wait_for_task())
+# — it does not bound the task itself, which Elasticsearch keeps running
+# either way.
+def _env_float(name: str, default: float, *, minimum: float) -> float:
+    """Parses an overridable numeric env var, degrading to `default` (with a
+    stderr warning, not a crash) on anything malformed — this runs at MODULE
+    IMPORT time, before main()'s own try/except error-handling exists, so a
+    bad override must never produce a raw traceback on every invocation
+    until it's fixed. `minimum` guards specifically against a
+    non-positive/too-small poll interval turning _wait_for_task() into an
+    unthrottled busy-loop against Elasticsearch. Ported verbatim from
+    compact_threat_intel.py's #358 fix."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        print(f"WARN: {name}={raw!r} is not a valid number — using default "
+              f"{default:g}", file=sys.stderr)
+        return default
+    if value < minimum:
+        print(f"WARN: {name}={raw!r} is below the minimum {minimum:g} — "
+              f"using {minimum:g} instead", file=sys.stderr)
+        return minimum
+    return value
+
+
+TASK_POLL_TIMEOUT_SECONDS = _env_float("AGENT_CHECKPOINTS_COMPACT_POLL_TIMEOUT_S", 300.0, minimum=1.0)
+TASK_POLL_INTERVAL_SECONDS = _env_float("AGENT_CHECKPOINTS_COMPACT_POLL_INTERVAL_S", 2.0, minimum=0.1)
+
+
+def _is_transient_poll_error(e: requests.RequestException) -> bool:
+    """502/503/504 and connection/timeout failures (no response at all) are
+    exactly the class `es_client.get_session()`'s own `Retry` policy already
+    treats as safe to retry (see that module's docstring) — `TASK_POLL_
+    SESSION` already retried those internally before this ever reaches here,
+    so seeing one HERE means a sustained outage, worth `_wait_for_task()`'s
+    own OUTER poll-until-deadline retry too. Anything else (401/403/404/400
+    — a permission or addressing problem, not a transient one) would fail
+    the exact same way on every retry, so it is not worth spinning the
+    whole poll budget on before giving up. Ported verbatim from
+    compact_threat_intel.py's #358 fix."""
+    if isinstance(e, requests.HTTPError):
+        if e.response is None:
+            return True  # can't confirm it's permanent — the safer default is to retry
+        return e.response.status_code in (502, 503, 504)
+    return True  # ConnectionError, Timeout, etc. — no response to inspect at all.
+
+
+def _wait_for_task(task_id: str, index: str) -> dict:
+    """Polls `GET _tasks/<task_id>` until Elasticsearch reports the task
+    `completed`, returning its `response` body — the same shape a
+    SYNCHRONOUS `_delete_by_query` call would have returned directly (#376,
+    porting #358's identical fix from compact_threat_intel.py).
+
+    This is the fix for the client-timeout-doesn't-cancel-the-server-task
+    gap: this function's own poll budget (`TASK_POLL_TIMEOUT_SECONDS`)
+    bounds how long THIS PROCESS waits, never the task itself, which
+    Elasticsearch keeps running regardless of whether anything is still
+    polling it. If that budget elapses, raises WITHOUT attempting to
+    cancel the task, carrying the real `task_id` so the run is reconcilable
+    later via a manual `GET _tasks/<task_id>` instead of lost, and warning
+    explicitly against a re-run (a second concurrent delete against the
+    same query would double the work).
+
+    Also raises if the task itself reports `completed:true` with an
+    `error` key (a genuine failure, not a partial per-document one — must
+    not be read as "0/0 document(s) deleted, clean run"), or with neither
+    `error` nor `response` (a shape this function's contract doesn't
+    guarantee can't happen — cannot confirm what, if anything, was
+    deleted). A single transient poll failure (502/503/504, a connection
+    blip) is treated the same as "not yet complete" and retried within the
+    SAME poll budget, with the same reconciliation guidance once that
+    budget is exhausted — ported from compact_threat_intel.py's #358 fix
+    verbatim; see that module's own docstring for the two live-reproduced
+    failure modes this logic was validated against."""
+    deadline = time.monotonic() + TASK_POLL_TIMEOUT_SECONDS
+    while True:
+        try:
+            res = TASK_POLL_SESSION.get(f"{ES_HOST}/_tasks/{task_id}",
+                                        verify=ES_VERIFY, timeout=15)
+            res.raise_for_status()
+            task = res.json()
+            if task.get("completed"):
+                if "error" in task:
+                    raise RuntimeError(
+                        f"{index}: delete_by_query task {task_id} FAILED: {task['error']}")
+                if "response" not in task:
+                    raise RuntimeError(
+                        f"{index}: delete_by_query task {task_id} completed with "
+                        f"neither `response` nor `error` — cannot confirm what, if "
+                        f"anything, was deleted (raw task doc: {task})")
+                return task["response"]
+        except RuntimeError:
+            raise
+        except requests.RequestException as e:
+            if not _is_transient_poll_error(e):
+                raise
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"{index}: delete_by_query task {task_id} — polling failed "
+                    f"({e}) and the {TASK_POLL_TIMEOUT_SECONDS:g}s poll budget is "
+                    f"exhausted. The task's own completion status is UNKNOWN — it "
+                    f"may still be running on Elasticsearch (this script never "
+                    f"cancels it). Do NOT re-run this script until confirmed done "
+                    f"via `GET _tasks/{task_id}` — a second concurrent delete "
+                    f"against the same query would double the work.") from e
+            time.sleep(TASK_POLL_INTERVAL_SECONDS)
+            continue
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"{index}: delete_by_query task {task_id} did not complete within "
+                f"{TASK_POLL_TIMEOUT_SECONDS:g}s of polling — it is STILL RUNNING on "
+                f"Elasticsearch (this script never cancels it). Do NOT re-run this "
+                f"script until confirmed done via `GET _tasks/{task_id}` — a second "
+                f"concurrent delete against the same query would double the work.")
+        time.sleep(TASK_POLL_INTERVAL_SECONDS)
 
 
 def _get_auth():
@@ -199,10 +352,27 @@ def compact(tenant_id: str = "*", retention_days: int = DEFAULT_RETENTION_DAYS,
               f"No changes made.")
         return count
 
-    res = requests.post(f"{ES_HOST}/{index}/_delete_by_query?conflicts=proceed",
-                        json=query, auth=_get_auth(), verify=ES_VERIFY, timeout=60)
-    res.raise_for_status()
-    body = res.json()
+    # #376: wait_for_completion=false returns almost immediately with a task
+    # ID rather than blocking on the delete itself — the kickoff call's own
+    # short timeout is safe precisely because it no longer has to cover the
+    # delete's real duration; _wait_for_task() does that instead, with a
+    # bound that (unlike the old fixed client timeout) never orphans the
+    # server-side task without a way to reconcile it.
+    start_res = requests.post(
+        f"{ES_HOST}/{index}/_delete_by_query?conflicts=proceed&wait_for_completion=false",
+        json=query, auth=_get_auth(), verify=ES_VERIFY, timeout=15)
+    start_res.raise_for_status()
+    task_id = start_res.json().get("task")
+    if not task_id:
+        # A 2xx with no `task` key would otherwise raise an uncaught
+        # KeyError here, outside main()'s (requests.RequestException,
+        # RuntimeError) catch — surfacing as a raw traceback instead of the
+        # clean "Error: ..." exit main() gives every other failure mode.
+        raise RuntimeError(
+            f"{index}: delete_by_query kickoff returned no task id: "
+            f"{start_res.text[:200]}")
+    print(f"{index}: delete_by_query started (task {task_id}), polling for completion...")
+    body = _wait_for_task(task_id, index)
     deleted = body.get("deleted", 0)
     total = body.get("total", 0)
     version_conflicts = body.get("version_conflicts", 0)

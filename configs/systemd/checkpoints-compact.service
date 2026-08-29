@@ -93,7 +93,23 @@ RuntimeDirectoryMode=0700
 RuntimeDirectory=suburban-soc-checkpoints-compact
 ExecStartPre=-/usr/bin/docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt /run/suburban-soc-checkpoints-compact/ca.crt
 ExecStart=/usr/bin/python3 /home/tjlam/projects/Suburban-SOC/scripts/setup/ai_agent/compact_agent_checkpoints.py
-TimeoutStartSec=120
+# #376: compact_agent_checkpoints.py's delete_by_query is now async
+# (wait_for_completion=false) + polls _tasks/<id>, with its own
+# TASK_POLL_TIMEOUT_SECONDS budget (default 300s) — same fix
+# threat-intel-compact.service's own TimeoutStartSec comment documents for
+# its sibling script (#358). 120s was sized for the old single fixed-timeout
+# synchronous call and would now kill the unit mid-poll on a genuinely large
+# backlog — systemd killing the process doesn't cancel the ES-side task
+# either, trading one silent-orphan failure mode for a different one. This
+# script compacts a SINGLE index per run (unlike threat-intel-compact's two
+# sequential indices), so the worst case is TASK_POLL_TIMEOUT_SECONDS(300) +
+# the deadline check firing only after a poll returns (up to one more 15s
+# GET) + the kickoff POST (15s) ahead of it — ~330s before the
+# ExecStartPre secret-extraction/CA-copy steps and remaining HTTP overhead.
+# 450s covers that with ~36% margin over the ~330s worst case above — more
+# headroom than threat-intel-compact.service's own ~25% (900s/720s), since
+# this script has no pre-delete blast-radius _count call to budget for.
+TimeoutStartSec=450
 
 # --- Sandboxing (audit #167 / NIST CM-7) ---------------------------------------
 # This unit only makes outbound HTTPS calls to Elasticsearch (requests) and

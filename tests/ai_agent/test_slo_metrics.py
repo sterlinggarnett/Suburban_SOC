@@ -99,6 +99,8 @@ class MetricFunctionTests(unittest.TestCase):
                 slo_metrics.metric_coverage()
 
     def test_coverage_returns_technique_count_on_success(self):
+        # No "metadata" field at all (an artifact predating #379) — exercises
+        # the fallback path: len(techniques), unchanged pre-#379 behavior.
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             coverage_path = repo / "docs" / "detections"
@@ -107,6 +109,31 @@ class MetricFunctionTests(unittest.TestCase):
                 json.dumps({"techniques": ["T1110", "T1046", "T1078"]}), encoding="utf-8")
             with mock.patch.object(slo_metrics, "REPO", repo):
                 self.assertEqual(slo_metrics.metric_coverage(), 3.0)
+
+    def test_coverage_prefers_the_metadata_techniques_field_over_array_length(self):
+        # #379: a technique legitimately spanning two tactics (e.g. T1078.003)
+        # produces TWO (techniqueID, tactic) entries in "techniques" but is
+        # only ONE unique technique — len(techniques) would over-report by
+        # one. The "techniques" metadata field carries the correct unique
+        # count and must win over the array length.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            coverage_path = repo / "docs" / "detections"
+            coverage_path.mkdir(parents=True)
+            (coverage_path / "attack-coverage.json").write_text(
+                json.dumps({
+                    "techniques": [
+                        {"techniqueID": "T1078.003", "tactic": "initial-access"},
+                        {"techniqueID": "T1078.003", "tactic": "privilege-escalation"},
+                        {"techniqueID": "T1110", "tactic": "credential-access"},
+                    ],
+                    "metadata": [
+                        {"name": "detections", "value": "3"},
+                        {"name": "techniques", "value": "2"},
+                    ],
+                }), encoding="utf-8")
+            with mock.patch.object(slo_metrics, "REPO", repo):
+                self.assertEqual(slo_metrics.metric_coverage(), 2.0)
 
     def test_false_positive_pct_raises_on_kibana_failure(self):
         with mock.patch.object(slo_metrics, "kb", side_effect=ConnectionError("refused")):

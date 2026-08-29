@@ -429,9 +429,26 @@ def metric_mttr():
 
 
 def metric_coverage():
+    """Unique ATT&CK technique count, matching attack-coverage.md's own
+    "Coverage: N techniques" line.
+
+    #379: `techniques` (the Navigator layer's own array) is keyed on
+    (techniqueID, tactic) PAIRS (#281) — a technique legitimately spanning
+    more than one tactic (T1078.003 today) counts once per tactic there, so
+    `len(techniques)` over-reports the unique-technique total by one per
+    such technique. build_attack_coverage.py's navigator_layer() now emits
+    an explicit `metadata` entry named "techniques" carrying the true
+    unique count (unique_technique_count(rows)) so this metric doesn't have
+    to re-derive it — falls back to the old len(techniques) behavior only
+    if that field is missing (an un-regenerated artifact predating #379).
+    """
     p = REPO / "docs" / "detections" / "attack-coverage.json"
     try:
-        return float(len(json.loads(p.read_text(encoding="utf-8")).get("techniques", [])))
+        data = json.loads(p.read_text(encoding="utf-8"))
+        for entry in data.get("metadata", []):
+            if entry.get("name") == "techniques":
+                return float(entry["value"])
+        return float(len(data.get("techniques", [])))
     except Exception as e:
         raise MetricUnavailable(f"attack-coverage.json unreadable: {e}") from e
 

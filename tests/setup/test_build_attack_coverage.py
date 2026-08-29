@@ -91,6 +91,24 @@ class NavigatorLayerDedupTests(unittest.TestCase):
         detections_meta = next(m for m in layer["metadata"] if m["name"] == "detections")
         self.assertEqual(detections_meta["value"], "2")
 
+    def test_navigator_metadata_techniques_count_is_unique_techniques_not_pairs(self):
+        # #379: T1078.003's real shape (see module docstring) produces TWO
+        # (techniqueID, tactic) entries in layer["techniques"] but is only
+        # ONE unique technique — slo_metrics.py's metric_coverage() reads
+        # this "techniques" metadata field instead of len(layer["techniques"])
+        # specifically to avoid over-reporting by one in exactly this case.
+        rows = [
+            _row("T1078.003", "Initial Access", rule="rules/sigma/ssh_root.yml"),
+            _row("T1078.003", "Privilege Escalation", rule="rules/sigma/su.yml"),
+            _row("T1046", "Discovery", rule="rules/sigma/discover.yml"),
+        ]
+        layer = bac.navigator_layer(rows)
+        self.assertEqual(len(layer["techniques"]), 3, "sanity: 3 pair-entries expected")
+        techniques_meta = next(m for m in layer["metadata"] if m["name"] == "techniques")
+        self.assertEqual(techniques_meta["value"], "2",
+                          "T1078.003 + T1046 = 2 unique techniques, not 3 pair-entries")
+        self.assertEqual(techniques_meta["value"], str(bac.unique_technique_count(rows)))
+
     def test_output_order_is_deterministic_first_seen_order(self):
         rows = [
             _row("T1046", "Discovery"),

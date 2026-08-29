@@ -145,6 +145,30 @@ class MetricFunctionTests(unittest.TestCase):
                                return_value=_FakeResponse(200, {"hits": {"hits": []}})):
             self.assertIsNone(slo_metrics.metric_ingest_lag_seconds())
 
+    def test_zeek_ingest_lag_raises_on_request_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_zeek_ingest_lag_seconds()
+
+    def test_zeek_ingest_lag_returns_none_when_no_zeek_docs_yet(self):
+        # #320: Zeek being silent (no event.module:zeek docs at all) must
+        # read as None/BREACH_IF_NA, not a benign 0 — same fail-closed shape
+        # as metric_ingest_lag_seconds() itself.
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})):
+            self.assertIsNone(slo_metrics.metric_zeek_ingest_lag_seconds())
+
+    def test_zeek_ingest_lag_filters_on_event_module_zeek(self):
+        # Regression guard: this must query event.module:zeek specifically,
+        # not the unscoped query metric_ingest_lag_seconds() uses — otherwise
+        # it can never distinguish "Zeek is silent" from "some other source
+        # is still flowing", the exact blind spot #320 exists to close.
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})) as m:
+            slo_metrics.metric_zeek_ingest_lag_seconds()
+        body = m.call_args[0][2]
+        self.assertEqual(body["query"], {"term": {"event.module": "zeek"}})
+
     def test_parse_error_pct_propagates_count_failure(self):
         with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
             with self.assertRaises(slo_metrics.MetricUnavailable):
@@ -1320,7 +1344,7 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                        oversized_dns_answer_count=0, zeek_path_nomatch_count=0,
                        capture_loss_max_pct=0.0, intel_feed_stale_heartbeats=1.0,
                        intel_indicator_count_drop_pct=0.0,
-                       broker_response_tampering_count=0.0):
+                       broker_response_tampering_count=0.0, zeek_ingest_lag=10.0):
     # Module-level, not a TestCase method: shared verbatim by MainExitCodeTests
     # and PrivilegeSelfCheckMainIntegrationTests below. A TestCase-method
     # version can't be shared across sibling classes without either
@@ -1335,6 +1359,8 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
         mock.patch.object(slo_metrics, "metric_coverage", return_value=coverage),
         mock.patch.object(slo_metrics, "metric_false_positive_pct", return_value=fp_pct),
         mock.patch.object(slo_metrics, "metric_ingest_lag_seconds", return_value=ingest_lag),
+        mock.patch.object(slo_metrics, "metric_zeek_ingest_lag_seconds",
+                           return_value=zeek_ingest_lag),
         mock.patch.object(slo_metrics, "metric_parse_error_pct", return_value=parse_err),
         mock.patch.object(slo_metrics, "metric_audit_write_failures",
                            return_value=audit_write_failures),
@@ -1441,6 +1467,38 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("vanished_claims", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_zeek_ingest_lag_breach_exits_2_and_sends_ntfy(self):
+        # Regression guard for #320: metric_zeek_ingest_lag_seconds must
+        # actually be wired into main()'s metric_fns dict, not just defined —
+        # same bug shape #216/#247/#257/#288/#361 already guard other
+        # metrics against.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in _mock_all_metrics(zeek_ingest_lag=99999.0):
+                stack.enter_context(p)
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        ntfy_post.assert_called_once()
+        self.assertIn("zeek_ingest_lag_seconds", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_zeek_ingest_lag_unmeasurable_breaches_not_silent(self):
+        # #320: BREACH_IF_NA — a dead/unreachable Zeek sensor produces no
+        # fresh docs (metric_zeek_ingest_lag_seconds() returns None), and
+        # that must fail closed as a breach, the identical shape
+        # metric_ingest_lag_seconds() already guards for the unscoped case.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in _mock_all_metrics():
+                stack.enter_context(p)
+            stack.enter_context(mock.patch.object(
+                slo_metrics, "metric_zeek_ingest_lag_seconds", return_value=None))
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        ntfy_post.assert_called_once()
+        self.assertIn("zeek_ingest_lag_seconds", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_zeek_path_nomatch_count_breach_exits_2_and_sends_ntfy(self):
         # Regression guard for #349: metric_zeek_path_nomatch_count must

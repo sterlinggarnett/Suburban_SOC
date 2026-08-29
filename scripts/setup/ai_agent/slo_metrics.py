@@ -177,6 +177,15 @@ TARGETS = {
     # with (forged/replayed response), not routine noise. Target is 0, same
     # as the claim-integrity metrics above.
     "broker_response_tampering_count": float(os.environ.get("SLO_BROKER_TAMPER_MAX", "0")),
+    # #320: same 300s default as ingest_lag_seconds itself — that metric
+    # checks the newest document across EVERY source in logstash-security-*,
+    # so Endpoint/Sysmon/mock traffic alone kept it green while the Zeek
+    # sensor was completely silent (down since #222 merged, discovered only
+    # by manual investigation — the outage had no path by which it could
+    # have alerted). This is the same lag computation scoped to Zeek-sourced
+    # documents specifically, closing that blind spot with a per-source
+    # liveness check.
+    "zeek_ingest_lag_seconds": float(os.environ.get("SLO_ZEEK_INGEST_LAG_MAX_S", "300")),
 }
 # Comparator per metric: True = lower is better (value <= target).
 LOWER_BETTER = {
@@ -186,13 +195,17 @@ LOWER_BETTER = {
     "orphaned_claims": True, "vanished_claims": True, "capture_loss_max_pct": True,
     "intel_feed_stale_heartbeats": False, "intel_indicator_count_drop_pct": True,
     "zeek_path_nomatch_count": True, "broker_response_tampering_count": True,
+    "zeek_ingest_lag_seconds": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
 # not a benign "n/a". A dead/unreachable pipeline produces no fresh docs, so
 # metric_ingest_lag_seconds() returns None — the single loudest failure must alarm,
 # not register as silence. (WS2.4 observability gap: a total ingest outage was being
 # scored breach=False because lag could not be read.)
-BREACH_IF_NA = {"ingest_lag_seconds"}
+# #320: zeek_ingest_lag_seconds is the identical fail-closed shape, scoped to
+# Zeek specifically — a dead Zeek sensor is exactly the "no fresh docs" case
+# this same reasoning covers, not a benign "n/a".
+BREACH_IF_NA = {"ingest_lag_seconds", "zeek_ingest_lag_seconds"}
 # #216: measured but not target-checked. There's no "correct" alert volume to set
 # a threshold against yet — that's what this metric exists to establish a baseline
 # for (the before/after signal detection tuning needs to prove it reduced noise
@@ -441,6 +454,36 @@ def metric_ingest_lag_seconds():
         return round((datetime.now(timezone.utc) - newest).total_seconds(), 1)
     except Exception as e:
         raise MetricUnavailable(f"ingest-lag search failed: {e}") from e
+
+
+def metric_zeek_ingest_lag_seconds():
+    """Seconds since the newest Zeek-sourced document (#320) — the identical
+    computation as metric_ingest_lag_seconds() above, scoped to
+    event.module:zeek specifically.
+
+    metric_ingest_lag_seconds() checks the newest document across EVERY
+    source in logstash-security-* — Endpoint/Sysmon/mock traffic kept it
+    green while Zeek was completely silent (down since #222 merged,
+    discovered only by manual investigation, with the crash-loop itself
+    invisible to systemd per configs/systemd/zeek-host-capture.service's
+    Restart=always/StartLimitIntervalSec=0). A per-source liveness check on
+    the network sensor specifically closes that blind spot.
+
+    event.module:zeek is the same filter metric_capture_loss_percent()
+    already uses to distinguish "no Zeek data at all" from "Zeek is flowing"
+    — reused here rather than introducing a second way to ask the same
+    question.
+    """
+    body = {"size": 1, "sort": [{"@timestamp": "desc"}], "_source": ["@timestamp"],
+            "query": {"term": {"event.module": "zeek"}}}
+    try:
+        hits = es("POST", "/logstash-security-*/_search", body).json().get("hits", {}).get("hits", [])
+        if not hits:
+            return None
+        newest = datetime.fromisoformat(hits[0]["_source"]["@timestamp"].replace("Z", "+00:00"))
+        return round((datetime.now(timezone.utc) - newest).total_seconds(), 1)
+    except Exception as e:
+        raise MetricUnavailable(f"zeek ingest-lag search failed: {e}") from e
 
 
 def metric_parse_error_pct():
@@ -1522,6 +1565,7 @@ def main():
         "coverage_techniques": metric_coverage,
         "false_positive_pct": metric_false_positive_pct,
         "ingest_lag_seconds": metric_ingest_lag_seconds,
+        "zeek_ingest_lag_seconds": metric_zeek_ingest_lag_seconds,
         "parse_error_pct": metric_parse_error_pct,
         "audit_write_failures": metric_audit_write_failures,
         "broker_response_tampering_count": metric_broker_response_tampering,

@@ -75,7 +75,7 @@ was narrowed back to its original scope.
 | M10 | SOC 2 Type II Technical Control Readiness (Phase 3) | ✅ Complete — 7/7 (WS3.1–3.7) |
 | M11 | Agent Orchestration & Compliance (Phase 4) | ✅ Complete (merged 2026-07-20) |
 | M12 | Approval Gate Integrity & Detection Engineering Tuning | ✅ Complete (14/14 issues, closed 2026-08-05) — restored the atomic approval claim dropped by `2bb3d8f`, then hardened it three more times via #245/#246/#247/#273 |
-| M13 | Detection Expansion: 35 → 105 Sigma Rules (Campus SOC) | ✅ Complete (25/25 issues, [milestone](https://github.com/voltron-1/Suburban_SOC/milestone/17)) — all 7 rule-batch user stories merged; corpus grew 35 → 105 rules |
+| M13 | Detection Expansion: 35 → 105 Sigma Rules (Campus SOC) | ✅ Complete (25/25 issues, [milestone](https://github.com/voltron-1/Suburban_SOC/milestone/17)) — all 7 rule-batch user stories merged; corpus grew 35 → 108 rules |
 | M14 | SOAR Approval-Plane Operability & Hardening | ✅ Complete (8/8 issues, [milestone](https://github.com/voltron-1/Suburban_SOC/milestone/18), closed 2026-08-09) — both P0 defects (#275, #277) plus operator tooling for stuck claims |
 | M15 | Detection Correctness & Pipeline Fidelity | ✅ Complete (11/11 issues, [milestone](https://github.com/voltron-1/Suburban_SOC/milestone/19)) — whether the *existing* corpus behaves as written, as opposed to M13's rule count. Closed 2026-08-16; its one blocked item (#283) moved to M17, its true thematic home |
 | M16 | Endpoint Onboarding & Threat-Intel Integrity | ⏸️ 7/8 closed, 1 deferred ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/20), no actionable work left) — threat-intel retraction (#271), zeek/zeek image pin+CVE bump (#293, #364), and 2 detection-gap follow-ups (#358, #361) all shipped; only #265 (client certs for endpoint shippers) remains, gated on a real endpoint being deployed |
@@ -239,9 +239,8 @@ within a milestone, not milestone completions in their own right:
   [#328](https://github.com/voltron-1/Suburban_SOC/issues/328)) rather than
   expanding this fix's blast radius.
 - **Detection framework enrichment (PR #112).** The detection plane spans
-  **37 ATT&CK techniques across 9 tactics** (see
-  [`docs/detections/attack-coverage.md`](docs/detections/attack-coverage.md)). The
-  **35 Sigma rules** (`rules/sigma/`) each carry their own ATT&CK technique tag and
+  **75 ATT&CK techniques across 12 tactics** (see [`docs/detections/attack-coverage.md`](docs/detections/attack-coverage.md) for the authoritative coverage matrix). The
+  **108 Sigma rules** (`rules/sigma/`) each carry their own ATT&CK technique tag and
   convert to Elastic SIEM rules via pySigma (`deploy_detections.sh`) — the rules,
   not the pipeline, are the single source of truth for endpoint detection. In
   addition, `configs/logstash.conf` classifies the two Zeek **network** detections —

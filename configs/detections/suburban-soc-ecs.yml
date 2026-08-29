@@ -4,11 +4,14 @@
 # process.command_line), so converted detections must query process.args to match
 # real data. deploy_detections.sh sets the rule index to logstash-* after conversion.
 #
-# COMPLIANCE METADATA EXTRACTOR (Area 3):
-# This pipeline relies on the elastic backend natively forwarding Sigma `tags:` to
-# Kibana Detection Engine tags. To ensure alignment with `compliance_matrix.csv`,
-# all Sigma rules MUST include `tags: [nist.800-53.*, cis.*, nist.csf.*]`
-# so the deployer populates the Elasticsearch rule metadata correctly.
+# COMPLIANCE MAPPING (#296): this pipeline does NOT tag-populate Kibana Detection
+# Engine compliance metadata — an earlier draft of this comment described a
+# `tags: [nist.800-53.*, cis.*, nist.csf.*]` convention that was never implemented
+# by any of the 108 rules in rules/sigma/ (also pointed at a `compliance_matrix.csv`
+# that has never existed in this repo). Framework alignment is tracked instead by
+# docs/compliance_matrix.md, a hand-maintained table mapping specific rule
+# filenames to specific NIST CSF/800-53/800-171/CIS control IDs — see that file,
+# not Sigma tags, as the source of truth for compliance coverage.
 #
 # Only the Sysmon process_creation channel gets ECS renames in logstash.conf; every
 # other Windows channel (Security, System, WMI-Activity, PowerShell/Operational, and

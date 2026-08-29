@@ -56,6 +56,19 @@ description: |
     net_zeek_dns_crypto_mining_pool.yml (fixed in the same change, one
     severity tier higher at level: medium) — see that rule's own
     description for the same caveat in that rule's context.
+    #434 decision: pursued the threshold/cardinality-companion option
+    (rules/elastic/threshold/net-zeek-dns-doh-non-standard-cardinality.ndjson)
+    rather than a response-side qualifier on this rule itself — buckets
+    matching queries by source.ip and alerts on >=10 distinct
+    dns.question.name values in a 10-minute window, catching the volume
+    shape a scripted forged-query loop produces (many random-looking
+    labels) that a real client's one-or-two-hostname DoH bootstrap does
+    not. This rule (the single-event logic-of-record) is unchanged and
+    still carries the emission-only caveat above — the companion adds a
+    corroborating signal, it does not replace or narrow this rule's own
+    matching. See that companion's own description for the full
+    tradeoffs (not live-verified end to end; still forgeable below the
+    cardinality bar; NAT/proxy false-positive risk).
 references:
     - https://attack.mitre.org/techniques/T1572/
 author: Suburban-SOC

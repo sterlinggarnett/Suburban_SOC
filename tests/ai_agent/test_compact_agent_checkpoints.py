@@ -323,8 +323,13 @@ class CompactorCredentialProvisioningTests(unittest.TestCase):
     def test_docker_compose_agent_checkpoints_role_line_has_no_delete(self):
         # Same check against the inline bootstrap copy specifically — the
         # role-file test above doesn't catch drift between the two.
+        # #318 switched provision's inline PUTs from an unquoted URL (curl
+        # ... .../_security/role/agent_checkpoints -d "...") to a shared
+        # put() helper call (put "/_security/role/agent_checkpoints" "...")
+        # -- match the closing quote right after the role name, which still
+        # excludes the _compactor line the same way the old trailing space did.
         for line in DOCKER_COMPOSE.splitlines():
-            if "_security/role/agent_checkpoints " in line:  # trailing space excludes _compactor
+            if '"/_security/role/agent_checkpoints"' in line:
                 self.assertNotIn("delete", line)
                 return
         self.fail("could not find the agent_checkpoints role provisioning line")

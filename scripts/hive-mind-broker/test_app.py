@@ -175,15 +175,24 @@ def _response_signature_valid(r) -> bool:
 
 # --- #109: /webhook/dispatch — immediate, pre-approved block -------------------
 def test_dispatch_missing_signature():
-    assert client.post("/webhook/dispatch", json={"attacker_ip": "9.9.9.9"}).status_code == 401
+    r = client.post("/webhook/dispatch", json={"attacker_ip": "9.9.9.9"})
+    assert r.status_code == 401
+    # #308: every HTTPException-driven error response is ALSO signed now —
+    # dispatch_block_via_broker() must be able to trust even this "confirmed
+    # non-dispatch" classification, not just a 200's executed/success_count.
+    assert _response_signature_valid(r)
 
 
 def test_dispatch_invalid_signature():
-    assert _post_dispatch({"attacker_ip": "9.9.9.9"}, tamper=True).status_code == 401
+    r = _post_dispatch({"attacker_ip": "9.9.9.9"}, tamper=True)
+    assert r.status_code == 401
+    assert _response_signature_valid(r)
 
 
 def test_dispatch_missing_ip():
-    assert _post_dispatch({"tenant_id": TENANT}).status_code == 400
+    r = _post_dispatch({"tenant_id": TENANT})
+    assert r.status_code == 400
+    assert _response_signature_valid(r)
 
 
 def test_dispatch_executes_to_tenant_routers(_no_real_ssh):
@@ -251,6 +260,77 @@ def test_dispatch_response_signature_changes_per_request(_no_real_ssh):
     r1 = _post_dispatch({"attacker_ip": "9.9.9.9", "tenant_id": TENANT})
     r2 = _post_dispatch({"attacker_ip": "8.8.8.8", "tenant_id": TENANT})
     assert r1.headers["x-elastic-signature"] != r2.headers["x-elastic-signature"]
+
+
+# --- #308: EVERY HTTPException-driven error response is signed app-wide, not
+# just /webhook/dispatch's — an on-path attacker suppressing a genuine 200
+# and injecting a forged 4xx/5xx instead must never be trusted as a
+# confirmed non-dispatch with no signature check at all. ----------------------
+def test_signed_exception_handler_preserves_default_body_and_status(_no_real_ssh):
+    # Must change ONLY whether the response is signed — never what it says.
+    r = _post_dispatch({"tenant_id": TENANT})  # missing attacker_ip -> 400
+    assert r.status_code == 400
+    assert r.json() == {"detail": "Payload missing attacker_ip"}
+    assert _response_signature_valid(r)
+
+
+def test_signed_exception_handler_covers_non_dispatch_endpoints_too(_no_real_ssh):
+    # #308's fix overrides FastAPI's default handler for the whole app, since
+    # _verify()/_verify_and_parse() are shared by every authenticated
+    # endpoint — confirm it isn't somehow scoped to /webhook/dispatch alone.
+    # /pending signs an EMPTY body, so an unsigned GET hits the same
+    # missing-signature 401 _verify() raises for /webhook/dispatch.
+    r = client.get("/pending")
+    assert r.status_code == 401
+    assert _response_signature_valid(r)
+
+    r = _approve({"id": "nonexistent-action-id"})
+    assert r.status_code == 404
+    assert _response_signature_valid(r)
+
+
+def test_signed_exception_handler_covers_starlette_routing_errors_too():
+    # #308 round-2 code/security-auditor review: registering the handler
+    # against fastapi.HTTPException alone missed Starlette's OWN internally-
+    # raised routing errors (unmatched path -> 404, wrong method on a real
+    # path -> 405), which construct the BASE starlette.exceptions.HTTPException
+    # directly rather than fastapi's subclass of it — those came back
+    # genuinely unsigned. Registering against the Starlette base class
+    # instead (still catches every `raise HTTPException(...)` in this file,
+    # since fastapi's IS a StarletteHTTPException) closes that gap.
+    r = client.get("/nonexistent-path")
+    assert r.status_code == 404
+    assert _response_signature_valid(r)
+
+    r = client.put("/webhook/dispatch")  # wrong method on a real path
+    assert r.status_code == 405
+    assert _response_signature_valid(r)
+
+
+def test_dispatch_validation_failure_echoes_request_id_header(_no_real_ssh):
+    # #308 round-2 security-auditor finding: a signature alone doesn't prove
+    # a non-200 response answers THIS specific call — dispatch_block_via_
+    # broker() also requires request_id to match, which a non-200 can only
+    # carry via this header (its body keeps FastAPI's default {"detail":...}
+    # shape). Reaching dispatch_block()'s own validation at all already
+    # requires a valid signature (HIVE_MIND_SECRET), unlike _verify()'s own
+    # pre-auth failures — which is exactly why only THIS class of non-200
+    # gets the header at all.
+    r = _post_dispatch({"tenant_id": TENANT, "request_id": "corr-id-2"})  # missing attacker_ip -> 400
+    assert r.status_code == 400
+    assert r.headers.get("x-elastic-request-id") == "corr-id-2"
+    assert _response_signature_valid(r)
+
+
+def test_verify_failure_never_echoes_a_request_id_header(_no_real_ssh):
+    # The mirror case: _verify()'s OWN pre-auth failures (missing signature
+    # here) must NEVER carry this header, even if the caller's JSON body
+    # happens to include a request_id — the request is rejected before the
+    # body is ever parsed, so nothing legitimate could echo it, and a forged
+    # echo here would defeat the whole point of the binding.
+    r = client.post("/webhook/dispatch", json={"attacker_ip": "9.9.9.9", "request_id": "attacker-supplied"})
+    assert r.status_code == 401
+    assert "x-elastic-request-id" not in r.headers
 
 
 # --- #277 round-3: the response must echo request_id — the actual field

@@ -53,7 +53,7 @@ acceptance criteria, and a rough effort size (**S** ≤2d · **M** ≤1wk · **L
 | Multi-tenancy | ❌ None | Single `logstash-security-*` index, one Kibana, one ntfy topic, one quarantine target set |
 | Data retention / ILM | ❌ None | Daily indices, `data_stream => false`, no lifecycle policy |
 | Detection content | ⚠️ Demo-grade | 10 `rules/sigma/*.yml` (status `experimental`, compiled as inline regex); hardcoded IOC `logstash.conf:187`; `intel.dat` = 2 entries |
-| Threat-intel integration | ⚠️ Placeholder | `configs/intel/intel.dat` static, 2 IOCs |
+| Threat-intel integration | ⚠️ Placeholder | `configs/intel/data/intel.dat` static, 2 IOCs |
 | SOAR trigger correctness | ⚠️ Likely dead | `logstash.conf:268` keys on `threat.indicator.domain`, which nothing in the pipeline sets |
 | Config integrity | ⚠️ Drift risk | Two copies: `configs/logstash.conf` and `scripts/setup/configs/logstash/logstash.conf` |
 | Detection validation | ✅ Seed exists | `tests/anomaly_simulation/` (3 scenarios + verifier) |

@@ -29,7 +29,7 @@ Suburban-SOC is a mesh-network security monitoring pipeline: an OpenWrt router c
 - After a PR merges, close the linked GitHub issue(s) and update the project board before reporting the task complete.
 
 ## Known Gotchas to Check Before Starting Work
-- Threat-intel feed (`configs/intel/intel.dat`) ships only placeholder indicators until `refresh_intel.sh` runs.
+- Threat-intel feed (`configs/intel/data/intel.dat`) ships only placeholder indicators until `refresh_intel.sh` runs.
 - Elasticsearch runs single-node, so there is no replica fault tolerance.
 - HTTPS payload inspection is out of scope without a decryption proxy.
 

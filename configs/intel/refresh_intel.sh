@@ -42,7 +42,17 @@ FEODO_URL="${FEODO_URL:-https://feodotracker.abuse.ch/downloads/ipblocklist.txt}
 # second format (e.g. URLhaus's full-URL list) and its own risk surface.
 ET_COMPROMISED_URL="${ET_COMPROMISED_URL:-https://rules.emergingthreats.net/blockrules/compromised-ips.txt}"
 SEED="$HERE/intel.seed.dat"
-OUT="$HERE/intel.dat"
+# #270: intel.dat (pure data, regenerated every run) now lives in its own
+# subdirectory, separate from config.zeek/refresh_intel.sh (code, executed
+# as root Zeek policy on the capture host) — intel-refresh.service's
+# ReadWritePaths grant is scoped to ONLY this subdirectory, so a compromise
+# of this sandboxed process (via some vector other than feed content, which
+# is already fully sanitized below) can no longer write to config.zeek at
+# its repo source. See configs/systemd/intel-refresh.service's own comment
+# on ReadWritePaths for the full threat model this closes.
+DATA_DIR="$HERE/data"
+mkdir -p "$DATA_DIR"
+OUT="$DATA_DIR/intel.dat"
 # If the live capture's bind-mount path exists, refresh it too so running Zeek
 # picks up the new feed on its next read without a manual re-sync.
 LIVE_DIR="/storage/PCAP/intel"
@@ -59,14 +69,15 @@ BOGON_RE='^(0\.|10\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|22
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { printf '[intel] %s %s\n' "$(ts)" "$*"; }
 
-# mktemp -p "$HERE": same filesystem as $OUT (configs/intel/), not the
-# default /tmp — under this unit's PrivateTmp=true, /tmp is a private tmpfs,
-# so `mv` from there to $OUT would be a cross-device copy (open/truncate/
-# write), not an atomic rename, defeating the whole point of building the
-# new file under a temp name first (security-auditor review: Zeek reads
-# intel.dat in Input::REREAD mode and re-reads on any mtime change, so a
-# non-atomic write risks it reading a truncated file mid-write while live).
-tmp="$(mktemp -p "$HERE")"; tmp_ips="$(mktemp)"; tmp_ips_et="$(mktemp)"
+# mktemp -p "$DATA_DIR": same directory as $OUT (#270: configs/intel/data/,
+# was configs/intel/ before the code/data split), not the default /tmp —
+# under this unit's PrivateTmp=true, /tmp is a private tmpfs, so `mv` from
+# there to $OUT would be a cross-device copy (open/truncate/write), not an
+# atomic rename, defeating the whole point of building the new file under a
+# temp name first (security-auditor review: Zeek reads intel.dat in
+# Input::REREAD mode and re-reads on any mtime change, so a non-atomic write
+# risks it reading a truncated file mid-write while live).
+tmp="$(mktemp -p "$DATA_DIR")"; tmp_ips="$(mktemp)"; tmp_ips_et="$(mktemp)"
 trap 'rm -f "$tmp" "$tmp_ips" "$tmp_ips_et"' EXIT
 
 # --- 1. Fetch each live feed (fail-safe per feed) ----------------------------

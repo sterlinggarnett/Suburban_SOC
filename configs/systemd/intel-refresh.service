@@ -25,8 +25,9 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 # Runs as the repo owner so it can read scripts/setup/.env, write
-# configs/intel/intel.dat, and use the user's Docker context for the CA
-# extraction below — same posture as slo-metrics.service.
+# configs/intel/data/intel.dat (#270 — was configs/intel/intel.dat directly),
+# and use the user's Docker context for the CA extraction below — same
+# posture as slo-metrics.service.
 User=tjlam
 # security-auditor review (#271; empirically re-confirmed live via
 # `systemd-run --user` against a throwaway unit on this exact host):
@@ -97,7 +98,28 @@ Environment=ES_CA=/run/suburban-soc-intel/ca.crt
 # silently).
 RuntimeDirectoryMode=0700
 RuntimeDirectory=suburban-soc-intel
+# #270 (security-auditor review): the docker cp below re-fetches the ES CA
+# from the `elasticsearch` container on EVERY run with no verification —
+# whatever sits at that container path becomes the sole trust anchor for a
+# request carrying the intel_writer credential. An attacker able to write
+# into that container path, or start a container named `elasticsearch`
+# first, could MITM the connection and harvest it. scripts/setup/
+# verify_ca_fingerprint.sh pins the fingerprint seen on the FIRST run this
+# host ever makes (a repo-committed static pin isn't possible — the real
+# value depends on each deployment's own generated CA, which this repo has
+# no access to) and hard-fails + deletes ca.crt on any later mismatch.
+# StateDirectory (NOT RuntimeDirectory, which is torn down between every
+# Type=oneshot run) persists that pin across runs so a LATER swap is still
+# caught — see the script's own header for the full reasoning.
+# "-" prefixed, matching this unit's existing graceful-degradation posture
+# (refresh_intel.sh already runs fine with no ES_CA at all — see the
+# comment above): a deleted/untrusted ca.crt here just makes the later
+# indexing step fail closed via es_common.sh's own missing-CA check, the
+# same as if extraction itself had failed, rather than taking down the
+# primary intel.dat refresh over a credential-only concern.
+StateDirectory=suburban-soc-intel
 ExecStartPre=-/usr/bin/docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt /run/suburban-soc-intel/ca.crt
+ExecStartPre=-/usr/bin/bash /home/tjlam/projects/Suburban-SOC/scripts/setup/verify_ca_fingerprint.sh /run/suburban-soc-intel/ca.crt /var/lib/suburban-soc-intel/ca_fingerprint.sha256
 # Invoked via `bash <path>`, not the script's own execute bit: this repo's
 # core.fileMode=false means no .sh file is git-tracked as executable (fresh
 # clone always yields 644) — caught by `systemd-analyze verify` failing with
@@ -135,7 +157,22 @@ MemoryMax=256M
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/tjlam/projects/Suburban-SOC/configs/intel
+# #270 (security-auditor review): scoped to configs/intel/data/ specifically —
+# NOT the parent configs/intel/, which also holds config.zeek (Zeek policy,
+# executed as root by zeek-host-capture.service) and refresh_intel.sh itself.
+# The prior grant on the parent directory gave this sandboxed process write
+# access to files that get executed with a much higher privilege elsewhere;
+# a compromise of this process via any vector OTHER than feed content (already
+# fully IPv4/bogon-sanitized by refresh_intel.sh before it reaches any sink)
+# could plant code in config.zeek that root's own cp then deploys and Zeek
+# executes on the next capture restart. refresh_intel.sh's own OUT/DATA_DIR
+# now points here — this directory holds ONLY regenerated data (intel.dat),
+# nothing Zeek or any other process interprets as code, so even a full write
+# compromise of this narrower path can no longer reach config.zeek at its
+# repo source. config.zeek/refresh_intel.sh/intel.seed.dat stay read-only to
+# this unit under ProtectHome=read-only (no explicit grant needed — that's
+# the point).
+ReadWritePaths=/home/tjlam/projects/Suburban-SOC/configs/intel/data
 # "-" prefix: do not fail the unit if this path does not exist on this host
 # (refresh_intel.sh itself already handles that gracefully — see its
 # `if [[ -d "$LIVE_DIR" ]]` check).

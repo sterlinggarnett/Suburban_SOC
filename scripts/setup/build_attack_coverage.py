@@ -151,16 +151,70 @@ def _validate_title(title, source_label):
     return title
 
 
+def _technique_tactic_pairs(techs, tacs, rule_name):
+    """#378: pair a rule's (possibly several) attack.<technique> tags with
+    its (possibly several) attack.<tactic> tags. Sigma's `tags:` list has no
+    schema for expressing "this technique goes with that tactic specifically"
+    when a rule carries more than one of each — tactics and techniques are
+    just two flat, separately-ordered runs in the same list (confirmed
+    against the real corpus: every rule lists all its tactic tags first,
+    then all its technique tags, never interleaved).
+
+    The old `re.search()` (first-match-only) implementation silently
+    discarded every secondary tag. The issue's own suggested fix — always
+    emit the full (techniques x tactics) cross-product — is WRONG for at
+    least one real rule in this corpus: posh_ps_obfuscated_scriptblock.yml
+    tags execution+defense_evasion / t1059.001+t1027, where T1059.001
+    (PowerShell) is only a real Execution technique and T1027 (Obfuscated
+    Files) is only a real Defense Evasion technique per MITRE ATT&CK's own
+    published mappings — a blind cross-product would assert two false
+    technique-tactic pairs (T1059.001+defense_evasion, T1027+execution) on
+    a published compliance/coverage artifact, the exact kind of inaccuracy
+    M22 exists to eliminate, not just move.
+
+    So: broadcast a SINGLE technique/tactic across every one of the other
+    (this is unambiguous, and is exactly #281's own T1078.003 case: one
+    technique legitimately scored under several tactic columns); POSITION-pair
+    when both lists are the same length > 1 (the corpus convention of
+    listing tactic tags and technique tags in corresponding order — verified
+    against both rules in this corpus that currently have this shape: pairing
+    tactic[i] with technique[i] in listed order produces only mappings that
+    are independently real per MITRE ATT&CK, unlike the cross-product); and
+    fail loudly rather than guess if the lists are both >1 and unequal
+    length, since there is no way to infer intended pairing from the tags
+    alone in that shape (not currently reachable by any rule in this corpus,
+    but a future rule could hit it).
+    """
+    if len(techs) == 1:
+        return [(techs[0], tac) for tac in tacs]
+    if len(tacs) == 1:
+        return [(tech, tacs[0]) for tech in techs]
+    if len(techs) == len(tacs):
+        return list(zip(techs, tacs))
+    raise ValueError(
+        f"{rule_name}: {len(techs)} attack.<technique> tags and "
+        f"{len(tacs)} attack.<tactic> tags — can't infer which technique "
+        f"pairs with which tactic from an unequal, both->1 tag count; "
+        f"Sigma's tags: list has no way to express that pairing explicitly, "
+        f"so this needs a human decision, not a guessed cross-product or "
+        f"positional pairing")
+
+
 def harvest():
     rows = []  # each: technique, tactic, source, rule, test, title, status
     # --- Endpoint: Sigma rules -> Elastic Detection Engine ---
     for f in sorted(SIGMA_DIR.glob("*.yml")):
         t = f.read_text(encoding="utf-8")
-        tech = re.search(r"attack\.(t\d{4}(?:\.\d{3})?)", t, re.I)
-        tac = re.search(r"attack\.([a-z_]+)\s*$", t, re.M)
+        # #378: findall (not search) — a rule can legitimately carry more
+        # than one attack.<technique> and/or attack.<tactic> tag; the old
+        # first-match-only search() silently discarded every secondary tag.
+        # Dedup (preserving first-seen order) so an accidental duplicate tag
+        # in a rule's own tags: list doesn't produce a duplicate row.
+        techs = list(dict.fromkeys(m.upper() for m in re.findall(r"attack\.(t\d{4}(?:\.\d{3})?)", t, re.I)))
+        tacs_raw = list(dict.fromkeys(m.lower() for m in re.findall(r"attack\.([a-z_]+)\s*$", t, re.M)))
         title = re.search(r"^title:\s*(.+)$", t, re.M)
         status = re.search(r"^status:\s*(\S+)", t, re.M)
-        if not tech:
+        if not techs:
             continue
         # #281 security-auditor finding: silently falling back to "Unknown"
         # (no TACTICS entry for the rule's own attack.<tactic> tag, or no
@@ -170,23 +224,32 @@ def harvest():
         # #281 exists to eliminate, just via a different route (e.g. a typo
         # like attack.privilege-escalation instead of the real
         # attack.privilege_escalation). Fail loudly instead.
-        if not tac or tac.group(1).lower() not in TACTICS:
+        # #378: validates EVERY tactic tag on the rule, not just the first —
+        # the old code only ever inspected tac.group(1), so a rule with a
+        # valid first tactic tag and a typo'd SECOND one shipped silently.
+        unresolved = [tac for tac in tacs_raw if tac not in TACTICS]
+        if not tacs_raw or unresolved:
             raise ValueError(
                 f"rules/sigma/{f.name}: has an attack.<technique> tag but no "
                 f"resolvable attack.<tactic> tag (found: "
-                f"{tac.group(1) if tac else None!r}) — every rule with a "
-                f"technique tag needs a matching tactic tag from TACTICS, "
-                f"or it silently renders as a dead Navigator cell")
-        tactic_name = TACTICS[tac.group(1).lower()][0]
-        rows.append({
-            "technique": tech.group(1).upper(),
-            "tactic": tactic_name,
-            "source": logsource_label(t),
-            "rule": f"rules/sigma/{f.name}",
-            "test": "Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)",
-            "title": _validate_title(title.group(1).strip() if title else f.stem, f"rules/sigma/{f.name}"),
-            "status": status.group(1) if status else "experimental",
-        })
+                f"{tacs_raw or None!r}, unresolved: {unresolved!r}) — every "
+                f"rule with a technique tag needs a matching tactic tag from "
+                f"TACTICS, or it silently renders as a dead Navigator cell")
+        tactic_names = [TACTICS[tac][0] for tac in tacs_raw]
+        source = logsource_label(t)
+        rule_label = f"rules/sigma/{f.name}"
+        validated_title = _validate_title(title.group(1).strip() if title else f.stem, rule_label)
+        status_value = status.group(1) if status else "experimental"
+        for technique, tactic_name in _technique_tactic_pairs(techs, tactic_names, rule_label):
+            rows.append({
+                "technique": technique,
+                "tactic": tactic_name,
+                "source": source,
+                "rule": rule_label,
+                "test": "Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)",
+                "title": validated_title,
+                "status": status_value,
+            })
     # --- Network: Zeek detections classified in logstash.conf (Category 5) ---
     # Pair each [threat][technique][id] with the [threat][tactic][id]/[name]
     # that follow it within the SAME add_field block.

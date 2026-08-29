@@ -36,6 +36,14 @@
     },
     {
       "techniqueID": "T1078.003",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Direct Root Login via SSH :: rules/sigma/auth_linux_ssh_root_login.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1078.003",
       "tactic": "privilege-escalation",
       "score": 75,
       "color": "#2ca02c",
@@ -99,6 +107,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1078.002",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Logon Attempt Against a Disabled Account :: rules/sigma/auth_win_disabled_account_logon_attempt.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1558.003",
       "tactic": "credential-access",
       "score": 75,
@@ -115,11 +131,27 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1550.002",
+      "tactic": "defense-evasion",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Pass-the-Hash Logon Pattern (LogonType 9, Negotiate) :: rules/sigma/auth_win_pass_the_hash_logon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1098",
       "tactic": "persistence",
       "score": 75,
       "color": "#2ca02c",
       "comment": "Privileged Group Membership Change (Windows Security 4732/4728/4756) :: rules/sigma/auth_win_priv_group_membership_change.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1078",
+      "tactic": "privilege-escalation",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Privileged Group Membership Change (Windows Security 4732/4728/4756) :: rules/sigma/auth_win_priv_group_membership_change.yml; Special-Privilege Logon Assigning SeDebugPrivilege (Windows Security 4672) :: rules/sigma/auth_win_sedebug_special_logon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -139,7 +171,7 @@
       "enabled": true
     },
     {
-      "techniqueID": "T1078",
+      "techniqueID": "T1134",
       "tactic": "privilege-escalation",
       "score": 75,
       "color": "#2ca02c",
@@ -165,6 +197,14 @@
     {
       "techniqueID": "T1055",
       "tactic": "defense-evasion",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Suspicious CreateRemoteThread Target or Source (Sysmon EventID 8) :: rules/sigma/create_remote_thread_win_susp_target.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1055",
+      "tactic": "privilege-escalation",
       "score": 75,
       "color": "#2ca02c",
       "comment": "Suspicious CreateRemoteThread Target or Source (Sysmon EventID 8) :: rules/sigma/create_remote_thread_win_susp_target.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
@@ -224,6 +264,14 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "DNS Query with High-Entropy Long Subdomain Label (Possible Tunneling) :: rules/sigma/net_zeek_dns_tunneling_high_entropy.yml; TXT Record Answer with Encoded-Looking Payload (Possible C2 Download Direction) :: rules/sigma/net_zeek_dns_txt_answer_abuse.yml; TXT Record Query with Encoded-Looking Payload (Possible C2/Exfil Channel) :: rules/sigma/net_zeek_dns_txt_record_abuse.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1071.004",
+      "tactic": "exfiltration",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "DNS Query with High-Entropy Long Subdomain Label (Possible Tunneling) :: rules/sigma/net_zeek_dns_tunneling_high_entropy.yml; TXT Record Query with Encoded-Looking Payload (Possible C2/Exfil Channel) :: rules/sigma/net_zeek_dns_txt_record_abuse.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -291,6 +339,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1056.002",
+      "tactic": "credential-access",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "PowerShell Credential-Harvesting Cmdlet Pattern :: rules/sigma/posh_credential_harvesting_scriptblock.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1560",
       "tactic": "collection",
       "score": 75,
@@ -323,8 +379,24 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1027",
+      "tactic": "defense-evasion",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Obfuscated or Encoded PowerShell Script Block :: rules/sigma/posh_ps_obfuscated_scriptblock.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1546.008",
       "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Accessibility Feature Backdoor via Image/OriginalFileName Mismatch :: rules/sigma/proc_creation_win_accessibility_binary_debugger_swap.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1546.008",
+      "tactic": "privilege-escalation",
       "score": 75,
       "color": "#2ca02c",
       "comment": "Accessibility Feature Backdoor via Image/OriginalFileName Mismatch :: rules/sigma/proc_creation_win_accessibility_binary_debugger_swap.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
@@ -395,6 +467,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1059.007",
+      "tactic": "execution",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Cscript/Wscript Executing from a Non-Standard Location :: rules/sigma/proc_creation_win_cscript_wscript_remote.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1574.002",
       "tactic": "persistence",
       "score": 75,
@@ -403,8 +483,24 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1574.002",
+      "tactic": "privilege-escalation",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "DNS Server Plugin DLL Side-Loading via dnscmd :: rules/sigma/proc_creation_win_dnscmd_serverlevelplugindll.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1005",
       "tactic": "collection",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Locked File Copied via esentutl VSS Trick (Browser Credential Access) :: rules/sigma/proc_creation_win_esentutl_locked_file_copy.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1005",
+      "tactic": "credential-access",
       "score": 75,
       "color": "#2ca02c",
       "comment": "Locked File Copied via esentutl VSS Trick (Browser Credential Access) :: rules/sigma/proc_creation_win_esentutl_locked_file_copy.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
@@ -432,6 +528,14 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "Shell Spawned by PsExec Service or WMI Provider Host :: rules/sigma/proc_creation_win_lateral_tool_parent.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1569.002",
+      "tactic": "lateral-movement",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Shell Spawned by PsExec Service or WMI Provider Host :: rules/sigma/proc_creation_win_lateral_tool_parent.yml; PsExec Client-Side Remote Execution Launch :: rules/sigma/proc_creation_win_psexec_client_side_launch.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -507,6 +611,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1105",
+      "tactic": "execution",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "PowerShell Remote Download Cradle :: rules/sigma/proc_creation_win_powershell_downloadstring.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1569.002",
       "tactic": "execution",
       "score": 75,
@@ -525,6 +637,14 @@
     {
       "techniqueID": "T1574",
       "tactic": "privilege-escalation",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "RDP Session Hijacking via Tscon :: rules/sigma/proc_creation_win_rdp_hijack_tscon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1574",
+      "tactic": "lateral-movement",
       "score": 75,
       "color": "#2ca02c",
       "comment": "RDP Session Hijacking via Tscon :: rules/sigma/proc_creation_win_rdp_hijack_tscon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
@@ -579,8 +699,24 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1543.003",
+      "tactic": "privilege-escalation",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Existing Service Reconfigured to a New Binary Path :: rules/sigma/proc_creation_win_sc_config_binpath_change.yml; Windows Service Creation via Sc.exe :: rules/sigma/proc_creation_win_service_creation_sc.yml; Remote-Style Service Creation (PsExec Pattern) :: rules/sigma/system_win_remote_service_creation_psexec_style.yml; New Service Installed (Windows System 7045) :: rules/sigma/system_win_service_installed.yml; New Service Installed With a LOLBin as its Binary :: rules/sigma/system_win_suspicious_service_binpath_lolbin.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1053.005",
       "tactic": "execution",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Scheduled Task Creation via Schtasks :: rules/sigma/proc_creation_win_scheduled_task.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1053.005",
+      "tactic": "persistence",
       "score": 75,
       "color": "#2ca02c",
       "comment": "Scheduled Task Creation via Schtasks :: rules/sigma/proc_creation_win_scheduled_task.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
@@ -611,6 +747,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1068",
+      "tactic": "defense-evasion",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Kernel or File-System Driver Service Installed :: rules/sigma/system_win_driver_service_installed.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1546.003",
       "tactic": "persistence",
       "score": 75,
@@ -636,7 +780,7 @@
   "metadata": [
     {
       "name": "detections",
-      "value": "110"
+      "value": "135"
     },
     {
       "name": "source",
@@ -644,7 +788,7 @@
     },
     {
       "name": "unique_techniques",
-      "value": "75"
+      "value": "78"
     }
   ]
 }

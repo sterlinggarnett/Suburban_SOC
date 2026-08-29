@@ -164,17 +164,27 @@ class RealCorpusRegressionTests(unittest.TestCase):
         expected = {(r["technique"], r["tactic"].lower().replace(" ", "-")) for r in rows}
         self.assertEqual(emitted, expected)
 
-    def test_t1078_003_keeps_both_legitimate_tactic_entries(self):
+    def test_t1078_003_keeps_all_legitimate_tactic_entries(self):
         # Regression guard for the exact case that makes "dedup by
         # techniqueID alone" wrong — see module docstring.
+        # #378: auth_linux_ssh_root_login.yml tags BOTH attack.initial_access
+        # AND attack.persistence alongside its single attack.t1078.003 tag —
+        # before #378 fixed harvest()'s first-match-only extraction, only
+        # Initial Access survived; Persistence was silently discarded (one
+        # of the 21 secondary-tactic-mapping drops #378 itself is about).
+        # So T1078.003 now legitimately appears 3 times: Initial Access +
+        # Persistence (both from root_login) + Privilege Escalation (su).
         rows = bac.harvest()
         layer = bac.navigator_layer(rows)
         matching = [t for t in layer["techniques"] if t["techniqueID"] == "T1078.003"]
-        self.assertEqual(len(matching), 2,
+        self.assertEqual(len(matching), 3,
                           "T1078.003 should appear once per legitimate tactic "
-                          "(Initial Access via SSH root login, Privilege Escalation "
-                          "via su) — collapsing to one entry would silently drop a "
-                          "real tactic-column score in ATT&CK Navigator")
+                          "(Initial Access + Persistence via SSH root login, "
+                          "Privilege Escalation via su) — collapsing entries "
+                          "would silently drop a real tactic-column score in "
+                          "ATT&CK Navigator")
+        tactics = {t["tactic"] for t in matching}
+        self.assertEqual(tactics, {"initial-access", "persistence", "privilege-escalation"})
 
     def test_real_corpus_currently_has_duplicate_mappings_this_fix_dedups(self):
         # Not a correctness requirement of the fix itself — if this ever
@@ -517,6 +527,100 @@ class HarvestFailsLoudlyOnBadInputTests(unittest.TestCase):
                  mock.patch.object(bac, "CONF", conf):
                 rows = bac.harvest()
         self.assertEqual(rows, [])
+
+
+class TechniqueTacticPairingTests(unittest.TestCase):
+    """#378: harvest() used to re.search() (first-match-only) a rule's
+    attack.<technique>/attack.<tactic> tags, silently discarding every
+    secondary tag — 21 of the 106-then rules carry two attack.<tactic> tags,
+    6 carry two attack.<technique> tags. Switched to re.findall() plus
+    _technique_tactic_pairs(), which broadcasts a lone technique/tactic
+    across the others (unambiguous — #281's own T1078.003 case), positionally
+    pairs same-length lists > 1 (the corpus's own listing convention, and the
+    only choice that doesn't assert an unverified cross-tactic mapping — see
+    module docstring for the real posh_ps_obfuscated_scriptblock.yml
+    counter-example to a blind cross-product), and fails loudly on an
+    unequal both->1 shape rather than guessing."""
+
+    def _harvest_with_rule(self, rule_text):
+        with tempfile.TemporaryDirectory() as d:
+            sigma_dir = Path(d)
+            (sigma_dir / "test_rule.yml").write_text(rule_text, encoding="utf-8")
+            with mock.patch.object(bac, "SIGMA_DIR", sigma_dir), \
+                 mock.patch.object(bac, "CONF", ""):
+                return bac.harvest()
+
+    def test_pairs_function_broadcasts_single_technique_across_multiple_tactics(self):
+        self.assertEqual(
+            bac._technique_tactic_pairs(["T1078.003"], ["Initial Access", "Persistence"], "r"),
+            [("T1078.003", "Initial Access"), ("T1078.003", "Persistence")])
+
+    def test_pairs_function_broadcasts_single_tactic_across_multiple_techniques(self):
+        self.assertEqual(
+            bac._technique_tactic_pairs(["T1059.001", "T1027"], ["Execution"], "r"),
+            [("T1059.001", "Execution"), ("T1027", "Execution")])
+
+    def test_pairs_function_positionally_pairs_equal_length_lists(self):
+        self.assertEqual(
+            bac._technique_tactic_pairs(["T1059.001", "T1027"], ["Execution", "Defense Evasion"], "r"),
+            [("T1059.001", "Execution"), ("T1027", "Defense Evasion")])
+
+    def test_pairs_function_raises_on_unequal_both_multi_lists(self):
+        # No rule in the real corpus has this shape today, but the function
+        # must never guess at a pairing it can't actually infer from the
+        # tags alone.
+        with self.assertRaises(ValueError) as ctx:
+            bac._technique_tactic_pairs(["T1059.001", "T1027", "T1105"], ["Execution", "Defense Evasion"], "r.yml")
+        self.assertIn("r.yml", str(ctx.exception))
+
+    def test_harvest_emits_a_row_per_technique_when_one_tactic_is_shared(self):
+        rule_text = ("title: Test Rule\ntags:\n    - attack.execution\n"
+                     "    - attack.t1059.001\n    - attack.t1027\n")
+        rows = self._harvest_with_rule(rule_text)
+        pairs = {(r["technique"], r["tactic"]) for r in rows}
+        self.assertEqual(pairs, {("T1059.001", "Execution"), ("T1027", "Execution")})
+
+    def test_harvest_emits_a_row_per_tactic_when_one_technique_is_shared(self):
+        rule_text = ("title: Test Rule\ntags:\n    - attack.initial_access\n"
+                     "    - attack.persistence\n    - attack.t1078.003\n")
+        rows = self._harvest_with_rule(rule_text)
+        pairs = {(r["technique"], r["tactic"]) for r in rows}
+        self.assertEqual(pairs, {("T1078.003", "Initial Access"), ("T1078.003", "Persistence")})
+
+    def test_harvest_positionally_pairs_equal_length_tags_not_a_cross_product(self):
+        # The real posh_ps_obfuscated_scriptblock.yml shape: T1059.001
+        # (PowerShell) is only a real Execution technique, T1027 (Obfuscated
+        # Files) is only a real Defense Evasion technique per MITRE ATT&CK —
+        # a cross-product would assert two FALSE pairs here.
+        rule_text = ("title: Test Rule\ntags:\n    - attack.execution\n"
+                     "    - attack.defense_evasion\n    - attack.t1059.001\n"
+                     "    - attack.t1027\n")
+        rows = self._harvest_with_rule(rule_text)
+        pairs = {(r["technique"], r["tactic"]) for r in rows}
+        self.assertEqual(pairs, {("T1059.001", "Execution"), ("T1027", "Defense Evasion")})
+        self.assertNotIn(("T1059.001", "Defense Evasion"), pairs)
+        self.assertNotIn(("T1027", "Execution"), pairs)
+
+    def test_harvest_validates_every_tactic_tag_not_just_the_first(self):
+        # #378: the old code only ever inspected the FIRST tactic match —
+        # a rule with a valid first tactic tag and a typo'd second one
+        # shipped silently. "made_up_tactic" is tactic-SHAPED (matches the
+        # [a-z_]+ tag regex, unlike a hyphenated typo, which the regex
+        # doesn't even capture as a candidate tag at all) but isn't a real
+        # key in TACTICS, so it must fail the "does it resolve" check
+        # specifically, not just the "was anything found" check.
+        rule_text = ("title: Test Rule\ntags:\n    - attack.initial_access\n"
+                     "    - attack.made_up_tactic\n    - attack.t1078.003\n")
+        with self.assertRaises(ValueError) as ctx:
+            self._harvest_with_rule(rule_text)
+        self.assertIn("test_rule.yml", str(ctx.exception))
+        self.assertIn("made_up_tactic", str(ctx.exception))
+
+    def test_harvest_dedups_an_accidentally_repeated_tag(self):
+        rule_text = ("title: Test Rule\ntags:\n    - attack.discovery\n"
+                     "    - attack.t1046\n    - attack.t1046\n")
+        rows = self._harvest_with_rule(rule_text)
+        self.assertEqual(len(rows), 1)
 
 
 if __name__ == "__main__":

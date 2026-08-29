@@ -25,7 +25,7 @@ Suburban-SOC deploys 108 Sigma detection rules across endpoint (Sysmon, Windows 
 - CIS Controls: 17 (Incident Response Management)
 
 ## MITRE ATT&CK Framework
-The deployed corpus covers **75 techniques across 12 tactics**. Per-rule technique IDs are in the Master Detection & Response Matrix below and in each rule's section; the authoritative coverage matrix (auto-generated from `rules/sigma/`) is [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md).
+The deployed corpus covers **78 techniques across 12 tactics**. Per-rule technique IDs are in the Master Detection & Response Matrix below and in each rule's section; the authoritative coverage matrix (auto-generated from `rules/sigma/`) is [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md).
 
 ## Assumptions and Limitations
 - Assumes EDR and Logstash pipelines are fully operational.

@@ -27,7 +27,7 @@ matching the M12/M13/M14 pattern.
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
-| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ⏳ 4/6 closed — 2 open (#308, #312) | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
+| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ⏳ 5/6 closed — 1 open (#312) | Autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
@@ -376,6 +376,45 @@ unattended multi-issue runs.
   back with no findings; verified via the full test suite (no live ES/
   Kibana cluster available in this environment, same as prior static-
   verified M20 issues).
+
+- [x] **#308 (security, priority:medium) — COMPLETE, MERGED (PR #473)** —
+  a residual risk #277 deliberately left open: `dispatch_block_via_
+  broker()` (`agent.py`) signed and verified `/webhook/dispatch`'s
+  200-status success responses, but trusted ANY non-200 status code
+  (400/401/403/503) as a CONFIRMED non-dispatch with NO signature check
+  at all. An on-path attacker could suppress a genuine 200 (a dispatch
+  that had already succeeded) and inject a forged error instead, and
+  the agent would treat it as safe to retry — an unsafe double-dispatch.
+  Round 1: added an app-wide FastAPI exception handler
+  (`_signed_http_exception_handler()`) that signs every HTTPException-
+  driven error response the same way a 200 is signed, and made
+  `verify_signature()` run for every status code except 500/504
+  (unconditionally ambiguous either way). Round-1 security review found
+  this was NOT sufficient: signature validity alone doesn't prove a
+  response answers a SPECIFIC call — the broker's own pre-auth failures
+  (missing/invalid/replayed signature, invalid timestamp) require no
+  secret to trigger, so an on-path attacker with no secret at all could
+  mint one on demand (send the broker any unauthenticated garbage,
+  capture the genuine signed rejection) and substitute it for a real
+  200, reopening the exact double-dispatch risk. Round 2 extended the
+  existing request_id-binding mechanism (#277/#309, previously
+  200-responses-only) to every status code: `dispatch_block()`'s own
+  post-parse validation failures (the ONE non-200 class that can prove
+  request-specific binding, since reaching that code already requires
+  holding the secret) now echo request_id via a new header rather than
+  a body key (preserving FastAPI's default error shape); every other
+  non-200 carries neither and now correctly resolves to
+  `IsolationOutcomeUnknown` instead of a confirmed `False` — a
+  deliberate, documented deviation from the issue's own literal
+  acceptance criterion ("a real pre-auth 401 still resolve[s] to a
+  confirmed False"), since that reading is unsafe. Also registered the
+  handler against Starlette's base `HTTPException` (not just FastAPI's
+  subclass) after a review found Starlette's own routing errors
+  (404/405) bypassed it, and fixed an unrelated `detail`-extraction bug
+  (a non-200's message fell back to the raw serialized JSON body
+  instead of the clean text). Two full review rounds plus a dedicated
+  round-3 verification pass (which empirically confirmed the new tests
+  fail against the round-1 code) — all clean by the final pass.
 
 **M18 progress:**
 

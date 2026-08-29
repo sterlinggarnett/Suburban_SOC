@@ -247,7 +247,17 @@ ExecStartPre=/bin/mkdir -p /storage/PCAP/zeek_logs /storage/PCAP/intel
 # already-successful || chain set -e does not touch), but a REAL fallback
 # failure (intel.dat absent AND the seed cp itself fails) now aborts here
 # too, same as before this fix.
-ExecStartPre=/bin/bash -c 'set -e; cp -r --remove-destination ${SOC_REPO}/configs/intel/* /storage/PCAP/intel/ 2>/dev/null || true; [ -s /storage/PCAP/intel/intel.dat ] || cp ${SOC_REPO}/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat; grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek || { echo "FATAL: deployed config.zeek is missing an expected at-load line - stale copy" >&2; exit 1; }'
+# #320 security-auditor review: SOC_REPO is passed as a TRAILING ARGUMENT to
+# `bash -c` (the `_ ${SOC_REPO}` after the closing quote), read inside as
+# "$1", rather than substituted directly into the quoted script text the way
+# an earlier draft of this same fix did — embedding ${SOC_REPO} inside the
+# string bash -c re-parses would have reintroduced the identical
+# shell-injection class this issue's ExecStart= fix (see host_capture.sh)
+# exists to close, via SOC_REPO instead of CAPTURE_IFACE. systemd still
+# substitutes ${SOC_REPO} as a single unsplit argv word either way; the
+# difference is WHERE that word lands — as bash's own $1 (never re-parsed)
+# instead of inline text bash's parser sees and interprets.
+ExecStartPre=/bin/bash -c 'set -e; SOC_REPO="$1"; cp -r --remove-destination "$SOC_REPO/configs/intel/"* /storage/PCAP/intel/ 2>/dev/null || true; [ -s /storage/PCAP/intel/intel.dat ] || cp "$SOC_REPO/configs/intel/intel.seed.dat" /storage/PCAP/intel/intel.dat; grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek || { echo "FATAL: deployed config.zeek is missing an expected at-load line - stale copy" >&2; exit 1; }' _ ${SOC_REPO}
 # intel-refresh.service (configs/systemd/intel-refresh.service) runs as the
 # unprivileged repo-owner user and needs to WRITE intel.dat into this same
 # directory on every scheduled refresh, not just at Zeek's own startup — but
@@ -297,7 +307,10 @@ ExecStartPre=/bin/bash -c 'set -e; cp -r --remove-destination ${SOC_REPO}/config
 # sensor. A failure here degrades to refresh_intel.sh's own tagged "stale"
 # status (visible via slo_metrics.py's metric_intel_feed_stale_heartbeats(),
 # #358), not a capture outage.
-ExecStartPre=-/bin/bash -c 'chown -h root:${SOC_USER} /storage/PCAP/intel && chmod 1775 /storage/PCAP/intel'
+# #320 security-auditor review: same trailing-argument technique as the
+# intel-copy ExecStartPre above, for the identical reason — SOC_USER read
+# via "$1" rather than substituted into the quoted script text.
+ExecStartPre=-/bin/bash -c 'SOC_USER="$1"; chown -h root:"$SOC_USER" /storage/PCAP/intel && chmod 1775 /storage/PCAP/intel' _ ${SOC_USER}
 # intel.dat itself (not just the directory) needs to be tjlam-OWNED, not
 # merely group-writable: refresh_intel.sh's live sync writes a temp file
 # then renames it over intel.dat (configs/intel/refresh_intel.sh) — and the

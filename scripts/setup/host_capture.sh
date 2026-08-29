@@ -19,8 +19,12 @@
 
 set -o pipefail
 
-IFACE="$1"
-SOC_REPO="$2"
+# ${1:?...}/${2:?...} (same defensive convention stream_capture.sh's own
+# MODE argument uses): fail loudly with a usage message rather than handing
+# tcpdump/docker an empty/unset interface or bind-mount path if this is ever
+# invoked without both arguments.
+IFACE="${1:?Usage: $0 <capture-iface> <soc-repo-path>}"
+SOC_REPO="${2:?Usage: $0 <capture-iface> <soc-repo-path>}"
 
 # The Zeek image below is pinned to a specific tag+digest, not :latest — see
 # configs/systemd/zeek-host-capture.service's header comment (#293/#364) for

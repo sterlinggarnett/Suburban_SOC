@@ -172,7 +172,8 @@ class DeployedConfigVerificationTests(unittest.TestCase):
         # ExecStartPre failing blocks ExecStart entirely (systemd default) —
         # the loud failure this finding asked for. If the check were only in
         # ExecStart, Zeek would already be starting by the time it ran.
-        execstartpre_pos = ZEEK_HOST_CAPTURE_SERVICE.index("ExecStartPre=/bin/bash -c 'set -e; cp -r")
+        execstartpre_pos = ZEEK_HOST_CAPTURE_SERVICE.index(
+            "ExecStartPre=/bin/bash -c 'set -e; SOC_REPO=\"$1\"; cp -r")
         check_pos = ZEEK_HOST_CAPTURE_SERVICE.index("policy/misc/capture-loss")
         execstart_pos = ZEEK_HOST_CAPTURE_SERVICE.index("\nExecStart=")
         self.assertLess(execstartpre_pos, check_pos)
@@ -187,7 +188,13 @@ class DeployedConfigVerificationTests(unittest.TestCase):
         # ExecStart the way #222 originally guaranteed. set -e at the front
         # of the string is what restores that; assert it is actually there,
         # not just that the capture-loss check itself exits non-zero.
-        match = re.search(r"ExecStartPre=/bin/bash -c '(set -e;.*capture-loss.*)'\n",
+        # #320: this line now passes SOC_REPO as a trailing `bash -c` argument
+        # (`... ' _ ${SOC_REPO}`, read inside as "$1") rather than substituting
+        # it into the quoted script text directly — security-auditor review,
+        # same shell-injection class the ExecStart= fix elsewhere in this unit
+        # closes for CAPTURE_IFACE. The trailing `.*` tolerates that suffix
+        # after the closing quote while still anchoring to one line.
+        match = re.search(r"ExecStartPre=/bin/bash -c '(set -e;.*capture-loss.*)'.*\n",
                           ZEEK_HOST_CAPTURE_SERVICE)
         self.assertIsNotNone(match, "expected the capture-loss ExecStartPre line to start with set -e;")
 
@@ -205,7 +212,13 @@ class DeployedConfigVerificationTests(unittest.TestCase):
         # chown/chmod step) and a bug in the #288 line specifically would
         # have passed a single-match check silently. -? covers the
         # dash-prefixed form too.
-        matches = re.findall(r"ExecStartPre=-?/bin/bash -c '(.*)'\n", ZEEK_HOST_CAPTURE_SERVICE)
+        # #320: two of these lines now end with a trailing `bash -c` argument
+        # (` _ ${SOC_REPO}` / ` _ ${SOC_USER}`) after the closing quote,
+        # rather than substituting that value into the quoted script text
+        # itself — the trailing `.*` tolerates that suffix while `(.*)`
+        # still captures (and this test still checks) only the actual
+        # quoted script content for a stray unescaped `'`.
+        matches = re.findall(r"ExecStartPre=-?/bin/bash -c '(.*)'.*\n", ZEEK_HOST_CAPTURE_SERVICE)
         self.assertGreaterEqual(len(matches), 3,
                                 f"expected at least 3 bash -c ExecStartPre lines, found {len(matches)}")
         for m in matches:

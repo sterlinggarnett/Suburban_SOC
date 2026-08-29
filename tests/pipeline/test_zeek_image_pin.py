@@ -83,13 +83,21 @@ IMAGE_REF_RE = re.compile(
 
 # A reference only counts if it's on the line that actually invokes the
 # container (or the multi-line `docker run \`-continued statement it's
-# part of) — never a comment mentioning the image in prose. Both markers
-# are required to be real, non-comment code in this repo's 4 files, so
-# this alone would already exclude prose; comments are additionally
-# stripped below so a comment that happens to contain one of these marker
-# strings ("bump the docker run image") still can't be misread as a real
-# invocation (security-auditor review).
-INVOCATION_MARKERS = ("docker run", "ExecStart=")
+# part of) — never a comment mentioning the image in prose. This marker is
+# required to be real, non-comment code in this repo's 4 files, so this
+# alone would already exclude prose; comments are additionally stripped
+# below so a comment that happens to contain the marker string ("bump the
+# docker run image") still can't be misread as a real invocation
+# (security-auditor review).
+#
+# #320: "ExecStart=" dropped from this tuple — it existed only to recognize
+# configs/systemd/zeek-host-capture.service's own single-line ExecStart=
+# form, which is no longer one of the 4 real capture paths this module
+# checks (its tcpdump | docker run invocation moved to
+# scripts/setup/host_capture.sh, a plain multi-line `docker run \`-continued
+# statement like the other 3 real capture paths, with no ExecStart= token
+# anywhere in it).
+INVOCATION_MARKERS = ("docker run",)
 
 
 def _strip_full_line_comments(text: str) -> str:
@@ -100,8 +108,10 @@ def _join_backslash_continuations(text: str) -> list:
     """Collapse a `cmd \\\\\\n  arg \\\\\\n  image \\\\\\n  ...` shell statement
     into one logical line, so the image reference — which sits on its own
     line, separate from the `docker run` token — is recognized as part of
-    the same real invocation rather than requiring both on one line (only
-    true for the systemd unit's single-line ExecStart form)."""
+    the same real invocation rather than requiring both on one line. All 4
+    real capture paths now use this multi-line backslash-continued shape
+    (#320: host_capture.sh replaced the systemd unit's own single-line
+    ExecStart= form, the last file that needed both markers on one line)."""
     logical_lines = []
     buf = ""
     for line in text.splitlines():

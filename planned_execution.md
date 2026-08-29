@@ -26,7 +26,7 @@ matching the M12/M13/M14 pattern.
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
-| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ⏳ 5/7 closed — 2 open (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
+| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ⏳ 6/7 closed — 1 open (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
@@ -178,6 +178,43 @@ unattended multi-issue runs.
   security review's gap note, also strengthened the existing live
   `tests/rbac/test_rbac.sh` to directly exercise the privilege
   narrowing (not run in this environment — no live cluster available).
+
+- [x] **#318 (P2, security) — COMPLETE, MERGED (PR #460)** — two related
+  findings in `docker-compose.yml`'s `provision` service. (1) Every
+  role/user `curl` PUT was piped to `/dev/null` with no status-code
+  check, so a failed PUT (403, timeout, ...) still reached the final
+  `echo` and the container exited 0 — every downstream
+  `service_completed_successfully` gate (Kibana, `roles`, Logstash)
+  proceeded as if provisioning had actually succeeded. (2) The script
+  body lived under a folded scalar (`command: >`) wrapped in `bash -c
+  '...'`; YAML only avoids folding multi-line content while its
+  indentation stays more indented than the header line, so a future
+  re-indentation to match `bash -c '`'s own indent would silently fold
+  the whole script onto one line, with the first `#` comment then
+  commenting out everything after it — `bash -n` and pytest would both
+  still pass while the container did nothing. Fixed by switching to
+  `entrypoint: ["/bin/bash", "-c"]` + a literal block scalar (`command:
+  | `, matching `cert_pkcs8`/`roles` already in this file), adding `set
+  -euo pipefail`, and a shared `put()` helper (captures the HTTP status
+  via `-w '%{http_code}'`, exits 1 with an attributed error on
+  non-200/201) replacing all 18 previously-unchecked inline `curl`
+  calls. Security review of this same PR caught that `put()`'s bare
+  `resp=$(curl ...)` assignment would, under `set -e`, abort silently
+  on a curl *process* failure (connection refused, TLS error, no HTTP
+  response at all) rather than the intended diagnostic — fixed by using
+  the assignment as an `if !` condition (exempt from `errexit`, the
+  same idiom as every other `if`/`until` in this script). Verified via
+  static/dry-run checks only (no live Docker/Elasticsearch in this
+  environment): YAML/interpolation validity, and actually executing the
+  real extracted script under bash with `curl`/`sleep` replaced by
+  fakes on `PATH`, covering the happy path, blank-optional-passwords
+  path, an HTTP-level PUT failure, and the curl-process-level failure.
+  A first CI run also surfaced two real regressions from the `put()`
+  refactor — `test_compact_agent_checkpoints.py` and
+  `test_compact_threat_intel.py` each had a role-provisioning-line
+  check keyed off the old unquoted-URL format (`.../role/<name> ` with
+  a trailing space to exclude the `_compactor` variant) — fixed to
+  match on the new `put()` call's closing quote instead.
 
 **M18 progress:**
 

@@ -421,6 +421,27 @@ def send_to_slack(pdf_path: str) -> bool:
         return False
 
 
+# #424: requests/http.client encode HTTP header VALUES as latin-1 — the
+# hardcoded Title below contains an emoji (U+1F4CA) well outside latin-1's
+# range, which raises UnicodeEncodeError deep in http.client.putheader(),
+# silently swallowed by this function's own `except Exception`, dropping
+# the push with only a log line. Same fix/reasoning as agent.py's
+# `_ntfy_header_safe` (duplicated rather than shared — these are
+# independent scripts with no existing import relationship between them).
+_NTFY_HEADER_TRANSLATIONS = {
+    "—": "-", "–": "-",
+    "‘": "'", "’": "'", "“": '"', "”": '"',
+    "…": "...",
+    "\r": " ", "\n": " ",
+}
+
+
+def _ntfy_header_safe(value: str) -> str:
+    for src, dst in _NTFY_HEADER_TRANSLATIONS.items():
+        value = value.replace(src, dst)
+    return value.encode("latin-1", "replace").decode("latin-1")
+
+
 def send_ntfy_notification(metrics: dict, pdf_delivered: bool) -> None:
     """
     Pushes a summary push notification via ntfy (same topic as agent_app.py).
@@ -437,7 +458,7 @@ def send_ntfy_notification(metrics: dict, pdf_delivered: bool) -> None:
             f"https://ntfy.sh/{NTFY_TOPIC}",
             data=message.encode("utf-8"),
             headers={
-                "Title":    "📊 Weekly Security Report Ready",
+                "Title":    _ntfy_header_safe("📊 Weekly Security Report Ready"),
                 "Priority": "3",
                 "Tags":     "bar_chart,lock",
             },

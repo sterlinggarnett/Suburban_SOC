@@ -241,7 +241,11 @@ def validate(em: Emulation, root: Path, check_sigma: bool) -> None:
     else:
         em.add(Severity.OK, "exec-vector", "")
         if not os.access(vec, os.X_OK):
-            em.add(Severity.WARN, "exec-vector", f"vector exists but is not executable (chmod +x {em.exec_vector})")
+            # #413: routine (every sim ships mode 644 per .github/workflows/detections.yml's
+            # own comment) — kept at INFO so a real WARN elsewhere in this row (e.g. a
+            # telemetry-mismatch caveat like EXPLOITATION_UNVERIFIED) isn't visually lost
+            # next to this expected, non-actionable finding.
+            em.add(Severity.INFO, "exec-vector", f"vector exists but is not executable (chmod +x {em.exec_vector})")
 
     # Log source config (left of '->'); the logfile on the right is runtime output.
     cfg = resolve(root, em.log_config)

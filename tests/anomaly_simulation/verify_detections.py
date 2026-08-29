@@ -73,7 +73,10 @@ def build_checks(lookback_min: int) -> list[Check]:
             },
         ),
         Check(
-            name="Malware download (application/zip in zeek.files)",
+            # #383/#413: telemetry-only check — application/zip is not in
+            # net_zeek_executable_download.yml's mime_type list, so a pass
+            # here confirms Zeek's file-typing pipeline, not that T1105 rule.
+            name="Malware download telemetry (application/zip in zeek.files, NOT a T1105 rule hit)",
             query={
                 "bool": {
                     "must": [

@@ -47,6 +47,9 @@ Execute the simulation loops and collect evidence per technique:
 1. **Port scan:** `./sim_portscan.sh` → Screenshot `Scan::Port_Scan`.
 2. **SSH brute force:** `./sim_brute_ssh.sh` → Screenshot 5+ `auth_success=false`.
 3. **Malware download:** `./sim_malware_download.sh` → Screenshot `application/zip` in `files.log`.
+   **#383/#413: telemetry only** — `application/zip` is not in
+   `net_zeek_executable_download.yml`'s `mime_type` list, so this does not
+   validate the T1105 detection rule (see `docs/SOP-147-evidence-validation-procedure.md` Step A.3).
 4. **Live Intel:** `./sim_intel_match.sh` → Screenshot `threat.indicator.ip` hit.
 
 ### Eradication & Recovery

@@ -229,6 +229,14 @@ Evidence: ≥5 `zeek.ssh` sessions from one source → SOAR draft → Case → `
 ```
 Evidence: the `zeek.files` doc with `application/zip` MIME indexed. Screenshot the file doc.
 
+**#383/#413: this validates telemetry delivery only, not the T1105 detection
+rule.** `application/zip` is not in `net_zeek_executable_download.yml`'s
+`mime_type` list, so this scenario's `files.log` doc — real telemetry,
+correctly typed — will never make that rule fire. See
+`configs/detections/emulation_telemetry.map`'s `EXPLOITATION_UNVERIFIED`
+section for the full disclosure. The rule itself is separately verified
+against a real Elasticsearch (`tests/detections/test_live_fire.py`).
+
 ### Step A.4 — Live intel match
 ```bash
 ./sim_intel_match.sh          # uses refreshed feed OR seeded 198.51.100.66

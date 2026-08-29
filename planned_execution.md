@@ -25,7 +25,7 @@ since — see the last two rows):
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
-| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 12 addressed via open/unmerged PRs #494–#502 (2026-08-29), 4 permanently not actionable (#283, #333, #415, #421) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
+| [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏸️ 30/34 closed, 4 not actionable ([milestone](https://github.com/voltron-1/Suburban_SOC/milestone/22), no actionable work left) — 12 more issues closed 2026-08-29 via PRs #494–#502; #283, #333, #415, #421 remain, all externally blocked/speculative/needing a live Docker+Zeek+ES stack | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/18 closed — #326 blocked, #396/#403/#405 scoped-out, #389/#390 later-filed Zeek-DNS follow-ups | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
@@ -68,19 +68,17 @@ unattended multi-issue runs.
 the earlier "closed or no actionable work left" summary at line 58 was
 accurate at the time but is stale for M17 specifically — the milestone
 carried real open review-follow-up issues beyond #283/#333 that hadn't
-been picked up yet. 12 addressed this session, each through the full
-implement → structural/live test → PR cycle (parallel security-
-auditor/code-reviewer review deferred to each PR's own CI/review pass,
-not run inline this session): #436+#431 (PR #494), #432 (PR #495), #437
-(PR #496), #407+#420 (PR #497), #414 (PR #498), #413 (PR #499), #417+#418
-(PR #500), #411 (PR #501), #434 (PR #502) — **all 9 PRs still open/draft,
-none merged yet** as of this entry; the milestone/README summary table
-above is not reconciled to reflect them until they merge, matching this
-doc's own stated practice of tracking the issue tracker as the real
-source of truth.
-Two more open M17 issues determined NOT actionable in this environment,
-same treatment as #283/#326 above (externally blocked, not a scoping
-choice):
+been picked up yet. 12 issues addressed this session, each through the
+full implement → structural/live test → PR → CI → merge cycle (parallel
+security-auditor/code-reviewer review deferred to each PR's own CI/review
+pass, not run inline this session): #436+#431 (PR #494), #432 (PR #495),
+#437 (PR #496), #407+#420 (PR #497), #414 (PR #498), #413 (PR #499),
+#417+#418 (PR #500), #411 (PR #501), #434 (PR #502) — **all 9 PRs merged**
+(#500's "Closes #417, #418" only auto-closed #417; #418 closed manually
+after merge, same GitHub multi-issue-keyword gap #440 hit earlier this
+session). Two more open M17 issues determined NOT actionable in this
+environment, same treatment as #283/#326 above (externally blocked, not a
+scoping choice):
 - **#415** (build a genuinely working EXPLOITATION emulation for
   net_zeek_executable_download.yml) needs a live Zeek/Filebeat/Logstash/ES
   stack to actually serve a payload, capture it, and confirm the compiled
@@ -97,7 +95,11 @@ choice):
   explicitly requires a non-loopback network topology this sandbox
   cannot provide either.
 Both remain open, milestoned M17, for a session with real Docker/live-stack
-access to pick up — not closed, not silently dropped.
+access to pick up — not closed, not silently dropped. **M17 now 30/34
+closed** — #283, #333, #415, #421 are the only issues remaining, all four
+permanently not actionable (externally blocked / speculative / needs a
+live Docker+Zeek+ES stack this environment doesn't have) — no further M17
+work is queued.
 
 **M19 progress:**
 

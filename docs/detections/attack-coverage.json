@@ -183,7 +183,7 @@
       "tactic": "discovery",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Object Access Against a Privileged AD Group :: rules/sigma/auth_win_sensitive_group_recon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Object Access Against a Privileged AD Group :: rules/sigma/auth_win_sensitive_group_recon.yml; Domain Group Discovery via Net.exe :: rules/sigma/proc_creation_win_domain_group_discovery.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -351,7 +351,7 @@
       "tactic": "discovery",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Active Directory Query via Official ActiveDirectory Module :: rules/sigma/posh_ps_ad_recon_admodule.yml; Active Directory Reconnaissance via PowerView :: rules/sigma/posh_ps_ad_recon_powerview.yml; Domain Group Discovery via Net.exe :: rules/sigma/proc_creation_win_domain_group_discovery.yml; SharpHound / BloodHound AD Collection Execution :: rules/sigma/proc_creation_win_sharphound_bloodhound_collection.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Active Directory Query via Official ActiveDirectory Module :: rules/sigma/posh_ps_ad_recon_admodule.yml; Active Directory Reconnaissance via PowerView :: rules/sigma/posh_ps_ad_recon_powerview.yml; SharpHound / BloodHound AD Collection Execution :: rules/sigma/proc_creation_win_sharphound_bloodhound_collection.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -603,8 +603,8 @@
       "enabled": true
     },
     {
-      "techniqueID": "T1574",
-      "tactic": "privilege-escalation",
+      "techniqueID": "T1563.002",
+      "tactic": "lateral-movement",
       "score": 75,
       "color": "#2ca02c",
       "comment": "RDP Session Hijacking via Tscon :: rules/sigma/proc_creation_win_rdp_hijack_tscon.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",

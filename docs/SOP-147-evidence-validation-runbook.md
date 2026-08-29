@@ -31,7 +31,7 @@ Evidence collection is manual but relies on the automated logging of the AI Agen
 
 ## Playbook Verification
 To verify the system is ready for an evidence run:
-1. Run `python tests/validate_emulation_map.py` to ensure 22/22 techniques map correctly.
+1. Run `python tests/validate_emulation_map.py` to ensure 24/24 techniques map correctly.
 2. Confirm the stack is green and mock indices (`.alerts-security.alerts-mock`, `logstash-dynamic-*`) are deleted.
 
 ## Recommended Response Action(s)

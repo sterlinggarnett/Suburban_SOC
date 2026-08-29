@@ -31,4 +31,4 @@ falsepositives:
 level: low
 tags:
     - attack.discovery
-    - attack.t1087.002
+    - attack.t1069.002

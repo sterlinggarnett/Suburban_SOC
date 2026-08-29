@@ -16,6 +16,10 @@ fi
 
 # Sync Intel configurations to the host volume
 sudo mkdir -p /storage/PCAP/intel
+# Shared root-owner + sticky-bit permission fix, see lib/intel_dir_perms.sh
+# (#321).
+source "${SCRIPT_DIR}/lib/intel_dir_perms.sh"
+harden_intel_dir_perms /storage/PCAP/intel "${SOC_USER:-tjlam}"
 # security-auditor review: --remove-destination + a symlink guard, same
 # reasoning as zeek_run_pcap.sh's identical check.
 if [ -L /storage/PCAP/intel/config.zeek ]; then

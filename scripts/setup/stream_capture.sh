@@ -34,6 +34,13 @@ fi
 # under set -e a failure here hard-exits before any capture starts, rather than
 # silently limping on without a writable log/intel destination.
 sudo mkdir -p /storage/PCAP/intel
+# Shared root-owner + sticky-bit permission fix, see lib/intel_dir_perms.sh
+# (#321). `|| true`: same "capture availability outranks intel freshness"
+# priority the systemd unit's own equivalent step applies (its `-`-prefixed
+# ExecStartPre) — unlike the mkdirs above, a failure here must not block
+# capture from starting under this script's own `set -e`.
+source "${SCRIPT_DIR}/lib/intel_dir_perms.sh"
+harden_intel_dir_perms /storage/PCAP/intel "${SOC_USER:-tjlam}" || true
 # security-auditor review: --remove-destination + a symlink guard, same
 # reasoning as zeek_run_pcap.sh's identical check.
 if [ -L /storage/PCAP/intel/config.zeek ]; then

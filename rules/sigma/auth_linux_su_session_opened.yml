@@ -13,8 +13,8 @@ description: |
     'session' + 'opened' alone, since sshd logs an identically-worded
     "session opened for user X by (uid=0)" line for every ordinary
     successful SSH login (also via pam_unix). The 'su' token is what
-    isolates su-specific sessions from that much more common sshd case.
-    See tests/detections/sigma_eval.py's _TEXT_MAPPED_FIELDS comment
+    isolates su-specific sessions from that much more common sshd case —
+    see tests/detections/sigma_eval.py's _TEXT_MAPPED_FIELDS comment
     (#299) for why bare equality (not `contains`) is required against
     this stack's text-mapped message field, and why 'su'/'sudo'/'sshd'
     don't collide as separate tokens.

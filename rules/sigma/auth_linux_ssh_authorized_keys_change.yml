@@ -20,8 +20,13 @@ description: |
     signal, not authorized_keys change detection in general.
     Uses bare Sigma field equality (no `contains`/`endswith` modifier) on
     `message` deliberately — see tests/detections/sigma_eval.py's
-    _TEXT_MAPPED_FIELDS comment (#299) for why that's required against
-    this stack's text-mapped message field.
+    _TEXT_MAPPED_FIELDS comment (#299) for why that's required in general
+    against this stack's text-mapped message field. Specific to THIS
+    rule's own selector value: `authorized_keys` survives the standard
+    analyzer as one token (underscores aren't split), confirmed via a
+    real `sigma convert` probe — the general rule doesn't by itself say
+    a given value stays a single token, only that IF it does, bare
+    equality matches it safely.
 references:
     - https://attack.mitre.org/techniques/T1098/004/
 author: Suburban-SOC

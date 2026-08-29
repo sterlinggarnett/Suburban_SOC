@@ -149,17 +149,47 @@ _NUMERIC_MODS = {"gt", "gte", "lt", "lte"}
 # for `message` without changing bare-equality semantics for every other
 # (keyword-mapped) field a bare match already correctly treats as exact
 # equality.
-# #299: this comment is the canonical explanation of why rules/sigma/
-# auth_linux_*.yml use bare equality here instead of contains — those
-# rules used to repeat this reasoning inline in their own analyst-facing
-# `description:` field. Sigma's description field renders VERBATIM in the
-# Kibana Detection Engine alert flyout — it's runtime text an analyst
-# reads at triage, not a code comment — so 15-30 lines of ES-analyzer
-# internals were shipping straight to a 3am analyst who doesn't need them
-# to act on the alert. Those rules now carry a single-line pointer back
-# here instead; genuinely operational scope-limit disclosures (e.g. a
-# rule's own coverage gaps) stay in their own description, since an
-# analyst does need those at triage time.
+#
+# Two consequences that follow from the above, both load-bearing for rules
+# in this corpus (code-reviewer follow-up, #299 round 2 — previously stated
+# only inline in individual rule descriptions, now migrated here since both
+# are general properties of `text`-field analysis, not specific to any one
+# rule):
+#   - A rule needing multiple words to co-occur in `message` MUST use
+#     several single-token bare-equality selectors ANDed together, NOT one
+#     bare-equality value containing multiple words. This repo has NOT
+#     verified how Elasticsearch's query_string parser treats an unquoted
+#     multi-token bare-equality value (as an implicit phrase requiring
+#     token order/adjacency, silently narrowing the match; or as an
+#     implicit OR, silently broadening it) — that would need a real
+#     cluster to confirm, which this repo doesn't have on hand. Several
+#     single-token selectors sidestep the ambiguity entirely rather than
+#     resting on an unverified assumption. Do not "simplify" a multi-
+#     selector AND back into one multi-word bare-equality value without
+#     first verifying that combining behavior against a real cluster.
+#   - Two different words never collide as the same matched token after
+#     analysis (e.g. 'su', 'sudo', and 'sshd' are three distinct tokens) —
+#     the standard analyzer lowercases and splits on whitespace/most
+#     punctuation, but does not merge or truncate distinct words into one
+#     token, so a bare-equality selector for one can't accidentally also
+#     match log lines only containing the others.
+#
+# #299: this comment is the canonical explanation of why the 4 rules that
+# select on `message` (auth_linux_ssh_authorized_keys_change.yml,
+# auth_linux_sudo_privilege_escalation.yml,
+# auth_linux_invalid_user_ssh_attempt.yml, auth_linux_su_session_opened.yml
+# — NOT auth_linux_ssh_root_login.yml, which selects on keyword-mapped ECS
+# fields instead and never had this problem) use bare equality here
+# instead of contains — those 4 rules used to repeat this reasoning inline
+# in their own analyst-facing `description:` field. Sigma's description
+# field renders VERBATIM in the Kibana Detection Engine alert flyout —
+# it's runtime text an analyst reads at triage, not a code comment — so
+# 15-30 lines of ES-analyzer internals were shipping straight to a 3am
+# analyst who doesn't need them to act on the alert. Those rules now carry
+# a short pointer back here instead; genuinely operational content (scope-
+# limit disclosures, a specific rule's own verified selector-value
+# behavior) stays in that rule's own description, since an analyst does
+# need the former at triage time and a rule reviewer needs the latter.
 _TEXT_MAPPED_FIELDS = {"message"}
 
 

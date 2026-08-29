@@ -51,6 +51,18 @@ description: |
     registration trick, not lookalike-emission. A hit on a random-
     looking subdomain of a real operator is an emission signal, not
     proof the query resolved or that a real mining session followed.
+    #434 decision: pursued the threshold/cardinality-companion option
+    (rules/elastic/threshold/net-zeek-dns-crypto-mining-pool-cardinality.ndjson)
+    rather than a response-side qualifier on this rule itself — buckets
+    matching queries by source.ip and alerts on >=5 distinct
+    dns.question.name values in a 10-minute window (a lower bar than the
+    DoH sibling's 10, since legitimate mining-pool-operator traffic has
+    essentially no baseline). This rule (the single-event logic-of-record)
+    is unchanged and still carries the emission-only caveat above — the
+    companion adds a corroborating signal, it does not replace or narrow
+    this rule's own matching. See that companion's own description for
+    the full tradeoffs (not live-verified end to end; still forgeable
+    below the cardinality bar; NAT/proxy false-positive risk).
 references:
     - https://attack.mitre.org/techniques/T1496/
 author: Suburban-SOC

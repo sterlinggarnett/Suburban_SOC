@@ -895,6 +895,43 @@ def analyze_alert_with_ai(raw_log_data):
 # =============================================================================
 # 2. NOTIFICATION ENGINE — ntfy push
 # =============================================================================
+# #424: requests/http.client encode header VALUES as latin-1 (same boundary
+# already noted at the HMAC signature-header check above) — a title
+# containing a character outside latin-1's range (e.g. an em dash, U+2014,
+# used in two hardcoded call sites below) raises UnicodeEncodeError deep in
+# http.client.putheader(), which send_soc_alert's broad `except Exception`
+# then swallows into a single log line, silently dropping the push. A
+# drafted containment action awaiting approval then sits unapproved with no
+# signal the notification itself failed. Transliterate the punctuation most
+# likely to show up in generated alert text, then fall back to latin-1's own
+# 'replace' handler for anything else, so a future non-ASCII title degrades
+# visibly instead of dropping the notification outright.
+#
+# security-auditor review: requests independently rejects a header value
+# containing a bare \r or \n (raises InvalidHeader before ever reaching the
+# wire) -- not a header-injection risk (the library already blocks it), but
+# the SAME silent-drop failure mode this fix exists to close, just triggered
+# by a control character instead of a non-latin-1 one. `title` is partly
+# built from `ctx.severity.upper()` at two of six call sites, which isn't
+# charset-validated before that interpolation. Fold to a space alongside the
+# punctuation table so this degrades the same visible way instead of
+# reproducing the bug via a different character class.
+_NTFY_HEADER_TRANSLATIONS = {
+    "—": "-",   # em dash
+    "–": "-",   # en dash
+    "‘": "'", "’": "'",   # single quotes
+    "“": '"', "”": '"',   # double quotes
+    "…": "...",  # ellipsis
+    "\r": " ", "\n": " ",  # requests rejects a raw CR/LF in a header value
+}
+
+
+def _ntfy_header_safe(value: str) -> str:
+    for src, dst in _NTFY_HEADER_TRANSLATIONS.items():
+        value = value.replace(src, dst)
+    return value.encode("latin-1", "replace").decode("latin-1")
+
+
 def send_soc_alert(title, message, priority=3, tags="rotating_light", tenant="unassigned"):
     """Push formatted alerts to the analyst via ntfy, on the tenant's topic (WS0.3)."""
     topic = ntfy_topic_for(tenant)
@@ -903,7 +940,7 @@ def send_soc_alert(title, message, priority=3, tags="rotating_light", tenant="un
         return
     url = f"https://ntfy.sh/{topic}"
     headers = {
-        "Title":    title,
+        "Title":    _ntfy_header_safe(title),
         "Priority": str(priority),
         "Tags":     tags,
     }

@@ -114,6 +114,87 @@ def _sign(body: bytes, ts=None):
     return ts, sig
 
 
+class NtfyHeaderEncodingTests(unittest.TestCase):
+    """#424: requests/http.client encode header VALUES as latin-1 — a title
+    containing a character outside latin-1's range (e.g. the em dash used in
+    two hardcoded call sites in agent.py) raises UnicodeEncodeError deep in
+    http.client.putheader(), which send_soc_alert's broad `except Exception`
+    then silently swallows, dropping the push with no signal it failed."""
+
+    def test_em_dash_raises_uniencodeerror_at_the_http_client_boundary(self):
+        # Locks in the actual failure mode this issue is about — confirms
+        # the reasoning (not just asserts against our own fix).
+        with self.assertRaises(UnicodeEncodeError):
+            "Response DRAFTED — approval required".encode("latin-1")
+
+    def test_ascii_fold_converts_known_hardcoded_titles_cleanly(self):
+        self.assertEqual(
+            agent._ntfy_header_safe("CRITICAL: Alert on PROTECTED asset — no action"),
+            "CRITICAL: Alert on PROTECTED asset - no action",
+        )
+        self.assertEqual(
+            agent._ntfy_header_safe("CRITICAL: Response DRAFTED — approval required"),
+            "CRITICAL: Response DRAFTED - approval required",
+        )
+
+    def test_ascii_fold_output_is_always_latin1_encodable(self):
+        # General-fix acceptance criterion: a FUTURE non-ASCII title (not
+        # just today's two known em-dash literals) must degrade instead of
+        # raising and dropping the notification.
+        folded = agent._ntfy_header_safe("Alert ☃ unexpected snowman 中文")
+        folded.encode("latin-1")  # must not raise
+        self.assertNotIn("☃", folded)
+
+    def test_send_soc_alert_posts_with_a_latin1_safe_title_header(self):
+        with mock.patch.object(agent, "ntfy_topic_for", return_value="test-topic"):
+            with mock.patch.object(agent, "requests") as mock_requests:
+                agent.send_soc_alert(
+                    title="CRITICAL: Response DRAFTED — approval required",
+                    message="body",
+                )
+        headers = mock_requests.post.call_args.kwargs["headers"]
+        headers["Title"].encode("latin-1")  # must not raise
+        self.assertNotIn("—", headers["Title"])
+
+    def test_bare_crlf_is_rejected_by_requests_before_the_wire(self):
+        # security-auditor review: requests independently rejects a header
+        # value containing a raw CR/LF (InvalidHeader) BEFORE it ever
+        # reaches the wire -- not a header-injection risk (already blocked
+        # by the library), but reproduces this same issue's silent-drop
+        # failure mode via a different character class than the em dash.
+        import requests as real_requests
+        with self.assertRaises(real_requests.exceptions.InvalidHeader):
+            real_requests.Request(
+                "POST", "https://example.invalid/x", headers={"Title": "bad\r\nheader"}
+            ).prepare()
+
+    def test_ascii_fold_folds_crlf_to_a_space(self):
+        # \r and \n each fold independently to a space, so "\r\n" becomes
+        # two spaces -- the requirement is that neither control character
+        # survives, not that whitespace gets collapsed.
+        folded = agent._ntfy_header_safe("CRITICAL\r\nsmuggled")
+        self.assertNotIn("\r", folded)
+        self.assertNotIn("\n", folded)
+        self.assertEqual(folded, "CRITICAL  smuggled")
+
+    def test_send_soc_alert_folds_crlf_from_severity_in_title(self):
+        # Two of send_soc_alert's six call sites build `title` from
+        # ctx.severity.upper() with no charset validation upstream -- not
+        # attacker-reachable today (severity is hardcoded in
+        # configs/logstash.conf), but the fold must hold regardless of
+        # where a future caller's severity value comes from.
+        with mock.patch.object(agent, "ntfy_topic_for", return_value="test-topic"):
+            with mock.patch.object(agent, "requests") as mock_requests:
+                agent.send_soc_alert(
+                    title="CRIT\r\nICAL: fake injected header",
+                    message="body",
+                )
+        headers = mock_requests.post.call_args.kwargs["headers"]
+        headers["Title"].encode("latin-1")  # must not raise
+        self.assertNotIn("\r", headers["Title"])
+        self.assertNotIn("\n", headers["Title"])
+
+
 class NotifyWiringTests(unittest.TestCase):
     """Confirms /alert actually substitutes the masked (or raw) IOC into every
     send_soc_alert/send_discord_alert call site, not just that the helpers work

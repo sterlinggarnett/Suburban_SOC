@@ -292,6 +292,22 @@ class SendNtfyNotificationTests(unittest.TestCase):
              mock.patch.object(wcr.requests, "post", side_effect=ConnectionError("refused")):
             wcr.send_ntfy_notification(self.METRICS, pdf_delivered=False)  # must not raise
 
+    def test_title_header_is_latin1_safe(self):
+        # #424: requests/http.client encode header VALUES as latin-1 — the
+        # hardcoded Title ("📊 Weekly Security Report Ready") contains an
+        # emoji well outside latin-1's range, which raised
+        # UnicodeEncodeError deep in http.client.putheader() and was
+        # silently swallowed by this function's own `except Exception`,
+        # dropping the push with only a log line (found during code review
+        # of agent.py's identical fix — this call site had the live bug
+        # too, uncovered by that fix alone).
+        with mock.patch.object(wcr, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(wcr.requests, "post") as post:
+            wcr.send_ntfy_notification(self.METRICS, pdf_delivered=True)
+        title = post.call_args.kwargs["headers"]["Title"]
+        title.encode("latin-1")  # must not raise
+        self.assertNotIn("📊", title)
+
 
 class RunReportingPipelineTests(unittest.TestCase):
     def test_orchestrates_all_stages_in_order_and_returns_summary(self):

@@ -40,6 +40,13 @@ echo "== logstash_writer: write SOC indices only, no alerts read, no security mg
 # Write to asset-inventory-* (a regular index the role covers; logstash-security-* is
 # a WS0.5 data stream whose _doc auto-id returns 400 regardless of privilege).
 expect "logstash_writer writes asset-inventory-*" "$(as t_logstash -X POST "$ES_URL/asset-inventory-rbactest/_doc" -H 'Content-Type: application/json' -d '{"y":2}')" 201
+expect "logstash_writer writes soc-agent-health-*" "$(as t_logstash -X POST "$ES_URL/soc-agent-health-rbactest/_doc" -H 'Content-Type: application/json' -d '{"y":3}')" 201
+# #306: `manage` (which includes delete) was dropped from asset-inventory-*/
+# soc-agent-health-* -- logstash_internal (shared with the real Logstash
+# pipeline) must not be able to erase either of these audit-adjacent
+# indices outright, only create/write new documents into them.
+expect "logstash_writer CANNOT delete asset-inventory-*" "$(as t_logstash -X DELETE "$ES_URL/asset-inventory-rbactest")" 403
+expect "logstash_writer CANNOT delete soc-agent-health-*" "$(as t_logstash -X DELETE "$ES_URL/soc-agent-health-rbactest")" 403
 expect "logstash_writer CANNOT read alerts" "$(as t_logstash "$ES_URL/.alerts-security.alerts-default/_search?size=0")" 403
 expect "logstash_writer CANNOT create user" "$(as t_logstash -X PUT "$ES_URL/_security/user/evil" -H 'Content-Type: application/json' -d "{\"password\":\"$PW\",\"roles\":[]}")" 403
 # #245: logstash_internal must NOT be able to reach agent-checkpoints-* - that
@@ -70,6 +77,7 @@ expect "logstash_enrich_reader CANNOT read agent-checkpoints-*"  "$(as t_logstas
 rmuser t_analyst; rmuser t_logstash; rmuser t_agent_checkpoints; rmuser t_logstash_enrich
 admin -o /dev/null -X DELETE "$ES_URL/logstash-security-rbactest"
 admin -o /dev/null -X DELETE "$ES_URL/asset-inventory-rbactest"
+admin -o /dev/null -X DELETE "$ES_URL/soc-agent-health-rbactest"
 admin -o /dev/null -X DELETE "$ES_URL/agent-checkpoints-rbactest"
 echo
 if [[ $fails -eq 0 ]]; then echo "[=] RBAC least-privilege verified."; exit 0; else echo "[=] $fails RBAC check(s) FAILED."; exit 1; fi

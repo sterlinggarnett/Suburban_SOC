@@ -1854,6 +1854,40 @@ class LogstashWriterRoleDriftTests(unittest.TestCase):
         self.assertNotIn("manage_index_templates", cluster_privs)
         self.assertNotIn("manage_ilm", cluster_privs)
 
+    def _privileges_for(self, pattern):
+        role = json.loads(self.ROLE_PATH.read_text(encoding="utf-8"))
+        for entry in role["indices"]:
+            if pattern in entry["names"]:
+                return set(entry["privileges"])
+        self.fail(f"no indices entry in logstash_writer.json grants {pattern!r}")
+
+    def test_logstash_indices_keep_write_and_manage(self):
+        # The real Logstash pipeline (configs/logstash.conf) does ordinary
+        # event-ingestion indexing against these patterns and genuinely needs
+        # write/manage -- #306's narrowing must not touch them.
+        for pattern in ("logstash-*", "soar-actions-*"):
+            privs = self._privileges_for(pattern)
+            self.assertIn("write", privs, f"{pattern} lost 'write'")
+            self.assertIn("manage", privs, f"{pattern} lost 'manage'")
+
+    def test_soc_agent_health_and_asset_inventory_lost_write_and_manage(self):
+        # #306 Finding 2: logstash_internal (which holds this role) could
+        # delete soc-agent-health-*'s own audit-write-failure trail outright
+        # via 'manage' -- agent.py's _write_audit_health_marker() only ever
+        # issues a bulk {"create":{}} op (verified: scripts/setup/ai_agent/
+        # agent.py), so create_index/create/auto_configure is sufficient;
+        # asset-inventory-* shares the same grant entry (#304) and has no
+        # production writer that needs more than the same 'create'-only
+        # shape (verified: tests/rbac/test_rbac.sh's only positive assertion
+        # for this pattern is a POST .../_doc, which needs 'create' alone).
+        for pattern in ("soc-agent-health-*", "asset-inventory-*"):
+            privs = self._privileges_for(pattern)
+            self.assertNotIn("write", privs, f"{pattern} still grants 'write'")
+            self.assertNotIn("manage", privs, f"{pattern} still grants 'manage'")
+            self.assertIn("create_index", privs, f"{pattern} lost 'create_index'")
+            self.assertIn("create", privs, f"{pattern} lost 'create'")
+            self.assertIn("auto_configure", privs, f"{pattern} lost 'auto_configure'")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

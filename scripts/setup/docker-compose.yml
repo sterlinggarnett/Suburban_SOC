@@ -262,6 +262,7 @@ services:
       - LOGSTASH_PASSWORD=${LOGSTASH_PASSWORD}
       - SOC_AGENT_KIBANA_PASSWORD=${SOC_AGENT_KIBANA_PASSWORD:-}
       - SLO_METRICS_PASSWORD=${SLO_METRICS_PASSWORD:-}
+      - BROKER_AUDIT_PASSWORD=${BROKER_AUDIT_PASSWORD:-}
       - AGENT_CHECKPOINTS_PASSWORD=${AGENT_CHECKPOINTS_PASSWORD:-}
       - AGENT_CHECKPOINTS_COMPACTOR_PASSWORD=${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD:-}
       - INTEL_WRITER_PASSWORD=${INTEL_WRITER_PASSWORD:-}
@@ -277,7 +278,7 @@ services:
         echo "Waiting for Elasticsearch";
         until curl -s --cacert config/certs/ca/ca.crt https://elasticsearch:9200 | grep -q "missing authentication credentials"; do sleep 5; done;
         echo "Setting kibana_system password";
-        until curl -s -X POST --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/kibana_system/_password -d "{\"password\":\"${KIBANA_PASSWORD}\"}" | grep -q "^{}"; do sleep 5; done;
+        until curl -s -X POST --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/kibana_system/_password -d "{\"password\":\"$${KIBANA_PASSWORD}\"}" | grep -q "^{}"; do sleep 5; done;
         echo "Provisioning least-privilege logstash_writer role";
         # #257 (security-auditor review of #245): manage_index_templates/
         # manage_ilm dropped from cluster privileges — the real Logstash
@@ -297,17 +298,17 @@ services:
         # (security-auditor review: these two had already drifted — the
         # index list here was missing asset-inventory-*/soc-agent-health-*
         # and auto_configure; brought back in sync here).
-        curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/logstash_writer -d "{\"cluster\":[\"monitor\"],\"indices\":[{\"names\":[\"logstash-*\",\"soar-actions-*\",\"asset-inventory-*\",\"soc-agent-health-*\"],\"privileges\":[\"create_index\",\"create\",\"write\",\"manage\",\"auto_configure\"]}]}" > /dev/null;
+        curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/logstash_writer -d "{\"cluster\":[\"monitor\"],\"indices\":[{\"names\":[\"logstash-*\",\"soar-actions-*\"],\"privileges\":[\"create_index\",\"create\",\"write\",\"manage\",\"auto_configure\"]},{\"names\":[\"asset-inventory-*\",\"soc-agent-health-*\"],\"privileges\":[\"create_index\",\"create\",\"auto_configure\"]}]}" > /dev/null;
         echo "Provisioning append-only soc_audit_appender role (WS3.3 tamper-evident audit)";
-        curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/soc_audit_appender -d "{\"indices\":[{\"names\":[\"soc-audit-*\"],\"privileges\":[\"create_index\",\"create\"]}]}" > /dev/null;
+        curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/soc_audit_appender -d "{\"indices\":[{\"names\":[\"soc-audit-*\"],\"privileges\":[\"create_index\",\"create\"]}]}" > /dev/null;
         echo "Provisioning logstash_internal user (logstash_writer + append-only audit)";
-        curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/logstash_internal -d "{\"password\":\"${LOGSTASH_PASSWORD}\",\"roles\":[\"logstash_writer\",\"soc_audit_appender\"],\"full_name\":\"Logstash writer (Suburban-SOC)\"}" > /dev/null;
-        if [ x${SOC_AGENT_KIBANA_PASSWORD} != x ]; then
+        curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/logstash_internal -d "{\"password\":\"$${LOGSTASH_PASSWORD}\",\"roles\":[\"logstash_writer\",\"soc_audit_appender\"],\"full_name\":\"Logstash writer (Suburban-SOC)\"}" > /dev/null;
+        if [ x$${SOC_AGENT_KIBANA_PASSWORD} != x ]; then
           echo "Provisioning soc_agent_cases role + soc_agent user (WS2.3 Kibana Cases)";
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/soc_agent_cases -d "{\"applications\":[{\"application\":\"kibana-.kibana\",\"privileges\":[\"feature_generalCases.all\"],\"resources\":[\"*\"]}]}" > /dev/null;
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/soc_agent -d "{\"password\":\"${SOC_AGENT_KIBANA_PASSWORD}\",\"roles\":[\"soc_agent_cases\"],\"full_name\":\"SOC AI agent (Kibana Cases)\"}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/soc_agent_cases -d "{\"applications\":[{\"application\":\"kibana-.kibana\",\"privileges\":[\"feature_generalCases.all\"],\"resources\":[\"*\"]}]}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/soc_agent -d "{\"password\":\"$${SOC_AGENT_KIBANA_PASSWORD}\",\"roles\":[\"soc_agent_cases\"],\"full_name\":\"SOC AI agent (Kibana Cases)\"}" > /dev/null;
         fi;
-        if [ x${SLO_METRICS_PASSWORD} != x ]; then
+        if [ x$${SLO_METRICS_PASSWORD} != x ]; then
           echo "Provisioning slo_metrics_reader role + slo_metrics user (audit #167 — replaces elastic superuser)";
           # #247: agent-checkpoints-* read added for metric_stuck_approval_claims().
           # No field_security here — live-verified against this stack, under its
@@ -347,9 +348,9 @@ services:
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/slo_metrics_reader -d "{\"indices\":[{\"names\":[\".alerts-security.alerts-*\",\"soar-actions-*\",\"logstash-security-*\"],\"privileges\":[\"read\",\"view_index_metadata\"]},{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-agent-health-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-slo-metrics\"],\"privileges\":[\"create_index\",\"create\",\"read\"]},{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"read\"]}],\"applications\":[{\"application\":\"kibana-.kibana\",\"privileges\":[\"feature_generalCases.read\"],\"resources\":[\"*\"]}]}" > /dev/null;
           curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/slo_metrics -d "{\"password\":\"$${SLO_METRICS_PASSWORD}\",\"roles\":[\"slo_metrics_reader\"],\"full_name\":\"SLO metrics (Suburban-SOC)\"}" > /dev/null;
         fi;
-        if [ x${BROKER_AUDIT_PASSWORD} != x ]; then
+        if [ x$${BROKER_AUDIT_PASSWORD} != x ]; then
           echo "Provisioning hive_mind_broker user (audit #171 — persisted denial records via the existing append-only soc_audit_appender role)";
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/hive_mind_broker -d "{\"password\":\"${BROKER_AUDIT_PASSWORD}\",\"roles\":[\"soc_audit_appender\"],\"full_name\":\"Hive-Mind broker (Suburban-SOC)\"}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/hive_mind_broker -d "{\"password\":\"$${BROKER_AUDIT_PASSWORD}\",\"roles\":[\"soc_audit_appender\"],\"full_name\":\"Hive-Mind broker (Suburban-SOC)\"}" > /dev/null;
         fi;
         if [ x$${AGENT_CHECKPOINTS_PASSWORD} != x ]; then
           echo "Provisioning agent_checkpoints role + user (#245 — dedicated identity, NOT logstash_internal, so checkpoint access is not handed to the credential Logstash shares)";
@@ -359,7 +360,7 @@ services:
           # erase a .claim doc and re-open the at-most-once execution gate.
           # configs/elasticsearch/roles/agent_checkpoints.json is authoritative
           # (re-applied by apply_roles.sh) - keep this inline copy in sync.
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/agent_checkpoints -d "{\"indices\":[{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"auto_configure\",\"create_index\",\"index\",\"read\"]}]}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/agent_checkpoints -d "{\"indices\":[{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"auto_configure\",\"create_index\",\"index\",\"read\"]}]}" > /dev/null;
           # Escaped as $${AGENT_CHECKPOINTS_PASSWORD} (double-dollar, not a
           # lone Compose-time reference): an unescaped reference would splice
           # the cleartext password into the argv of this container (readable
@@ -368,7 +369,7 @@ services:
           # instead emits a literal $${...} for bash itself to expand from
           # AGENT_CHECKPOINTS_PASSWORD, set in the environment block of this
           # service, never touching argv.
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/agent_checkpoints -d "{\"password\":\"$${AGENT_CHECKPOINTS_PASSWORD}\",\"roles\":[\"agent_checkpoints\"],\"full_name\":\"SOC AI agent checkpoints (Suburban-SOC)\"}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/agent_checkpoints -d "{\"password\":\"$${AGENT_CHECKPOINTS_PASSWORD}\",\"roles\":[\"agent_checkpoints\"],\"full_name\":\"SOC AI agent checkpoints (Suburban-SOC)\"}" > /dev/null;
         fi;
         if [ x$${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD} != x ]; then
           echo "Provisioning agent_checkpoints_compactor role + user (#256 — a SEPARATE delete-capable identity for the scheduled TTL-retention script, deliberately never merged into agent_checkpoints above: the whole point of that role (#245) is holding NO delete privilege, so a compromised live agent/CLI credential cannot erase a claim doc and re-open the at-most-once execution gate)";
@@ -380,9 +381,9 @@ services:
           # configs/elasticsearch/roles/agent_checkpoints_compactor.json is
           # authoritative (re-applied by apply_roles.sh) - keep this inline
           # copy in sync.
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/agent_checkpoints_compactor -d "{\"indices\":[{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\",\"delete\"]}]}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/agent_checkpoints_compactor -d "{\"indices\":[{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\",\"delete\"]}]}" > /dev/null;
           # $$ (not $), same reasoning as AGENT_CHECKPOINTS_PASSWORD above.
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/agent_checkpoints_compactor -d "{\"password\":\"$${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD}\",\"roles\":[\"agent_checkpoints_compactor\"],\"full_name\":\"SOC agent-checkpoints TTL retention (Suburban-SOC, #256)\"}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/agent_checkpoints_compactor -d "{\"password\":\"$${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD}\",\"roles\":[\"agent_checkpoints_compactor\"],\"full_name\":\"SOC agent-checkpoints TTL retention (Suburban-SOC, #256)\"}" > /dev/null;
         fi;
         if [ x$${LOGSTASH_ENRICH_PASSWORD} != x ]; then
           echo "Provisioning logstash_enrich_reader role + logstash_enrich user (#286 security-auditor CRITICAL — the uid-keyed conn.log<->intel.log correlation in configs/logstash.conf needs its OWN read credential, NOT logstash_internal: that identity holds only logstash_writer (write/manage, no read at all — confirmed the correlation 403s on every event without this) and widening logstash_writer to read would hand the shared Logstash/agent credential cross-tenant read of all security telemetry, which this stack cannot scope back with field-level security on a Basic license)";
@@ -400,10 +401,10 @@ services:
           # configs/elasticsearch/roles/logstash_enrich_reader.json is
           # authoritative (re-applied by apply_roles.sh) - keep this inline
           # bootstrap copy in sync.
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/logstash_enrich_reader -d "{\"cluster\":[\"monitor\"],\"indices\":[{\"names\":[\"logstash-security-*\"],\"privileges\":[\"read\"]}]}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/logstash_enrich_reader -d "{\"cluster\":[\"monitor\"],\"indices\":[{\"names\":[\"logstash-security-*\"],\"privileges\":[\"read\"]}]}" > /dev/null;
           # $$ (not $), same reasoning as AGENT_CHECKPOINTS_PASSWORD above:
           # avoids splicing the cleartext password into this container argv.
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/logstash_enrich -d "{\"password\":\"$${LOGSTASH_ENRICH_PASSWORD}\",\"roles\":[\"logstash_enrich_reader\"],\"full_name\":\"Logstash MAC-correlation reader (Suburban-SOC, #286)\"}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/logstash_enrich -d "{\"password\":\"$${LOGSTASH_ENRICH_PASSWORD}\",\"roles\":[\"logstash_enrich_reader\"],\"full_name\":\"Logstash MAC-correlation reader (Suburban-SOC, #286)\"}" > /dev/null;
         fi;
         if [ x$${INTEL_WRITER_PASSWORD} != x ]; then
           echo "Provisioning intel_writer role + user (#222 — dedicated identity, refresh_intel.sh no longer runs as the elastic superuser now that it is a persistent scheduled service, not an occasional manual run)";
@@ -416,11 +417,11 @@ services:
           # (#256) is kept out of agent_checkpoints.
           # configs/elasticsearch/roles/intel_writer.json is authoritative
           # (re-applied by apply_roles.sh) - keep this inline copy in sync.
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/intel_writer -d "{\"indices\":[{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"auto_configure\",\"create_index\",\"index\"]}]}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/intel_writer -d "{\"indices\":[{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"auto_configure\",\"create_index\",\"index\"]}]}" > /dev/null;
           # Escaped as $${INTEL_WRITER_PASSWORD} (same reasoning as
           # AGENT_CHECKPOINTS_PASSWORD above): avoids splicing the
           # cleartext password into the argv of this container.
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/intel_writer -d "{\"password\":\"$${INTEL_WRITER_PASSWORD}\",\"roles\":[\"intel_writer\"],\"full_name\":\"Threat-intel feed refresh (Suburban-SOC)\"}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/intel_writer -d "{\"password\":\"$${INTEL_WRITER_PASSWORD}\",\"roles\":[\"intel_writer\"],\"full_name\":\"Threat-intel feed refresh (Suburban-SOC)\"}" > /dev/null;
         fi;
         if [ x$${THREAT_INTEL_COMPACTOR_PASSWORD} != x ]; then
           echo "Provisioning threat_intel_compactor role + user (#271 — a SEPARATE delete-capable identity for the scheduled TTL-retention script, deliberately never merged into intel_writer above: the whole point of that role (#222) is holding no read/delete privilege, so a compromised feed-refresh credential can never read back or erase indicator history)";
@@ -428,9 +429,9 @@ services:
           # configs/elasticsearch/roles/threat_intel_compactor.json is
           # authoritative (re-applied by apply_roles.sh) - keep this inline
           # copy in sync.
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/threat_intel_compactor -d "{\"cluster\":[\"monitor\"],\"indices\":[{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"read\",\"delete\"]}]}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/threat_intel_compactor -d "{\"cluster\":[\"monitor\"],\"indices\":[{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"read\",\"delete\"]}]}" > /dev/null;
           # $$ (not $), same reasoning as AGENT_CHECKPOINTS_PASSWORD above.
-          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/threat_intel_compactor -d "{\"password\":\"$${THREAT_INTEL_COMPACTOR_PASSWORD}\",\"roles\":[\"threat_intel_compactor\"],\"full_name\":\"SOC threat-intel-indicators/threat-intel-meta TTL retention (Suburban-SOC, #271)\"}" > /dev/null;
+          curl -s -X PUT --cacert config/certs/ca/ca.crt -u "elastic:$${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/threat_intel_compactor -d "{\"password\":\"$${THREAT_INTEL_COMPACTOR_PASSWORD}\",\"roles\":[\"threat_intel_compactor\"],\"full_name\":\"SOC threat-intel-indicators/threat-intel-meta TTL retention (Suburban-SOC, #271)\"}" > /dev/null;
         fi;
         echo "Provisioning complete.";
       '

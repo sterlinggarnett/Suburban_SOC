@@ -168,6 +168,62 @@ class MainExitCodeTests(unittest.TestCase):
             self.assertEqual(a["index"]["_index"], "soc-hunts")
 
 
+class HuntIdValidationTests(unittest.TestCase):
+    """#432: run_hunts.py's composite ES _id (hunt_id:day_bucket) is a
+    deliberate UPSERT — an unsafe character in a hunt id, or two hunts
+    colliding on the same composite key, must fail loudly BEFORE any bulk
+    write, not silently overwrite one hunt's stored findings with
+    another's."""
+
+    def _run_main_capturing_exit(self):
+        try:
+            run_hunts.main()
+        except SystemExit as e:
+            return e.code
+        return None
+
+    def test_real_hunt_corpus_passes_validation_unchanged(self):
+        # The actual real hunts/*.yml files, not a synthetic fixture.
+        real_hunts = sorted(run_hunts.REPO.joinpath("hunts").glob("*.yml"))
+        self.assertGreater(len(real_hunts), 0)
+        run_hunts._validate_hunt_ids(real_hunts)  # must not raise/exit
+
+    def test_colon_in_hunt_id_exits_1_before_any_bulk_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            hunts_dir = Path(d)
+            (hunts_dir / "bad.yml").write_text(
+                "id: HUNT:BAD\ntitle: Bad\nattack: [\"T1110\"]\n"
+                "index: logstash-security-*\nquery: \"*\"\nthreshold: 1\n",
+                encoding="utf-8")
+            with mock.patch.object(run_hunts, "HUNTS_DIR", hunts_dir), \
+                 mock.patch.object(run_hunts.SESSION, "post") as post:
+                code = self._run_main_capturing_exit()
+            self.assertEqual(code, 1)
+            post.assert_not_called()
+
+    def test_colliding_explicit_ids_exits_1_before_any_bulk_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            hunts_dir = Path(d)
+            body = ("id: HUNT-SAME\ntitle: {}\nattack: [\"T1110\"]\n"
+                    "index: logstash-security-*\nquery: \"*\"\nthreshold: 1\n")
+            (hunts_dir / "one.yml").write_text(body.format("One"), encoding="utf-8")
+            (hunts_dir / "two.yml").write_text(body.format("Two"), encoding="utf-8")
+            with mock.patch.object(run_hunts, "HUNTS_DIR", hunts_dir), \
+                 mock.patch.object(run_hunts.SESSION, "post") as post:
+                code = self._run_main_capturing_exit()
+            self.assertEqual(code, 1)
+            post.assert_not_called()
+
+    def test_valid_ids_are_unaffected(self):
+        # Regression guard: the validation itself must not false-positive
+        # on the ordinary [A-Za-z0-9_-]+ shape every real hunt id uses.
+        with tempfile.TemporaryDirectory() as d:
+            hunts_dir = Path(d)
+            (hunts_dir / "HUNT-TEST-A.yml").write_text(HUNT_A, encoding="utf-8")
+            (hunts_dir / "HUNT-TEST-B.yml").write_text(HUNT_B, encoding="utf-8")
+            run_hunts._validate_hunt_ids(sorted(hunts_dir.glob("*.yml")))  # must not raise
+
+
 class MainNoHuntsAndMissingCredsTests(unittest.TestCase):
     def test_no_hunts_found_exits_1(self):
         with tempfile.TemporaryDirectory() as empty_dir:

@@ -50,6 +50,53 @@ TACTICS = {
 # Tactics with zero detections today -> explicit gaps / prioritized backlog.
 BACKLOG_TACTICS = ["Collection", "Exfiltration", "Command and Control", "Lateral Movement"]
 
+# #378 round-3 security review finding: a rule's OWN attack.<tactic> tags
+# describe the tactics the rule's author considers the detection relevant
+# to (often the broader kill-chain step being watched for), which is not
+# the same thing as the specific attack.<technique> tag's OFFICIAL MITRE
+# ATT&CK tactic membership. `_technique_tactic_pairs()`'s "broadcast a
+# singleton across every other tag" cases assumed every resulting pair was
+# real; an adversarial review found 8 real corpus rules where it wasn't —
+# 6 carried an extra attack.<tactic> tag that didn't apply to their single
+# technique (e.g. proc_creation_win_esentutl_locked_file_copy.yml tagged
+# both attack.collection and attack.credential_access alongside its single
+# attack.t1005 tag, but T1005 "Data from Local System" is a Collection-only
+# technique per MITRE ATT&CK — it has no Credential Access tactic entry),
+# and 2 were missing an attack.<tactic> tag their second technique needed
+# (see `_technique_tactic_pairs()` for that shape). This table is real
+# ATT&CK ground truth (verified against
+# https://attack.mitre.org/techniques/<ID>/, ID slashed for sub-techniques,
+# e.g. T1078.003 -> techniques/T1078/003/) for exactly the technique IDs
+# that `harvest()`'s broadcast cases need to validate against today — not
+# an attempt at a complete 78-technique corpus mirror, which would be
+# unverified guessing for every technique not actually exercising the
+# ambiguity this table exists to close.
+TECHNIQUE_TACTICS = {
+    "T1005": ("Collection",),
+    "T1021": ("Lateral Movement",),
+    "T1027": ("Defense Evasion",),
+    "T1053.005": ("Execution", "Persistence", "Privilege Escalation"),
+    "T1055": ("Defense Evasion", "Privilege Escalation"),
+    "T1056.002": ("Collection", "Credential Access"),
+    "T1059.001": ("Execution",),
+    "T1059.005": ("Execution",),
+    "T1059.007": ("Execution",),
+    "T1068": ("Privilege Escalation",),
+    "T1071.004": ("Command and Control",),
+    "T1078": ("Initial Access", "Persistence", "Privilege Escalation", "Defense Evasion"),
+    "T1078.002": ("Initial Access", "Persistence", "Privilege Escalation", "Defense Evasion"),
+    "T1078.003": ("Initial Access", "Persistence", "Privilege Escalation", "Defense Evasion"),
+    "T1098": ("Persistence", "Privilege Escalation"),
+    "T1105": ("Command and Control",),
+    "T1134": ("Defense Evasion", "Privilege Escalation"),
+    "T1543.003": ("Persistence", "Privilege Escalation"),
+    "T1546.008": ("Persistence", "Privilege Escalation"),
+    "T1550.002": ("Defense Evasion", "Lateral Movement"),
+    "T1569.002": ("Execution",),
+    "T1574": ("Persistence", "Privilege Escalation", "Defense Evasion"),
+    "T1574.002": ("Persistence", "Privilege Escalation", "Defense Evasion"),
+}
+
 # Human-readable label per Sigma `service:` value (classic Windows Event Log
 # channels that aren't identified by `category:`, issue #192).
 SERVICE_LABELS = {
@@ -151,16 +198,125 @@ def _validate_title(title, source_label):
     return title
 
 
+def _technique_tactic_pairs(techs, tacs, rule_name):
+    """#378: pair a rule's (possibly several) attack.<technique> tags with
+    its (possibly several) attack.<tactic> tags. Sigma's `tags:` list has no
+    schema for expressing "this technique goes with that tactic specifically"
+    when a rule carries more than one of each — tactics and techniques are
+    just two flat, separately-ordered runs in the same list (confirmed
+    against the real corpus: every rule lists all its tactic tags first,
+    then all its technique tags, never interleaved).
+
+    The old `re.search()` (first-match-only) implementation silently
+    discarded every secondary tag. The issue's own suggested fix — always
+    emit the full (techniques x tactics) cross-product — is WRONG for at
+    least one real rule in this corpus: posh_ps_obfuscated_scriptblock.yml
+    tags execution+defense_evasion / t1059.001+t1027, where T1059.001
+    (PowerShell) is only a real Execution technique and T1027 (Obfuscated
+    Files) is only a real Defense Evasion technique per MITRE ATT&CK's own
+    published mappings — a blind cross-product would assert two false
+    technique-tactic pairs (T1059.001+defense_evasion, T1027+execution) on
+    a published compliance/coverage artifact, the exact kind of inaccuracy
+    M22 exists to eliminate, not just move.
+
+    So: broadcast a SINGLE technique/tactic across every one of the other
+    (this is exactly #281's own T1078.003 case: one technique legitimately
+    scored under several tactic columns); POSITION-pair when both lists are
+    the same length > 1 (the corpus convention of listing tactic tags and
+    technique tags in corresponding order — verified against both rules in
+    this corpus that currently have this shape: pairing tactic[i] with
+    technique[i] in listed order produces only mappings that are
+    independently real per MITRE ATT&CK, unlike the cross-product); and
+    fail loudly rather than guess if the lists are both >1 and unequal
+    length, since there is no way to infer intended pairing from the tags
+    alone in that shape (not currently reachable by any rule in this corpus,
+    but a future rule could hit it).
+
+    #378 round-3 security review finding: a broadcast is only "unambiguous"
+    in the sense that every OTHER tag gets paired with the singleton — it
+    is not automatically ATT&CK-real (see TECHNIQUE_TACTICS' own comment
+    for the real corpus example that exposed this). So every broadcast pair
+    is now checked against TECHNIQUE_TACTICS before being emitted — a
+    technique missing from that table raises rather than broadcasting
+    unverified (closes the loophole for a future rule, the same way the
+    unequal-length case already refuses to guess); the positional-zip case
+    doesn't require table coverage (dropping/guessing there was never this
+    function's assumption to begin with — it already trusts the corpus's
+    own listed order), but still gets checked opportunistically when the
+    table does cover the technique.
+    """
+    if len(techs) == 1 and len(tacs) == 1:
+        # The common case (~89 of 108 rules): nothing to broadcast, no
+        # ambiguity to verify — this IS the pair the rule's author wrote.
+        return [(techs[0], tacs[0])]
+    if len(techs) == 1:
+        return _verify_pairs([(techs[0], tac) for tac in tacs], rule_name, require_known=True)
+    if len(tacs) == 1:
+        return _verify_pairs([(tech, tacs[0]) for tech in techs], rule_name, require_known=True)
+    if len(techs) == len(tacs):
+        return _verify_pairs(list(zip(techs, tacs)), rule_name, require_known=False)
+    raise ValueError(
+        f"{rule_name}: {len(techs)} attack.<technique> tags and "
+        f"{len(tacs)} attack.<tactic> tags — can't infer which technique "
+        f"pairs with which tactic from an unequal, both->1 tag count; "
+        f"Sigma's tags: list has no way to express that pairing explicitly, "
+        f"so this needs a human decision, not a guessed cross-product or "
+        f"positional pairing")
+
+
+def _verify_pairs(pairs, rule_name, require_known):
+    """Check each (technique, tactic) pair `_technique_tactic_pairs()` is
+    about to emit against TECHNIQUE_TACTICS' real ATT&CK ground truth.
+
+    `require_known=True` (the broadcast cases) raises when the technique
+    has no TECHNIQUE_TACTICS entry at all — a broadcast pairing must be
+    verified, not assumed, so an uncatalogued technique blocks generation
+    until a human adds it rather than silently repeating #378's original
+    bug for a rule this table doesn't cover yet. `require_known=False` (the
+    positional-zip case) passes an uncatalogued technique through
+    unchecked, since that case never assumed table coverage to begin with;
+    it still raises on a pair the table actively contradicts.
+    """
+    for technique, tactic in pairs:
+        valid_tactics = TECHNIQUE_TACTICS.get(technique)
+        if valid_tactics is None:
+            if require_known:
+                raise ValueError(
+                    f"{rule_name}: broadcasting technique {technique} across "
+                    f"tactic {tactic!r} needs verifying against MITRE ATT&CK's "
+                    f"real tactic assignment for {technique}, but it has no "
+                    f"entry in TECHNIQUE_TACTICS — add {technique}'s real "
+                    f"tactic set there (see https://attack.mitre.org/techniques/"
+                    f"{technique.replace('.', '/')}/) rather than assuming the "
+                    f"broadcast is safe")
+            continue
+        if tactic not in valid_tactics:
+            raise ValueError(
+                f"{rule_name}: pairing technique {technique} with tactic "
+                f"{tactic!r} is not a real MITRE ATT&CK pairing — "
+                f"{technique}'s real tactics are {sorted(valid_tactics)}. "
+                f"This rule's own attack.<tactic> tag describes the "
+                f"detection's broader relevance, not {technique}'s official "
+                f"tactic membership, so this pair must not be emitted; fix "
+                f"the rule's tags instead of guessing a pairing here")
+    return pairs
+
+
 def harvest():
     rows = []  # each: technique, tactic, source, rule, test, title, status
     # --- Endpoint: Sigma rules -> Elastic Detection Engine ---
     for f in sorted(SIGMA_DIR.glob("*.yml")):
         t = f.read_text(encoding="utf-8")
-        tech = re.search(r"attack\.(t\d{4}(?:\.\d{3})?)", t, re.I)
-        tac = re.search(r"attack\.([a-z_]+)\s*$", t, re.M)
+        # #378: findall (not search) — a rule can legitimately carry more
+        # than one attack.<technique> and/or attack.<tactic> tag; the old
+        # first-match-only search() silently discarded every secondary tag.
+        # Dedup (preserving first-seen order) so an accidental duplicate tag
+        # in a rule's own tags: list doesn't produce a duplicate row.
+        techs = list(dict.fromkeys(m.upper() for m in re.findall(r"attack\.(t\d{4}(?:\.\d{3})?)", t, re.I)))
+        tacs_raw = list(dict.fromkeys(m.lower() for m in re.findall(r"attack\.([a-z_]+)\s*$", t, re.M)))
         title = re.search(r"^title:\s*(.+)$", t, re.M)
         status = re.search(r"^status:\s*(\S+)", t, re.M)
-        if not tech:
+        if not techs:
             continue
         # #281 security-auditor finding: silently falling back to "Unknown"
         # (no TACTICS entry for the rule's own attack.<tactic> tag, or no
@@ -170,23 +326,32 @@ def harvest():
         # #281 exists to eliminate, just via a different route (e.g. a typo
         # like attack.privilege-escalation instead of the real
         # attack.privilege_escalation). Fail loudly instead.
-        if not tac or tac.group(1).lower() not in TACTICS:
+        # #378: validates EVERY tactic tag on the rule, not just the first —
+        # the old code only ever inspected tac.group(1), so a rule with a
+        # valid first tactic tag and a typo'd SECOND one shipped silently.
+        unresolved = [tac for tac in tacs_raw if tac not in TACTICS]
+        if not tacs_raw or unresolved:
             raise ValueError(
                 f"rules/sigma/{f.name}: has an attack.<technique> tag but no "
                 f"resolvable attack.<tactic> tag (found: "
-                f"{tac.group(1) if tac else None!r}) — every rule with a "
-                f"technique tag needs a matching tactic tag from TACTICS, "
-                f"or it silently renders as a dead Navigator cell")
-        tactic_name = TACTICS[tac.group(1).lower()][0]
-        rows.append({
-            "technique": tech.group(1).upper(),
-            "tactic": tactic_name,
-            "source": logsource_label(t),
-            "rule": f"rules/sigma/{f.name}",
-            "test": "Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)",
-            "title": _validate_title(title.group(1).strip() if title else f.stem, f"rules/sigma/{f.name}"),
-            "status": status.group(1) if status else "experimental",
-        })
+                f"{tacs_raw or None!r}, unresolved: {unresolved!r}) — every "
+                f"rule with a technique tag needs a matching tactic tag from "
+                f"TACTICS, or it silently renders as a dead Navigator cell")
+        tactic_names = [TACTICS[tac][0] for tac in tacs_raw]
+        source = logsource_label(t)
+        rule_label = f"rules/sigma/{f.name}"
+        validated_title = _validate_title(title.group(1).strip() if title else f.stem, rule_label)
+        status_value = status.group(1) if status else "experimental"
+        for technique, tactic_name in _technique_tactic_pairs(techs, tactic_names, rule_label):
+            rows.append({
+                "technique": technique,
+                "tactic": tactic_name,
+                "source": source,
+                "rule": rule_label,
+                "test": "Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/)",
+                "title": validated_title,
+                "status": status_value,
+            })
     # --- Network: Zeek detections classified in logstash.conf (Category 5) ---
     # Pair each [threat][technique][id] with the [threat][tactic][id]/[name]
     # that follow it within the SAME add_field block.

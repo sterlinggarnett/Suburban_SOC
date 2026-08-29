@@ -15,5 +15,4 @@ falsepositives:
 level: high
 tags:
     - attack.privilege_escalation
-    - attack.lateral_movement
     - attack.t1574

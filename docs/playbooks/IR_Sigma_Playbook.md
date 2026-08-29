@@ -13,7 +13,7 @@ This playbook provides a structured, per-rule methodology to respond to alerts t
 IR Sigma Playbook (Endpoint & Network Alerts)
 
 ## Problem Statement
-Suburban-SOC deploys 108 Sigma detection rules across endpoint (Sysmon, Windows event channels, Linux auth) and network (Zeek) telemetry, spanning 75 MITRE ATT&CK techniques across 12 tactics (see [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md)). Every one of those alerts requires a standardized triage and containment response; a generic playbook cannot tell an analyst which fields to extract, which threat-intelligence lookups apply, or when containment may be automated. This playbook gives each deployed rule its own response procedure.
+Suburban-SOC deploys 108 Sigma detection rules across endpoint (Sysmon, Windows event channels, Linux auth) and network (Zeek) telemetry, spanning 78 MITRE ATT&CK techniques across 12 tactics (see [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md)). Every one of those alerts requires a standardized triage and containment response; a generic playbook cannot tell an analyst which fields to extract, which threat-intelligence lookups apply, or when containment may be automated. This playbook gives each deployed rule its own response procedure.
 
 ## Objectives
 - Rapidly identify and validate suspicious activities flagged by Sigma rules.
@@ -25,7 +25,7 @@ Suburban-SOC deploys 108 Sigma detection rules across endpoint (Sysmon, Windows 
 - CIS Controls: 17 (Incident Response Management)
 
 ## MITRE ATT&CK Framework
-The deployed corpus covers **75 techniques across 12 tactics**. Per-rule technique IDs are in the Master Detection & Response Matrix below and in each rule's section; the authoritative coverage matrix (auto-generated from `rules/sigma/`) is [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md).
+The deployed corpus covers **78 techniques across 12 tactics**. Per-rule technique IDs are in the Master Detection & Response Matrix below and in each rule's section; the authoritative coverage matrix (auto-generated from `rules/sigma/`) is [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md).
 
 ## Assumptions and Limitations
 - Assumes EDR and Logstash pipelines are fully operational.
@@ -1070,7 +1070,7 @@ Detects net.exe enumerating domain groups (e.g. Domain Admins) — account disco
 
 | Attribute | Value |
 |---|---|
-| Tactic(s) | Collection, Credential Access |
+| Tactic(s) | Collection |
 | Technique(s) | T1005 — Data from Local System |
 | Severity (`level`) | high |
 | Data source | Sysmon/Winlogbeat (process_creation) |
@@ -1233,7 +1233,7 @@ Detects InstallUtil.exe — a signed Microsoft binary — proxy-executing an att
 
 | Attribute | Value |
 |---|---|
-| Tactic(s) | Lateral Movement |
+| Tactic(s) | Lateral Movement, Execution |
 | Technique(s) | T1021 — Remote Services; T1569.002 — System Services: Service Execution |
 | Severity (`level`) | high |
 | Data source | Sysmon/Winlogbeat (process_creation) |
@@ -1925,7 +1925,7 @@ Detects pcalua.exe (Program Compatibility Assistant) invoked with the `-a` flag 
 
 | Attribute | Value |
 |---|---|
-| Tactic(s) | Execution |
+| Tactic(s) | Execution, Command and Control |
 | Technique(s) | T1059.001 — Command and Scripting Interpreter: PowerShell; T1105 — Ingress Tool Transfer |
 | Severity (`level`) | high |
 | Data source | Sysmon/Winlogbeat (process_creation) |
@@ -2032,7 +2032,7 @@ Detects encoded PowerShell commands, a common obfuscation technique. The rule co
 
 | Attribute | Value |
 |---|---|
-| Tactic(s) | Execution, Lateral Movement |
+| Tactic(s) | Execution |
 | Technique(s) | T1569.002 — System Services: Service Execution |
 | Severity (`level`) | medium |
 | Data source | Sysmon/Winlogbeat (process_creation) |
@@ -2140,7 +2140,7 @@ Detects RAR creating a password-protected archive — the classic collection-sta
 
 | Attribute | Value |
 |---|---|
-| Tactic(s) | Privilege Escalation, Lateral Movement |
+| Tactic(s) | Privilege Escalation |
 | Technique(s) | T1574 — Hijack Execution Flow (per the rule's `attack.t1574` tag) |
 | Severity (`level`) | high |
 | Data source | Sysmon/Winlogbeat (process_creation) |
@@ -4140,7 +4140,7 @@ Detects script content constructing a raw TCP socket and reading/writing its net
 
 | Attribute | Value |
 |---|---|
-| Tactic(s) | Privilege Escalation, Defense Evasion |
+| Tactic(s) | Privilege Escalation |
 | Technique(s) | T1068 — Exploitation for Privilege Escalation |
 | Severity (`level`) | medium |
 | Data source | Winlogbeat (Windows System) |
@@ -4844,7 +4844,7 @@ Catches only the plaintext lookup phase a client performs before establishing th
 
 | Attribute | Value |
 |---|---|
-| Tactic(s) | Command and Control, Exfiltration |
+| Tactic(s) | Command and Control |
 | Technique(s) | T1071.004 — Application Layer Protocol: DNS |
 | Severity (`level`) | medium |
 | Data source | Zeek dns |
@@ -4956,7 +4956,7 @@ Detects the download half of TXT-based DNS C2 (Cobalt Strike's DNS-TXT channel, 
 
 | Attribute | Value |
 |---|---|
-| Tactic(s) | Command and Control, Exfiltration |
+| Tactic(s) | Command and Control |
 | Technique(s) | T1071.004 — Application Layer Protocol: DNS |
 | Severity (`level`) | medium |
 | Data source | Zeek dns |

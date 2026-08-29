@@ -19,5 +19,6 @@ falsepositives:
 level: high
 tags:
     - attack.lateral_movement
+    - attack.execution
     - attack.t1021
     - attack.t1569.002

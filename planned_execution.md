@@ -27,7 +27,7 @@ matching the M12/M13/M14 pattern.
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
-| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ⏳ 3/6 closed — 3 open (corrected 2026-08-29: this doc's "3" undercounted; the milestone's own issue list has 6: #308, #309, #312, #373, #376, #424) | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
+| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ⏳ 4/6 closed — 2 open (#308, #312) | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
@@ -343,6 +343,39 @@ unattended multi-issue runs.
   was fixed in the same commit. Deliberately scoped to `vanished_claims`
   only — the issue's "ideally its siblings `orphaned_claims`/
   `stuck_approval_claims`" note is a separate, smaller follow-up.
+
+- [x] **#309 (tech-debt) — COMPLETE, MERGED (PR #471)** — four small
+  follow-ups from #277's round-4 security-auditor review of the
+  hive-mind-broker containment channel. (1) `dispatch_block()`
+  (`scripts/hive-mind-broker/app.py`) read `request_id` with no type
+  check, length bound, or sanitization at all, unlike the adjacent
+  `_claimed_approver()` — added `_safe_request_id()` mirroring that
+  same Cc/Cf-strip + 64-char-truncate pattern (a non-string request_id
+  returns `None` rather than `_claimed_approver()`'s `<non-string:type>`
+  placeholder — it carries no adversarial identity-claim worth
+  preserving). (2) `request_id` wasn't recorded on either side's audit
+  trail, so a tampering alert had no join key back to the broker's own
+  record of the same call — added it to the broker's executed queue
+  row and to both new `write_audit()` branches in `agent.py`'s
+  `dispatch_block_via_broker()` (the mismatch branch records both this
+  call's own id and the replayed response's echoed one). (3) no
+  detection content existed for the `broker_response_signature_invalid`/
+  `broker_response_request_id_mismatch` audit actions — added
+  `metric_broker_response_tampering()` to `slo_metrics.py` following
+  the `metric_intel_feed_stale_heartbeats()` precedent for replacing an
+  unusable-on-this-license Elastic Watcher (windowed count, target 0,
+  wired into the existing ntfy/dashboard pipeline); this is the first
+  query against `soc-audit-*` from this script, so added a read grant
+  in `slo_metrics_reader.json` (+ synced docker-compose inline copy) —
+  that index has no explicit ES template, so the query targets the
+  `.keyword` sub-fields Elasticsearch's default dynamic mapping creates
+  for `write_audit()`'s dotted `event.action`/`event.outcome` keys, not
+  the bare (analyzed-text) field names. (4) `dispatch_block_via_broker()`'s
+  `requests.post()` to the broker (plain HTTP by default) lacked
+  `allow_redirects=False`. Parallel security/code reviews both came
+  back with no findings; verified via the full test suite (no live ES/
+  Kibana cluster available in this environment, same as prior static-
+  verified M20 issues).
 
 **M18 progress:**
 

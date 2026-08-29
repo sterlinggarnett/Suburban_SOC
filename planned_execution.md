@@ -28,7 +28,7 @@ matching the M12/M13/M14 pattern.
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
-| [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ⏳ 1/3 closed — 2 open (#270, #321) | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
+| [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ⏳ 2/3 closed — 1 open (#270) | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
@@ -248,6 +248,51 @@ unattended multi-issue runs.
 
 **M21 progress:**
 
+- [x] **#321 (security) — COMPLETE, MERGED (PR #480)** — three residual
+  defense-in-depth findings from the same #320/#222 security-auditor
+  review thread on `configs/systemd/zeek-host-capture.service`'s
+  `/storage/PCAP/intel` self-heal step. (1) `chmod` has no `-h`/no-dereference
+  equivalent on Linux, so the existing best-effort
+  `chown -h root:${SOC_USER} ... && chmod 1775 ...` self-heal line could
+  have its `chmod` applied to whatever a symlink swap (between the two
+  commands, or present beforehand) pointed at instead of the real
+  directory. Added a new, hard (non-`-`-prefixed) `ExecStartPre` guard
+  immediately before that line — `[ -d /storage/PCAP/intel ] &&
+  [ ! -L /storage/PCAP/intel ]`, with an explicit `FATAL` diagnostic
+  matching this unit's other hard-fail guards — that narrows (but, per its
+  own comment, does not fully eliminate) the window. (2) The intel-sync
+  `ExecStartPre`'s fallback `cp` for `intel.dat` (used only when the
+  primary sync left it missing/empty) lacked `--remove-destination`, unlike
+  the primary `cp -r` on the same line — since `intel.dat` is tjlam-*owned*
+  (not just group-writable via the sticky bit), tjlam could unlink it and
+  plant a dangling symlink this fallback would then write through as root
+  on the next restart. Added `--remove-destination` there too. (3) Three
+  sibling manual-capture scripts (`stream_capture.sh`, `zeek_connect_host.sh`,
+  `zeek_run_pcap.sh`) each `sudo mkdir -p /storage/PCAP/intel` with no
+  chown/chmod of their own, silently reintroducing root:root 0755 ownership
+  if run by hand on a host where the directory doesn't exist yet — undoing
+  the systemd unit's own fix until it next runs. Extracted a shared
+  `scripts/setup/lib/intel_dir_perms.sh` helper (`harden_intel_dir_perms()`,
+  modeled on the existing `lib/es_common.sh` bash-helper conventions) and
+  wired it into all three scripts right after their `mkdir -p` line
+  (`|| true`-suffixed only in `stream_capture.sh`, the sole one of the
+  three with `set -euo pipefail`, so a permission-fix failure there can't
+  abort capture startup). Two rounds of parallel security/code review both
+  surfaced real findings fixed before merging: round 1 found the shared
+  helper's first draft still left the chown/chmod race open in the 3
+  scripts, since each one's pre-existing symlink check ran well before its
+  own `mkdir -p` rather than immediately before the privileged commands —
+  fixed by moving the guard **into** `harden_intel_dir_perms()` itself so
+  every caller is protected at the point of use; round 1 also flagged a
+  hardcoded `tjlam` literal at the 3 call sites, reintroducing the same
+  portability issue #320 had just fixed for that value — parameterized as
+  `${SOC_USER:-tjlam}`. Round 2 flagged the new systemd guard's lack of a
+  diagnostic message (fixed) and duplicated multi-line rationale comments
+  across the 3 scripts versus a one-line citation of the shared lib's own
+  header (condensed). New `tests/pipeline/test_intel_dir_perms_hardening.py`
+  (8 static text/regex assertions, no live systemd/Docker needed) covers
+  all 3 findings and both review rounds; empirically verified the new
+  guard-placement test fails against the pre-fix helper before finalizing.
 - [x] **#320 (security-adjacent, reliability) — COMPLETE, MERGED (PR #477)** —
   three related findings from a security-auditor review of
   `configs/systemd/zeek-host-capture.service` (the always-on production

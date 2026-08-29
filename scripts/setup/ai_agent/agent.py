@@ -161,6 +161,12 @@ HMAC_REPLAY_WINDOW = int(os.environ.get("HMAC_REPLAY_WINDOW", "300"))  # seconds
 # scripts/hive-mind-broker/app.py's sign_response() (no shared Python path
 # between the two separately-deployed services).
 BROKER_RESPONSE_DOMAIN = b"broker-response:"
+# #308 round-2: the ONE header a non-200 /webhook/dispatch response can carry
+# request_id in without changing FastAPI's default {"detail": ...} error
+# body shape — see app.py's _REQUEST_ID_HEADER for why only dispatch_block()'s
+# own post-parse validation failures ever set it (mirrored independently,
+# same no-shared-Python-path reason as BROKER_RESPONSE_DOMAIN above).
+BROKER_REQUEST_ID_HEADER = "x-elastic-request-id"
 
 # #246: /approve executes a real isolation action and /pending discloses the
 # drafted-action queue — a materially higher-privilege operation than /alert
@@ -455,12 +461,29 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
     found missed the different-tenant and different-time cases; request_id's
     per-call uniqueness (a fresh random value, not a value that can
     legitimately repeat across calls) closes all of them at once. Both gaps
-    were real, empirically-confirmed, not theoretical hardening. A non-200
-    response's status code alone still determines the outcome without a
-    body-signature check (see #308 for that narrower, separate, deliberately
-    deferred residual risk — #277's own acceptance criteria are met for the
-    200-status/executed-field trust decision this function makes; #308 is
-    the tracked follow-up for authenticating the error-status paths too).
+    were real, empirically-confirmed, not theoretical hardening.
+
+    #308: a non-200 response is ALSO required to carry a valid signature AND
+    the matching request_id before its status code is trusted as a CONFIRMED
+    non-dispatch — the broker's `_signed_http_exception_handler()` now signs
+    every HTTPException-driven error response the same way
+    `_signed_json_response()` signs a 200. Closes the residual risk #277
+    deliberately left open: an on-path attacker suppressing a genuine 200 (a
+    dispatch that already succeeded) and injecting a forged 401/400/503
+    instead used to be trusted outright as "safe to retry," enabling an
+    unsafe double-dispatch. Signature alone is not enough for a non-200
+    (round-2 security-auditor review): the broker's own pre-auth failures
+    (missing/invalid/replayed signature, invalid timestamp) require NO
+    secret to trigger — they ARE the secret check — so an on-path attacker
+    with no secret at all could send the broker any unauthenticated garbage,
+    capture the genuinely-signed rejection that comes back, and substitute
+    it for a real 200. request_id closes this the same way it closes the
+    200-path replay case: dispatch_block()'s own post-parse validation
+    failures echo it (via BROKER_REQUEST_ID_HEADER, since their body keeps
+    FastAPI's default `{"detail": ...}` shape) because reaching that code at
+    all already requires holding the secret; every pre-auth failure echoes
+    neither the header nor a body field, and so can never match, only ever
+    resolving to IsolationOutcomeUnknown.
     """
     if not HIVE_MIND_SECRET:
         return False, "HIVE_MIND_SECRET unset — refusing to dispatch (broker unreachable/unsigned)"
@@ -525,22 +548,21 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
         parsed = resp.json()
         if isinstance(parsed, dict):
             data = parsed
-            detail = data.get("message", detail)
+            # A 200 dispatch response carries "message"; every HTTPException-
+            # driven error response (FastAPI's default shape, #308's
+            # _signed_http_exception_handler included) carries "detail"
+            # instead — a response only ever has one of the two keys, so
+            # trying "message" first and falling back to "detail" can't
+            # silently prefer the wrong one. Code-reviewer catch: this used
+            # to check "message" only, so every non-200 response fell
+            # through to the raw `resp.text[:300]` — i.e. the WHOLE
+            # serialized JSON body (`'{"detail": "..."}'`), not the clean
+            # message — for exactly the new "trust a verified non-200's
+            # detail" path #308 added below.
+            detail = data.get("message", data.get("detail", detail))
     except Exception:
         pass
-    # #277 round-3: every status code EXCEPT the verified-200 path below
-    # reaches a human (case comment) or a durable record (audit row, ntfy)
-    # via this function's return value / raised exception message WITHOUT
-    # ever having its signature checked — #308 tracks fully closing that
-    # (signing the broker's HTTPException-driven 4xx/5xx too). Until then,
-    # the body-derived `detail` text itself must not be forwarded verbatim:
-    # an attacker forging any non-200 (or a malformed 200) can otherwise
-    # inject arbitrary analyst-facing text with no signature needed at all.
-    # A digest preserves forensic correlation value without the injection
-    # channel (round-2 security-auditor review flagged this as incomplete
-    # when only the NEW verified-response-failure paths below were sanitized).
     body_digest = hashlib.sha256(resp.content).hexdigest()[:16]
-    unverified_detail = f"unverified broker response, body_sha256={body_digest}"
 
     # #247 security-auditor review: a broker-side failure is not automatically
     # a CONFIRMED non-dispatch — the broker's dispatcher already distinguishes
@@ -551,51 +573,16 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
     # Only 500 (the broker's OWN handler code failed partway through — e.g. an
     # exception raised while recording the audit row, AFTER dispatch_block_to_all()
     # already ran) and 504 (an intermediary gave up waiting while the broker may
-    # still have been mid-dispatch) are genuinely ambiguous. Every other non-200 —
-    # 4xx (rejected before dispatch: auth/validation), or 502/503 (the request
-    # never reached, or was refused by, the broker's dispatch logic at all — e.g.
-    # the broker's own 503 for "HMAC secret not configured" fires before any
-    # dispatch attempt is even possible) — is a confirmed non-dispatch.
+    # still have been mid-dispatch) are genuinely ambiguous — unconditionally so,
+    # regardless of signature, so this check runs BEFORE the signature
+    # verification below (never worth even checking for these two).
     if resp.status_code in (500, 504):
         logger.error("broker dispatch outcome UNKNOWN (broker returned HTTP %s, body_sha256=%s)",
                     resp.status_code, body_digest)
         raise IsolationOutcomeUnknown(
-            f"broker returned HTTP {resp.status_code} — outcome unknown: {unverified_detail}")
-    if resp.status_code != 200:
-        # #277 round-4: this response's body is unverified (see unverified_detail's
-        # own comment) so it must never reach an analyst-facing surface raw — but
-        # a container's own stdout log is not that surface, and losing the broker's
-        # actual error text here (e.g. a genuine misconfigured-secret 401) cost
-        # real debugging time in round-4 review. %r escapes newlines/control
-        # characters, so this can't be abused as a log-injection channel either.
-        logger.warning("broker dispatch confirmed non-dispatch: HTTP %s body=%r",
-                       resp.status_code, resp.content[:200])
-        return False, unverified_detail
-    if not data:
-        # A 200 with an unparseable/non-object body shouldn't happen in practice
-        # (the handler always returns a well-formed JSON object) — if it somehow
-        # does, don't assume it's a confirmed non-dispatch either.
-        logger.error("broker dispatch outcome UNKNOWN (unparseable 200 response, body_sha256=%s)",
-                    body_digest)
-        raise IsolationOutcomeUnknown(f"unparseable broker response — outcome unknown: {unverified_detail}")
+            f"broker returned HTTP {resp.status_code} — outcome unknown: "
+            f"unverified broker response, body_sha256={body_digest}")
 
-    # #277: the broker's /webhook/dispatch response was previously unauthenticated
-    # — an on-path attacker (or DNS control over the broker hostname) could forge
-    # {"executed": true} to falsely close a case/resolve a claim, or forge
-    # {"executed": false} to trigger an unsafe "confirmed non-dispatch" retry.
-    # verify_signature() reuses the SAME shared HIVE_MIND_SECRET the request was
-    # signed with (the broker's _signed_json_response() signs its response the
-    # same way), domain-separated (BROKER_RESPONSE_DOMAIN) so the agent's OWN
-    # signed request can never verify as a valid response (round-2 security-
-    # auditor review: without this, reflecting the agent's own request back
-    # verifies successfully and resolves to a confirmed non-dispatch, since
-    # `data.get("executed")` is absent/falsy on a reflected request body — a
-    # confirmed non-dispatch is exactly the "safe to retry" signal that
-    # enables a double-dispatch if the real request had already succeeded).
-    # A missing or invalid response signature is NEVER treated as a confirmed
-    # answer either way. body_digest (computed above, before this response
-    # body was known to be genuine) is used in place of the raw body in every
-    # log/audit/alert here — see its own comment for why.
     # #277 round-4 security-auditor review: ntfy.sh is a public third-party
     # service (same masking policy #177/AC-4 already enforces for every
     # other send_soc_alert() call in this file, e.g. notify_ip below) — the
@@ -603,18 +590,49 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
     # calls keep the raw IP (ES's soc-audit-* index, an internal system, is
     # not the public-disclosure boundary this policy is about).
     notify_ip = attacker_ip if NOTIFY_INCLUDE_RAW_IOCS else _mask_ip(attacker_ip)
+
+    # #277: the broker's /webhook/dispatch response was previously unauthenticated
+    # — an on-path attacker (or DNS control over the broker hostname) could forge
+    # {"executed": true} to falsely close a case/resolve a claim, or forge
+    # {"executed": false} to trigger an unsafe "confirmed non-dispatch" retry.
+    # #308: EVERY remaining status code (not just 200) is gated the same way —
+    # a forged non-200 with no valid signature is exactly as untrustworthy as a
+    # forged 200, and must not be trusted as a confirmed non-dispatch either
+    # (an on-path attacker suppressing a genuine 200 that already succeeded and
+    # injecting a forged 401/400/503 instead used to be trusted outright as
+    # "safe to retry," enabling an unsafe double-dispatch). verify_signature()
+    # reuses the SAME shared HIVE_MIND_SECRET the request was signed with (the
+    # broker's _signed_json_response()/_signed_http_exception_handler() both
+    # sign their responses the same way), domain-separated (BROKER_RESPONSE_
+    # DOMAIN) so the agent's OWN signed request can never verify as a valid
+    # response (round-2 security-auditor review: without this, reflecting the
+    # agent's own request back verifies successfully and resolves to a
+    # confirmed non-dispatch, since `data.get("executed")` is absent/falsy on
+    # a reflected request body — a confirmed non-dispatch is exactly the "safe
+    # to retry" signal that enables a double-dispatch if the real request had
+    # already succeeded). A missing or invalid response signature is NEVER
+    # treated as a confirmed answer either way, on ANY status code. body_digest
+    # (computed above, before this response body was known to be genuine) is
+    # used in place of the raw body in every log/audit/alert here — see its
+    # own comment for why.
     if not verify_signature(resp.content, resp.headers.get(HMAC_HEADER),
                             resp.headers.get(HMAC_TS_HEADER),
                             secret=HIVE_MIND_SECRET, hmac_env_var="HIVE_MIND_SECRET",
                             domain=BROKER_RESPONSE_DOMAIN):
         logger.error("broker dispatch outcome UNKNOWN (response signature missing/invalid, "
-                    "body_sha256=%s)", body_digest)
+                    "HTTP %s, body_sha256=%s)", resp.status_code, body_digest)
         write_audit("broker_response_signature_invalid", "soc-ai-agent", tenant,
                    outcome="unknown", target=attacker_ip,
                    # #309: request_id is the join key against the broker's own
                    # queue row for this SAME dispatch (see app.py's
                    # dispatch_block()) — not a secret, already sent in
                    # cleartext over this (currently plain-HTTP) channel.
+                   # Recording this call's OWN value is the correct join key
+                   # regardless of which response the attacker forged — a
+                   # signature-invalid response never gets far enough to be
+                   # trusted for ITS OWN echoed value anyway (see #308's
+                   # BROKER_REQUEST_ID_HEADER-based check, which only runs
+                   # once the signature already verified).
                    detail=f"request_id={request_id} body_sha256={body_digest}")
         send_soc_alert("Broker response signature invalid",
                       f"A /webhook/dispatch response for {notify_ip} (tenant '{tenant}') "
@@ -625,10 +643,22 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
         raise IsolationOutcomeUnknown(
             f"broker response signature missing or invalid — outcome unknown (body_sha256={body_digest})")
 
-    # #277 round-3: the signature alone proves "signed by this broker," not
-    # "in answer to THIS request" — nothing in the signed bytes ties a
-    # response to a specific dispatch call. An earlier draft of this fix
-    # checked only the broker's echoed attacker_ip, which closed a
+    if resp.status_code == 200 and not data:
+        # A 200 with an unparseable/non-object body shouldn't happen in practice
+        # (the handler always returns a well-formed JSON object) — if it somehow
+        # does, don't assume it's a confirmed non-dispatch either. Checked here
+        # (status==200 specifically) rather than folded into the request_id
+        # check below so this keeps its own clearer diagnostic message instead
+        # of surfacing as a generic mismatch.
+        logger.error("broker dispatch outcome UNKNOWN (unparseable 200 response, body_sha256=%s)",
+                    body_digest)
+        raise IsolationOutcomeUnknown(
+            f"unparseable broker response — outcome unknown: body_sha256={body_digest}")
+
+    # #277 round-3 / #308 round-2: the signature alone proves "signed by this
+    # broker," not "in answer to THIS request" — nothing in the signed bytes
+    # ties a response to a specific dispatch call. An earlier draft of this
+    # fix checked only the broker's echoed attacker_ip, which closed a
     # different-IP replay but missed two related cases a round-2 security-
     # auditor review found: (a) the same IP dispatched for a DIFFERENT
     # tenant (a shared botnet/scanner IP hitting two subscribers is routine,
@@ -639,23 +669,44 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
     # three: it's unique per call regardless of IP, tenant, or timing, so
     # there is no legitimate way for two different dispatch calls to ever
     # expect the same value.
-    if data.get("request_id") != request_id:
+    #
+    # #308 round-2 security-auditor finding: this check MUST also gate every
+    # non-200 status, not just 200 — otherwise a genuinely-signed but
+    # UNTARGETED response (the broker's own _verify()-level pre-auth
+    # failures — missing/invalid/replayed signature, invalid timestamp — none
+    # of which require HIVE_MIND_SECRET to trigger, since they ARE the secret
+    # check) could be minted by an on-path attacker with NO secret at all
+    # (just send the broker any unauthenticated garbage and capture whatever
+    # signed rejection comes back) and substituted for a real 200 that had
+    # already succeeded, resolving to a confirmed "safe to retry" and
+    # reopening the exact double-dispatch #308 exists to close — just via a
+    # self-mintable forged error instead of a captured-and-replayed one. A
+    # 200 body always carries request_id as a JSON field; a non-200 can only
+    # safely echo it via BROKER_REQUEST_ID_HEADER (see that constant's own
+    # comment for why ONLY dispatch_block()'s own post-parse validation
+    # failures — the ones that already require holding the secret to reach
+    # at all — ever set it). Every other non-200 (pre-auth failures, 500/504
+    # already filtered above) carries neither, so it naturally fails this
+    # check exactly like a genuinely-mismatched 200 body already did — never
+    # a confirmed answer, only ever IsolationOutcomeUnknown.
+    echoed_request_id = data.get("request_id") or resp.headers.get(BROKER_REQUEST_ID_HEADER)
+    if echoed_request_id != request_id:
         logger.error("broker dispatch outcome UNKNOWN (response request_id mismatch, "
-                    "body_sha256=%s)", body_digest)
+                    "HTTP %s, body_sha256=%s)", resp.status_code, body_digest)
         write_audit("broker_response_request_id_mismatch", "soc-ai-agent", tenant,
                    outcome="unknown", target=attacker_ip,
                    # #309: both sides of the mismatch, for reconciliation —
                    # `request_id` is this call's own value (join key against
                    # the broker's queue row for the REAL dispatch this call
                    # made); the response's echoed value (whatever a captured,
-                   # replayed response actually carried) is truncated+repr'd
-                   # rather than trusted verbatim, same reasoning as the
-                   # %r-escaped non-200 log line above — this field is
-                   # verified-signed-by-the-broker but not verified to be a
-                   # SANE broker (a pre-#309 broker echoed it completely
-                   # unsanitised).
+                   # replayed, or simply absent response actually carried) is
+                   # truncated+repr'd rather than trusted verbatim, same
+                   # reasoning as the %r-escaped non-200 log line elsewhere in
+                   # this function — this field is verified-signed-by-the-
+                   # broker but not verified to be a SANE broker (a pre-#309
+                   # broker echoed it completely unsanitised).
                    detail=(f"request_id={request_id} "
-                           f"received_request_id={str(data.get('request_id'))[:128]!r} "
+                           f"received_request_id={str(echoed_request_id)[:128]!r} "
                            f"body_sha256={body_digest}"))
         send_soc_alert("Broker response request_id mismatch",
                       f"A /webhook/dispatch response for {notify_ip} (tenant '{tenant}') did not "
@@ -665,6 +716,20 @@ def dispatch_block_via_broker(attacker_ip: str, tenant: str, source_mac: str = "
         raise IsolationOutcomeUnknown(
             f"broker response request_id does not match this dispatch — outcome unknown "
             f"(body_sha256={body_digest})")
+
+    if resp.status_code != 200:
+        # #308: both the signature AND the request_id binding above are now
+        # proven for this response — safe to log/return its real `detail`
+        # text (not just a body_sha256 digest), unlike the pre-#308 code,
+        # which had to withhold it here because an UNSIGNED (and, before the
+        # round-2 fix above, un-bound) non-200 could otherwise inject
+        # arbitrary analyst-facing text with no secret needed at all. %r on
+        # the raw body below still escapes newlines/control characters for
+        # the log line, though that's now defense-in-depth rather than the
+        # only guard.
+        logger.warning("broker dispatch confirmed non-dispatch: HTTP %s body=%r",
+                       resp.status_code, resp.content[:200])
+        return False, detail
 
     try:
         success_count = int(data.get("success_count", 0))

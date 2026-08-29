@@ -594,6 +594,22 @@ class TenantResolverTests(unittest.TestCase):
             return self._fake_response(status_code, body, **fake_response_kwargs)
         return _side_effect
 
+    def _post_echoing_request_id_via_header(self, status_code, json_body=None, **fake_response_kwargs):
+        """#308 round-2: dispatch_block()'s own post-parse validation failures
+        (invalid/missing attacker_ip) are the ONE class of non-200 response
+        that can safely echo request_id at all — reaching that code already
+        requires holding HIVE_MIND_SECRET, unlike _verify()'s own pre-auth
+        failures. They do it via a header (agent.BROKER_REQUEST_ID_HEADER),
+        not a JSON body key, so FastAPI's default {"detail": ...} error body
+        shape stays unchanged — mirrors _post_echoing_request_id() above but
+        for that header-based echo instead of the 200-path's body key."""
+        def _side_effect(*args, **kwargs):
+            outbound = json.loads(kwargs["data"])
+            resp = self._fake_response(status_code, json_body, **fake_response_kwargs)
+            resp.headers = {**resp.headers, agent.BROKER_REQUEST_ID_HEADER: outbound.get("request_id")}
+            return resp
+        return _side_effect
+
     def test_dispatch_confirmed_success_when_broker_reports_it(self):
         with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
              mock.patch.object(agent.requests, "post", side_effect=self._post_echoing_request_id(
@@ -607,24 +623,111 @@ class TenantResolverTests(unittest.TestCase):
         # Verbatim shape of a real /webhook/dispatch 4xx: FastAPI's
         # HTTPException(status_code=400, detail=...) body is {"detail": "..."},
         # not {"message": "..."} (round-3 security-auditor review).
+        # #308: genuinely-signed AND echoing this call's own request_id via
+        # BROKER_REQUEST_ID_HEADER (round-2 security-auditor review) — proves
+        # the confirmed-False classification still works for the ONE class of
+        # non-200 that can prove it answers THIS call (dispatch_block()'s own
+        # post-parse validation, which already requires holding the secret to
+        # reach at all). detail is the clean message text, not the raw JSON
+        # body — code-reviewer catch: data.get("message", detail) alone never
+        # matched a generic {"detail": ...} error shape.
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post",
+                               side_effect=self._post_echoing_request_id_via_header(
+                                   400, {"detail": "attacker_ip is not a valid IP address"})):
+            ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+        self.assertFalse(ok)
+        self.assertEqual(detail, "attacker_ip is not a valid IP address")
+
+    def test_dispatch_unknown_on_signed_4xx_with_no_request_id_echo(self):
+        # #308 round-2 security-auditor finding: a genuinely-signed 4xx that
+        # does NOT echo this call's request_id (e.g. the broker's own
+        # _verify()-level pre-auth failures — missing/invalid/replayed
+        # signature, invalid timestamp — none of which require the secret to
+        # trigger) must NOT be trusted as a confirmed non-dispatch either,
+        # even though it's genuinely signed. Without this, an on-path
+        # attacker with NO secret at all could send the broker any
+        # unauthenticated garbage, capture the genuine signed rejection that
+        # comes back, and substitute it for a real 200 that had already
+        # succeeded — reopening the exact double-dispatch #308 exists to
+        # close via a self-mintable forged error instead of a captured one.
         resp = self._fake_response(400, {"detail": "attacker_ip is not a valid IP address"})
         with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
              mock.patch.object(agent.requests, "post", return_value=resp):
-            ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
-        self.assertFalse(ok)
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
 
-    def test_dispatch_confirmed_failure_on_broker_502_or_503(self):
+    # --- #308: a forged non-200 must be exactly as untrustworthy as a forged
+    # 200 (#277) — an on-path attacker suppressing a genuine 200 (a dispatch
+    # that already succeeded) and injecting a forged 401/400/503 instead must
+    # NOT be trusted as a confirmed non-dispatch, since that's precisely the
+    # "safe to retry" signal that enables an unsafe double-dispatch. ---------
+    def test_dispatch_unknown_on_forged_4xx_with_no_signature(self):
+        # The exact attack #308 fixes: a forged {"detail": ...} 4xx body with
+        # no signature at all must NOT be trusted as a confirmed non-dispatch
+        # — pre-#308 code returned (False, ...) here unconditionally.
+        resp = self._fake_response(400, {"detail": "attacker_ip is not a valid IP address"}, sign=False)
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_unknown_on_forged_401_with_tampered_signature(self):
+        # Symmetric with test_dispatch_unknown_on_tampered_signature's 200-path
+        # coverage: a non-200 response with a present-but-invalid signature is
+        # just as untrustworthy as one with none at all.
+        resp = self._fake_response(401, {"detail": "Invalid signature"}, tamper_signature=True)
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+
+    def test_dispatch_forged_non_200_writes_signature_invalid_audit(self):
+        # The forged-non-200 case must go through the SAME audit/alert path as
+        # a forged 200 — not a silent/different failure mode just because the
+        # status code differs.
+        resp = self._fake_response(503, {"detail": "Broker secret not configured"}, sign=False)
+        with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
+             mock.patch.object(agent, "write_audit") as mock_audit, \
+             mock.patch.object(agent.requests, "post", return_value=resp):
+            with self.assertRaises(agent.IsolationOutcomeUnknown):
+                agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
+        mock_audit.assert_called_once()
+        self.assertEqual(mock_audit.call_args[0][0], "broker_response_signature_invalid")
+
+    def test_dispatch_unknown_on_broker_502_or_503(self):
         # 502/503 mean the request never reached (or was refused before) the
         # broker's dispatch logic at all — e.g. the broker's own 503 for "HMAC
         # secret not configured" (app.py's _verify()) fires before any dispatch
-        # attempt is even possible. Confirmed non-dispatch, unlike 500/504.
+        # attempt is even possible, or an intermediary in front of a down
+        # broker container returns 502 without the broker ever seeing the
+        # request. #308 round-2 security-auditor review: EITHER way, this is
+        # a pre-auth-style failure that fires the same for every caller
+        # regardless of whether they hold HIVE_MIND_SECRET — it can never
+        # echo THIS call's request_id (no BROKER_REQUEST_ID_HEADER, since
+        # dispatch_block() itself never runs), so per the same reasoning as
+        # test_dispatch_unknown_on_signed_4xx_with_no_request_id_echo it now
+        # resolves to Unknown rather than a confirmed False, even though it
+        # WAS pre-#308 behavior and even though it's genuinely signed here.
+        # (In real production this specific 503 could never actually be
+        # genuinely signed with the agent's OWN matching secret anyway — see
+        # this test's own git history for the full analysis — this is
+        # testing the code path's behavior in isolation, not a realistic
+        # broker misconfiguration scenario.)
         for status in (502, 503):
             with self.subTest(status=status):
-                resp = self._fake_response(status, {"detail": "Broker secret not configured"})
+                # #308 (round 1): non-200 responses are now also signature-
+                # verified, and verify_signature() shares agent._seen_sigs (a
+                # genuine replay cache, unrelated to this fix) across every
+                # call — two byte-identical response bodies signed within the
+                # same wall-clock second would collide there. A distinct body
+                # per status avoids that (a real broker's two DIFFERENT
+                # errors would never share identical content anyway).
+                resp = self._fake_response(status, {"detail": f"Broker secret not configured ({status})"})
                 with mock.patch.object(agent, "HIVE_MIND_SECRET", b"secret"), \
                      mock.patch.object(agent.requests, "post", return_value=resp):
-                    ok, detail = agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
-                self.assertFalse(ok)
+                    with self.assertRaises(agent.IsolationOutcomeUnknown):
+                        agent.dispatch_block_via_broker("1.2.3.4", "home-smith")
 
     def test_dispatch_confirmed_failure_on_real_no_routers_response_shape(self):
         # Verbatim shape of /webhook/dispatch's real "no routers configured"

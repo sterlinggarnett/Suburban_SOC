@@ -12,6 +12,7 @@ SSH via dispatcher.py.
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 import uvicorn
 import hmac
 import hashlib
@@ -174,6 +175,21 @@ def _safe_request_id(payload: dict) -> str | None:
         return None
     cleaned = "".join(c for c in raw if unicodedata.category(c) not in ("Cc", "Cf"))
     return cleaned[:_REQUEST_ID_MAX]
+
+
+# #308 round-2 security-auditor finding: dispatch_block()'s OWN post-parse
+# validation failures (invalid/missing attacker_ip) are the ONE class of
+# non-200 response that can safely echo request_id at all. Reaching this code
+# already requires a request that passed _verify_and_parse() — i.e. holding
+# HIVE_MIND_SECRET — so an on-path attacker WITHOUT the secret cannot
+# manufacture one of these on demand the way they can trivially trigger
+# _verify()'s own pre-auth failures (missing/invalid/replayed signature,
+# invalid timestamp — none of those require the secret, since they ARE the
+# secret check). A generic HTTPException carries no natural body slot for
+# this without changing FastAPI's default `{"detail": ...}` shape (which
+# existing callers/tests depend on) — a header sidesteps that entirely, and
+# `_signed_http_exception_handler()` already forwards `exc.headers` verbatim.
+_REQUEST_ID_HEADER = "x-elastic-request-id"
 
 
 def _with_claim(record: dict, claimed: str | None) -> dict:
@@ -357,15 +373,13 @@ def _signed_json_response(payload: dict) -> JSONResponse:
     what's signed and what's sent, matching how _verify() signs the exact
     raw request body rather than a re-parsed/re-serialized copy of it.
 
-    Scoped to /webhook/dispatch's own 200-status responses only (the ones
-    dispatch_block_via_broker() makes a trust decision from) — not every
-    endpoint, and not this endpoint's own HTTPException-driven 4xx/5xx
-    error responses (raised before this helper is ever reached, e.g. by
-    _verify()/_verify_and_parse() or dispatch_block()'s own validation).
-    Those already can't cause dispatch_block_via_broker() to trust a
-    forged CONFIRMED-success outcome (no 200, no executed/success_count
-    fields to trust) — see #308 for the narrower, separate residual risk
-    of a forged 4xx forcing an unsafe "confirmed non-dispatch" retry.
+    Scoped to /webhook/dispatch's own 200-status responses only — this
+    endpoint's own HTTPException-driven 4xx/5xx error responses (raised
+    before this helper is ever reached, e.g. by _verify()/_verify_and_parse()
+    or dispatch_block()'s own validation) are signed separately, by the
+    app-wide `_signed_http_exception_handler()` below (#308) — see that
+    handler's own docstring for why a forged 4xx being trusted as a
+    confirmed non-dispatch was a real, separate residual risk #277 left open.
 
     `payload` is expected to carry "attacker_ip" and "request_id" (dispatch_block()
     always includes both) — the agent checks request_id against the fresh
@@ -406,6 +420,52 @@ def sign_response(body: bytes) -> tuple[str, str]:
     sig = "sha256=" + hmac.new(
         HMAC_SECRET, _RESPONSE_DOMAIN + f"{ts}.".encode("utf-8") + body, hashlib.sha256).hexdigest()
     return ts, sig
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _signed_http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    """#308: sign every HTTPException-driven error response the same way
+    _signed_json_response() signs a 200 (#277) — closing the asymmetry that
+    fix deliberately left open (see that function's own docstring). Before
+    this, agent.py's dispatch_block_via_broker() trusted ANY non-200 status
+    code as a CONFIRMED non-dispatch with NO signature check at all: an
+    on-path attacker could suppress a genuine 200 (a dispatch that already
+    succeeded) and inject a forged 401/400/503 instead, forcing the agent to
+    treat it as safe to retry — an unsafe double-dispatch.
+
+    Registered against Starlette's base HTTPException, not just fastapi's
+    subclass of it (code review, round 2): every `raise HTTPException(...)`
+    in this file already raises the fastapi subclass, which IS a
+    StarletteHTTPException, so this still catches all of them — but
+    Starlette's OWN internally-raised routing errors (an unmatched path ->
+    404, a wrong HTTP method on a real path -> 405) construct the BASE
+    class directly. Registering only against the fastapi subclass left
+    those two genuinely unsigned (empirically confirmed: GET a nonexistent
+    path, or PUT /webhook/dispatch, and neither response carries
+    x-elastic-signature). Not a live exploit today — dispatch_block_via_
+    broker() only ever POSTs to a route that exists, so it can't reach
+    either case — but it made the "app-wide" claim below inaccurate, and a
+    future caller/route hitting one of these would get an unsigned response
+    with no warning.
+
+    Covers every authenticated endpoint, not just `/webhook/dispatch` — the
+    other endpoints/callers (Kibana's `/webhook/alert`, an operator's
+    `/pending` or `/approve`) simply carry two extra headers they never
+    check; only `dispatch_block_via_broker()` verifies them. Preserves
+    FastAPI's own default error body shape (`{"detail": ...}`), status
+    code, and any caller-supplied headers exactly — this changes only
+    whether the response is ALSO signed, never what it says. `exc.headers`
+    is also how `dispatch_block()`'s own post-parse validation failures
+    (invalid/missing attacker_ip) carry a `request_id` echo without
+    changing that body shape — see `_REQUEST_ID_HEADER`'s own comment for
+    why that's the ONE class of non-200 that can safely be bound to a
+    specific call at all.
+    """
+    response = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
+    ts, sig = sign_response(bytes(response.body))
+    response.headers["x-elastic-signature"] = sig
+    response.headers["x-elastic-timestamp"] = ts
+    return response
 
 
 @app.post("/webhook/alert")
@@ -481,13 +541,6 @@ async def dispatch_block(request: Request):
     """
     payload = await _verify_and_parse(request)
 
-    attacker_ip = payload.get("attacker_ip")
-    if not attacker_ip:
-        raise HTTPException(status_code=400, detail="Payload missing attacker_ip")
-    try:
-        validate_ip(attacker_ip)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="attacker_ip is not a valid IP address")
     # #277 round-3: echoed into every response below so dispatch_block_via_
     # broker() can bind a response to the exact request that produced it —
     # a valid signature alone only proves "the broker signed this," not
@@ -498,7 +551,24 @@ async def dispatch_block(request: Request):
     # agent's mismatch check already treats as unsafe-to-trust, not a crash.
     # #309: sanitised/bounded the same way _claimed_approver() sanitises
     # `approver` — see _safe_request_id()'s own docstring.
+    #
+    # #308 round-2: computed BEFORE the attacker_ip validation below (moved
+    # up from its original position after it) specifically so those two
+    # failures can echo it too, via _REQUEST_ID_HEADER — see that constant's
+    # own comment for why this is safe here (unlike a pre-auth _verify()
+    # failure) despite happening on a non-200 path.
     request_id = _safe_request_id(payload)
+    _request_id_headers = {_REQUEST_ID_HEADER: request_id} if request_id else None
+
+    attacker_ip = payload.get("attacker_ip")
+    if not attacker_ip:
+        raise HTTPException(status_code=400, detail="Payload missing attacker_ip",
+                            headers=_request_id_headers)
+    try:
+        validate_ip(attacker_ip)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="attacker_ip is not a valid IP address",
+                            headers=_request_id_headers)
     # #273: identity of record comes from the authenticated credential's
     # configured label; the body's "approver" is retained only as a claim
     # (computed below, past the early returns — neither writes an audit row).

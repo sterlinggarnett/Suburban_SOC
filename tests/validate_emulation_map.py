@@ -33,6 +33,16 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
+# #437: reuse build_attack_coverage.py's own TACTICS dict as the single
+# canonical set of ATT&CK tactic display names, rather than an independently
+# maintained copy that could silently drift from it (or from the third
+# tactic-name surface, Sigma rule tags -- see build_attack_coverage.py's own
+# #430/#281 comments for the identical drift risk on those two).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "setup"))
+from build_attack_coverage import TACTICS as _ATTACK_TACTICS  # noqa: E402
+
+VALID_TACTIC_NAMES = {name for name, _ta_code in _ATTACK_TACTICS.values()}
+
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
@@ -259,6 +269,18 @@ def validate(em: Emulation, root: Path, check_sigma: bool) -> None:
         em.add(Severity.OK, "ecs-technique", "")
     if not em.tactic:
         em.add(Severity.WARN, "ecs-technique", "no tactic.name declared in ECS_Mapping")
+    elif em.tactic not in VALID_TACTIC_NAMES:
+        # #437: a PRESENT-but-WRONG tactic.name (typo, wrong casing, a name
+        # that doesn't match ATT&CK's exact wording) previously validated
+        # clean -- only absence was checked (WARN, non-blocking; CI's own
+        # gate only fails on ERROR-severity findings, so even a missing
+        # name didn't fail the build). ERROR-severity, matching #430's
+        # equivalent fix for the configs/logstash.conf tactic-name surface.
+        em.add(
+            Severity.ERROR, "ecs-technique",
+            f"tactic.name {em.tactic!r} does not match any real ATT&CK tactic "
+            f"({', '.join(sorted(VALID_TACTIC_NAMES))})",
+        )
 
     # Sigma rule existence + cross-checks
     rule = resolve(root, em.sigma_rule)

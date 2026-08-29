@@ -26,7 +26,7 @@ matching the M12/M13/M14 pattern.
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
-| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ⏳ 3/7 closed — 4 open (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
+| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ⏳ 4/7 closed — 3 open (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
@@ -123,6 +123,29 @@ unattended multi-issue runs.
   itself is not live-verified in this environment (no Docker/ES daemon
   available) — flagged explicitly in the test file and PR for
   confirmation against a real cluster.
+
+- [x] **#305 (enhancement, priority:medium) — COMPLETE, MERGED (PR #456)**
+  — `slo_metrics.py`'s per-metric `_count()` calls return an identical
+  HTTP 404 for "unauthorized" and "genuinely empty" (#275's live-verified
+  finding), so a future `slo_metrics_reader` grant drop would read as a
+  healthy 0 rather than erroring; the existing static test only guards
+  the committed role file, with no live-cluster visibility. Added a
+  one-time-per-run self-check using ES's own `POST /_security/user/
+  _has_privileges`, with index patterns derived dynamically from
+  `configs/elasticsearch/roles/slo_metrics_reader.json` itself (the
+  issue's original 5-pattern list was already stale — #358/#361 added 3
+  more since); wired into `main()`, feeding the same `errors`/exit-3
+  path every other unmeasurable metric already uses. Two parallel
+  reviews (security-focused, code-quality-focused) both found real,
+  fixed issues: an uncaught exception on a missing/malformed role file
+  (now wrapped into `MetricUnavailable`), an unguarded empty-patterns
+  list, and a fragile test-helper-sharing pattern (copying attributes
+  off a sibling `TestCase` with a `staticmethod` re-wrap) refactored to
+  plain module-level functions. Verified the main()-integration test
+  fails when the wiring is removed, and manually confirmed the new
+  stderr line + exit code 3 fire end-to-end on a simulated failure.
+  ES's `_has_privileges` response shape is assumed per its documented
+  API, not live-verified here (no Docker/ES daemon available).
 
 **M18 progress:**
 

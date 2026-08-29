@@ -19,17 +19,20 @@ hadn't been re-sorted). Every open issue now has exactly one
 properly-scoped milestone; M15's full history moved to `<details>` below,
 matching the M12/M13/M14 pattern.
 
-**7 open milestones** (issue counts as of the restructure):
+**7 open milestones** (issue counts as of the restructure; M23/M24 added
+since — see the last two rows):
 
 | Milestone | Issues | Theme |
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/18 closed — #326 blocked, #396/#403/#405 scoped-out, #389/#390 later-filed Zeek-DNS follow-ups | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
+| [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | 📋 4 open (added after the restructure) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
+| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | 📋 5 open (created 2026-08-29) | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —

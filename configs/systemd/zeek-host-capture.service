@@ -165,6 +165,22 @@ Type=simple
 CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID
 # Default interface; override via /etc/default/zeek-host-capture (optional).
 Environment=CAPTURE_IFACE=eth0
+# #320: default deployment user/repo path, referenced below as ${SOC_USER}/
+# ${SOC_REPO} instead of hardcoding tjlam/this absolute path in every
+# ExecStartPre/ExecStart line — this unit hard-fails on any host without
+# that exact user/path otherwise. Override via the same env file below for
+# a different deployment. Same substitution mechanism as CAPTURE_IFACE
+# above (systemd expands ${VAR} into the command string before bash parses
+# it): the ExecStartPre lines below still interpolate these directly rather
+# than taking them as a script's positional argument the way host_capture.sh
+# now does for CAPTURE_IFACE (#320 finding 2) — accepted here since writing
+# this env file already requires root (same low-severity framing #320's own
+# CAPTURE_IFACE finding used), and this specific hardening pass is scoped to
+# portability, not re-plumbing every ExecStartPre in this already-fragile
+# unit (see the reverted-sandboxing note in this file's [Service] footer)
+# into a script of its own.
+Environment=SOC_USER=tjlam
+Environment=SOC_REPO=/home/tjlam/projects/Suburban-SOC
 EnvironmentFile=-/etc/default/zeek-host-capture
 # CWE-59 (security-auditor emergency review, HIGH, pre-existing): /storage/PCAP
 # is tjlam-owned, so a tjlam-level actor can replace /storage/PCAP/intel (or
@@ -239,7 +255,7 @@ ExecStartPre=/bin/mkdir -p /storage/PCAP/zeek_logs /storage/PCAP/intel
 # already-successful || chain set -e does not touch), but a REAL fallback
 # failure (intel.dat absent AND the seed cp itself fails) now aborts here
 # too, same as before this fix.
-ExecStartPre=/bin/bash -c 'set -e; cp -r --remove-destination /home/tjlam/projects/Suburban-SOC/configs/intel/* /storage/PCAP/intel/ 2>/dev/null || true; [ -s /storage/PCAP/intel/intel.dat ] || cp /home/tjlam/projects/Suburban-SOC/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat; grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek || { echo "FATAL: deployed config.zeek is missing an expected at-load line - stale copy" >&2; exit 1; }'
+ExecStartPre=/bin/bash -c 'set -e; cp -r --remove-destination ${SOC_REPO}/configs/intel/* /storage/PCAP/intel/ 2>/dev/null || true; [ -s /storage/PCAP/intel/intel.dat ] || cp ${SOC_REPO}/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat; grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek || { echo "FATAL: deployed config.zeek is missing an expected at-load line - stale copy" >&2; exit 1; }'
 # intel-refresh.service (configs/systemd/intel-refresh.service) runs as the
 # unprivileged repo-owner user and needs to WRITE intel.dat into this same
 # directory on every scheduled refresh, not just at Zeek's own startup — but
@@ -289,7 +305,7 @@ ExecStartPre=/bin/bash -c 'set -e; cp -r --remove-destination /home/tjlam/projec
 # sensor. A failure here degrades to refresh_intel.sh's own tagged "stale"
 # status (visible via slo_metrics.py's metric_intel_feed_stale_heartbeats(),
 # #358), not a capture outage.
-ExecStartPre=-/bin/bash -c 'chown -h root:tjlam /storage/PCAP/intel && chmod 1775 /storage/PCAP/intel'
+ExecStartPre=-/bin/bash -c 'chown -h root:${SOC_USER} /storage/PCAP/intel && chmod 1775 /storage/PCAP/intel'
 # intel.dat itself (not just the directory) needs to be tjlam-OWNED, not
 # merely group-writable: refresh_intel.sh's live sync writes a temp file
 # then renames it over intel.dat (configs/intel/refresh_intel.sh) — and the
@@ -299,18 +315,24 @@ ExecStartPre=-/bin/bash -c 'chown -h root:tjlam /storage/PCAP/intel && chmod 177
 # that protects config.zeek would ALSO block the one write intel-refresh
 # actually needs to make. config.zeek itself is deliberately left off this
 # line — it stays root:root, protected by the sticky bit above.
-ExecStartPre=-/bin/chown -h tjlam:tjlam /storage/PCAP/intel/intel.dat
+ExecStartPre=-/bin/chown -h ${SOC_USER}:${SOC_USER} /storage/PCAP/intel/intel.dat
 # Clear any stale container left by a hard kill (the run uses --rm for clean exit).
 ExecStartPre=-/usr/bin/docker rm -f zeek-host-capture
 # tcpdump captures in the host (WSL) net namespace; Zeek parses the live pcap from stdin.
 # Runs as root under systemd, so tcpdump needs no separate sudo.
-# "set -o pipefail": without it, bash's exit status is docker run's alone -
-# a dead/EPERM'd tcpdump leg (e.g. the CAP_SETUID/CAP_SETGID crash above)
-# leaves systemd reporting this unit healthy while no packets are actually
-# being captured (security-auditor emergency review - this is the likely
-# reason the first two restarts read as "clean" before the third crash-looped).
-# The Zeek image below is pinned to a specific version — see #293 header comment above.
-ExecStart=/bin/bash -c 'set -o pipefail; /usr/bin/tcpdump -i ${CAPTURE_IFACE} -s 0 -U -w - | /usr/bin/docker run -i --rm --name zeek-host-capture -v /storage/PCAP/zeek_logs:/data/zeek_logs -v /storage/PCAP/intel:/data/intel -v /home/tjlam/projects/Suburban-SOC/scripts/setup/configs/zeek:/data/policy:ro -w /data/zeek_logs zeek/zeek:8.2.1@sha256:eca2b3915d3e067cbb4a904f23f4c4f461ea2b60613ab30f7ee77bbc707c87c7 zeek -C -r - LogAscii::use_json=T /data/intel/config.zeek /data/policy/scan-detection.zeek policy/protocols/ssh/detect-bruteforcing'
+# #320: the tcpdump|docker pipeline itself now lives in scripts/setup/
+# host_capture.sh, invoked with CAPTURE_IFACE as a quoted positional
+# argument rather than interpolated into this line's own command string —
+# see that script's own header comment for the shell-injection gap this
+# closes (a hostile /etc/default/zeek-host-capture CAPTURE_IFACE value can
+# no longer break out of the tcpdump invocation and run as root). The
+# script preserves "set -o pipefail" internally, same reasoning as before:
+# without it, a dead/EPERM'd tcpdump leg (e.g. the CAP_SETUID/CAP_SETGID
+# crash above) would leave systemd reporting this unit healthy while no
+# packets are actually being captured (security-auditor emergency review —
+# this is the likely reason the first two restarts read as "clean" before
+# the third crash-looped).
+ExecStart=/bin/bash ${SOC_REPO}/scripts/setup/host_capture.sh "${CAPTURE_IFACE}"
 ExecStop=-/usr/bin/docker stop -t 10 zeek-host-capture
 Restart=always
 RestartSec=5

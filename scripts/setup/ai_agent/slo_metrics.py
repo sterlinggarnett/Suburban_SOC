@@ -11,6 +11,13 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
   Detection coverage               >= 10 tech  — docs/detections/attack-coverage.json
   False-positive rate              <= 10 %     — Kibana cases disposition tags
   Ingest lag                       <= 300 s    — newest logstash-security event age
+  Zeek ingest lag                  <= 300 s    — newest event.dataset:zeek.* event
+                                                  age specifically (#320) — the
+                                                  metric above reads healthy as long
+                                                  as ANY other source keeps writing,
+                                                  which is exactly how a real
+                                                  zeek-host-capture.service outage
+                                                  went undetected until found by hand
   Parse-error (drop) rate          <= 1  %     — pipeline.error over the window
   Raw alert volume                 measured    — Zeek notices + Sigma/Elastic rule
                                                   hits over the window (#216), no
@@ -127,6 +134,10 @@ TARGETS = {
     "coverage_techniques": float(os.environ.get("SLO_COVERAGE_MIN", "10")),
     "false_positive_pct":  float(os.environ.get("SLO_FP_MAX_PCT", "10")),
     "ingest_lag_seconds":  float(os.environ.get("SLO_INGEST_LAG_MAX_S", "300")),
+    # #320: same 300s default as the whole-pipeline ingest_lag_seconds above
+    # (no separately-calibrated Zeek-specific SLA exists yet) — this metric's
+    # value is in WHICH source it isolates, not a different threshold.
+    "zeek_ingest_lag_seconds": float(os.environ.get("SLO_ZEEK_INGEST_LAG_MAX_S", "300")),
     "parse_error_pct":     float(os.environ.get("SLO_PARSE_ERR_MAX_PCT", "1")),
     "audit_write_failures": float(os.environ.get("SLO_AUDIT_WRITE_FAIL_MAX", "2")),
     # #247: any claim still open past SLO_STUCK_CLAIM_MAX_MIN (the AGE window,
@@ -186,13 +197,18 @@ LOWER_BETTER = {
     "orphaned_claims": True, "vanished_claims": True, "capture_loss_max_pct": True,
     "intel_feed_stale_heartbeats": False, "intel_indicator_count_drop_pct": True,
     "zeek_path_nomatch_count": True, "broker_response_tampering_count": True,
+    "zeek_ingest_lag_seconds": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
 # not a benign "n/a". A dead/unreachable pipeline produces no fresh docs, so
 # metric_ingest_lag_seconds() returns None — the single loudest failure must alarm,
 # not register as silence. (WS2.4 observability gap: a total ingest outage was being
 # scored breach=False because lag could not be read.)
-BREACH_IF_NA = {"ingest_lag_seconds"}
+# #320: zeek_ingest_lag_seconds joins this set for the identical reason — a
+# fully-dead zeek-host-capture.service produces zero zeek.* documents, so
+# metric_zeek_ingest_lag_seconds() returns None the same way a total pipeline
+# outage does for the metric above, and needs the same fail-loud treatment.
+BREACH_IF_NA = {"ingest_lag_seconds", "zeek_ingest_lag_seconds"}
 # #216: measured but not target-checked. There's no "correct" alert volume to set
 # a threshold against yet — that's what this metric exists to establish a baseline
 # for (the before/after signal detection tuning needs to prove it reduced noise
@@ -441,6 +457,47 @@ def metric_ingest_lag_seconds():
         return round((datetime.now(timezone.utc) - newest).total_seconds(), 1)
     except Exception as e:
         raise MetricUnavailable(f"ingest-lag search failed: {e}") from e
+
+
+def metric_zeek_ingest_lag_seconds():
+    """Per-SOURCE liveness for the Zeek sensor specifically (#320).
+
+    metric_ingest_lag_seconds() above checks the newest document across
+    EVERY source in logstash-security-* — live-confirmed this reads as
+    healthy even when zeek-host-capture.service is completely silent
+    (crash-looping, or simply never restarted after a host reboot), as
+    long as ANY other source (Endpoint/Sysmon, the anomaly-simulation mock
+    traffic) keeps writing in the meantime. That's exactly how a real
+    Zeek outage went undetected until manual investigation found it — the
+    combination of `Restart=always`/`RestartSec=5`/`StartLimitIntervalSec=0`
+    on that unit means its own crash loop never reaches systemd's `failed`
+    state either, so there was no path by which the outage could have
+    alerted on its own.
+
+    Narrower fix: newest @timestamp filtered to `event.dataset:zeek.*`
+    specifically (configs/logstash.conf stamps every real Zeek document
+    with `event.dataset` as `zeek.<service>` — e.g. `zeek.conn`, `zeek.ssh`,
+    `zeek.notice`). A `wildcard` query works directly against this field
+    without needing a `.keyword` sub-field the way slo_metrics.py's other
+    dynamically-mapped-index workaround does (metric_broker_response_
+    tampering()'s own docstring) — `event.dataset` already has an explicit
+    `keyword` mapping in logstash-security-template.json. No separate
+    exclusion for the parse-failure quarantine index (unlike
+    metric_raw_alert_volume()'s zeek_notices_index) is needed here: a
+    grok-failed document never gets `event.dataset` stamped at all (#349),
+    so it can never match this wildcard query regardless of which index
+    it landed in.
+    """
+    body = {"size": 1, "sort": [{"@timestamp": "desc"}], "_source": ["@timestamp"],
+            "query": {"wildcard": {"event.dataset": "zeek.*"}}}
+    try:
+        hits = es("POST", "/logstash-security-*/_search", body).json().get("hits", {}).get("hits", [])
+        if not hits:
+            return None
+        newest = datetime.fromisoformat(hits[0]["_source"]["@timestamp"].replace("Z", "+00:00"))
+        return round((datetime.now(timezone.utc) - newest).total_seconds(), 1)
+    except Exception as e:
+        raise MetricUnavailable(f"zeek ingest-lag search failed: {e}") from e
 
 
 def metric_parse_error_pct():
@@ -1273,6 +1330,14 @@ def metric_capture_loss_percent():
     first run after a fresh deploy don't false-trigger it (security-auditor
     follow-up: an unqualified check did exactly that on all 3).
 
+    #320: metric_zeek_ingest_lag_seconds() now directly covers the specific
+    "Zeek sensor itself is dead" gap called out above (a fully-dead
+    zeek-host-capture.service produces zero zeek.* documents at all, which
+    that metric catches on its own) — this metric's own no-aggregation-
+    value workaround remains the one that ALSO distinguishes "no Zeek data
+    yet" from "Zeek data flowing but never generating capture-loss docs," a
+    narrower case that metric doesn't cover.
+
     NOT hardened against active forgery: configs/logstash.conf's Category 0
     gates purely on event content (log.file.path matching *_logs/*.log),
     not on which input produced it, so event.dataset is spoofable via the
@@ -1522,6 +1587,7 @@ def main():
         "coverage_techniques": metric_coverage,
         "false_positive_pct": metric_false_positive_pct,
         "ingest_lag_seconds": metric_ingest_lag_seconds,
+        "zeek_ingest_lag_seconds": metric_zeek_ingest_lag_seconds,
         "parse_error_pct": metric_parse_error_pct,
         "audit_write_failures": metric_audit_write_failures,
         "broker_response_tampering_count": metric_broker_response_tampering,

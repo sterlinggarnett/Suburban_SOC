@@ -25,7 +25,12 @@ line itself changing.
 The 4 real capture paths (grep-confirmed, no other executable invocation —
 docs/plans mentioning `zeek/zeek` are excluded from this check, tracked
 separately since they aren't something a systemd unit or SOP script runs):
-  - configs/systemd/zeek-host-capture.service (the always-on production sensor)
+  - scripts/setup/host_capture.sh (#320: the always-on production sensor's
+    tcpdump|docker pipeline — factored out of
+    configs/systemd/zeek-host-capture.service's own ExecStart= line to close
+    a CAPTURE_IFACE shell-interpolation gap; that unit now just invokes this
+    script with the interface as a positional argument, and no longer
+    contains a real zeek/zeek invocation of its own)
   - scripts/setup/stream_capture.sh (SOP-001-A/B/C: mesh/LAN/raw live streaming)
   - scripts/setup/zeek_connect_host.sh (SOP-001-E: interactive host monitor)
   - scripts/setup/zeek_run_pcap.sh (offline PCAP replay)
@@ -46,7 +51,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 REAL_CAPTURE_PATHS = [
-    ROOT / "configs" / "systemd" / "zeek-host-capture.service",
+    ROOT / "scripts" / "setup" / "host_capture.sh",
     ROOT / "scripts" / "setup" / "stream_capture.sh",
     ROOT / "scripts" / "setup" / "zeek_connect_host.sh",
     ROOT / "scripts" / "setup" / "zeek_run_pcap.sh",

@@ -145,6 +145,37 @@ class MetricFunctionTests(unittest.TestCase):
                                return_value=_FakeResponse(200, {"hits": {"hits": []}})):
             self.assertIsNone(slo_metrics.metric_ingest_lag_seconds())
 
+    # --- #320: per-source Zeek liveness ---------------------------------------
+    def test_zeek_ingest_lag_raises_on_request_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_zeek_ingest_lag_seconds()
+
+    def test_zeek_ingest_lag_returns_none_when_no_zeek_docs(self):
+        # The exact blind spot #320 fixes: zero Zeek-sourced documents (a
+        # dead zeek-host-capture.service) must read as None here — a real
+        # failure, distinct from metric_ingest_lag_seconds() staying healthy
+        # because some OTHER source is still writing.
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})):
+            self.assertIsNone(slo_metrics.metric_zeek_ingest_lag_seconds())
+
+    def test_zeek_ingest_lag_computes_age_of_newest_zeek_doc(self):
+        import datetime as _dt
+        stale = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=42)).isoformat().replace("+00:00", "Z")
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": [
+                                   {"_source": {"@timestamp": stale}}]}})):
+            lag = slo_metrics.metric_zeek_ingest_lag_seconds()
+        self.assertAlmostEqual(lag, 42.0, delta=2.0)
+
+    def test_zeek_ingest_lag_queries_event_dataset_zeek_wildcard(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})) as mock_es:
+            slo_metrics.metric_zeek_ingest_lag_seconds()
+        query = mock_es.call_args[0][2]["query"]
+        self.assertEqual(query, {"wildcard": {"event.dataset": "zeek.*"}})
+
     def test_parse_error_pct_propagates_count_failure(self):
         with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
             with self.assertRaises(slo_metrics.MetricUnavailable):
@@ -1320,7 +1351,8 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                        oversized_dns_answer_count=0, zeek_path_nomatch_count=0,
                        capture_loss_max_pct=0.0, intel_feed_stale_heartbeats=1.0,
                        intel_indicator_count_drop_pct=0.0,
-                       broker_response_tampering_count=0.0):
+                       broker_response_tampering_count=0.0,
+                       zeek_ingest_lag=10.0):
     # Module-level, not a TestCase method: shared verbatim by MainExitCodeTests
     # and PrivilegeSelfCheckMainIntegrationTests below. A TestCase-method
     # version can't be shared across sibling classes without either
@@ -1360,6 +1392,8 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                            return_value=intel_indicator_count_drop_pct),
         mock.patch.object(slo_metrics, "metric_broker_response_tampering",
                            return_value=broker_response_tampering_count),
+        mock.patch.object(slo_metrics, "metric_zeek_ingest_lag_seconds",
+                           return_value=zeek_ingest_lag),
         mock.patch.object(slo_metrics, "es", side_effect=_fake_es_healthy_default),
     ]
 
@@ -1508,6 +1542,24 @@ class MainExitCodeTests(unittest.TestCase):
             code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
         self.assertIn("broker_response_tampering_count",
+                       ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_zeek_ingest_lag_none_breaches_via_breach_if_na(self):
+        # Regression guard: metric_zeek_ingest_lag_seconds must actually be
+        # wired into main()'s metric_fns dict AND BREACH_IF_NA, not just
+        # defined — same bug shape #216/#247/#257/#288/#361/#309 already
+        # guard other metrics against. None (zero Zeek-sourced documents —
+        # the exact "sensor is completely silent" scenario #320 exists to
+        # catch) must breach here the same way a total ingest_lag_seconds
+        # outage already does, not register as a benign "n/a".
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in _mock_all_metrics(zeek_ingest_lag=None):
+                stack.enter_context(p)
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        self.assertIn("zeek_ingest_lag_seconds",
                        ntfy_post.call_args.kwargs["data"].decode())
 
     def test_capture_loss_below_threshold_does_not_breach(self):

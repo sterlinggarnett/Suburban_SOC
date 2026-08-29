@@ -10,6 +10,16 @@ description: |
     tokens, since the latter also matches routine deployments that pass
     an unrelated URL-valued MSI property (e.g. `SERVERURL=https://...`)
     alongside a purely local package path.
+    #417: this is the endpoint-side answer to a genuine network-logsource
+    blind spot - Zeek's files.log types a real MSI installer (OLE
+    Compound File magic) identically to a genuine Word document
+    (`application/msword`), a limitation Zeek's own signature source
+    acknowledges (base/frameworks/files/magic/office.sig) and
+    net_zeek_executable_download.yml's description discloses in full.
+    That rule deliberately does not add application/msword to its
+    mime_type list (would flag every legitimate .doc download/attachment
+    with zero ability to discriminate); this rule is the more tractable
+    detection point for T1218.007 that #417 recommended pursuing instead.
 references:
     - https://attack.mitre.org/techniques/T1218/007/
 author: Suburban-SOC

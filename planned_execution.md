@@ -26,7 +26,7 @@ matching the M12/M13/M14 pattern.
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
-| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ⏳ 6/7 closed — 1 open (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
+| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
@@ -215,6 +215,35 @@ unattended multi-issue runs.
   check keyed off the old unquoted-URL format (`.../role/<name> ` with
   a trailing space to exclude the `_compactor` variant) — fixed to
   match on the new `put()` call's closing quote instead.
+
+- [x] **#330 (tech-debt) — COMPLETE, MERGED (PR #462)** — the `detections`
+  CI job installed the Sigma toolchain unpinned (`pip install sigma-cli
+  pysigma-backend-elasticsearch`), letting a newer PyPI release silently
+  change `build_kql_docs.py --check`'s compiled Lucene output (e.g.
+  multi-word-term escaping: `"Domain Admins"` quoted vs. `Domain\
+  Admins` backslash-escaped — semantically identical, textually
+  different), failing the job on PRs that never touched detection
+  rules at all. The issue's own comment history dug past the original
+  report to two further root causes: a contributor's stale local pipx
+  install drifting from CI's fresh one, and — the deepest cause,
+  confirmed by direct reproduction — identical package versions
+  rendering differently under Python 3.11 vs. 3.12, independent of any
+  pip pin. Fixed by pinning `sigma-cli==3.1.0 pysigma==1.5.0
+  pysigma-backend-elasticsearch==2.1.1` (the exact versions already
+  generating the committed doc, verified today's unpinned resolution
+  still matches) in `detections.yml`'s two install steps AND
+  `deploy_detections.sh`'s local `.venv-detections` bootstrap (the
+  issue's own suggested fix called out local dev-setup installs too),
+  plus a `build_kql_docs.py` docstring note that regeneration must
+  also happen under the same Python version CI uses (`.python-version`,
+  3.11) — pinning packages alone doesn't fully close the Python-version
+  root cause. Parallel security/code reviews both passed; addressed the
+  security review's two low findings (a documented "how to deliberately
+  bump these pins" procedure, and a stale unpinned-install suggestion
+  in a test's error message) before merging. Filed #463 for the code
+  review's non-blocking observation (`deploy_detections.sh`'s local
+  venv doesn't pin the Python version the way CI does). **This closes
+  M19 — 7/7 issues complete.**
 
 **M18 progress:**
 

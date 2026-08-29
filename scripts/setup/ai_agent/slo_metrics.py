@@ -218,6 +218,82 @@ def kb(path):
                         headers={"kbn-xsrf": "true"}, timeout=15)
 
 
+_SLO_METRICS_READER_ROLE_PATH = (
+    REPO / "configs" / "elasticsearch" / "roles" / "slo_metrics_reader.json"
+)
+
+
+def _slo_metrics_reader_read_patterns():
+    """Every index pattern configs/elasticsearch/roles/slo_metrics_reader.json
+    grants 'read' on, derived from that authoritative role file itself rather
+    than a hardcoded snapshot — so a pattern added to the role in the future
+    (as #358 already did twice, after #305 was originally filed against a
+    smaller list) is covered by the self-check below automatically, with no
+    separate edit needed here."""
+    try:
+        role = json.loads(_SLO_METRICS_READER_ROLE_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise MetricUnavailable(f"slo_metrics_reader.json unreadable: {e}") from e
+    patterns = []
+    for entry in role.get("indices", []):
+        if "read" in entry.get("privileges", []):
+            patterns.extend(entry["names"])
+    return patterns
+
+
+def _check_slo_metrics_reader_privileges():
+    """#305: a one-time, live-cluster self-check that the slo_metrics_reader
+    credential this script actually runs as still holds 'read' on every
+    index pattern it depends on. The static SloMetricsReaderRoleGrantTests
+    (tests/ai_agent/test_slo_metrics.py) only guards the COMMITTED role
+    file — it has no visibility into a live cluster's ACTUALLY APPLIED role,
+    which a direct edit against a running cluster or a partially-failed
+    deploy could still drift from.
+
+    Elasticsearch's own POST /_security/user/_has_privileges is callable by
+    any authenticated user to check their OWN granted privileges (no extra
+    permission needed) and distinguishes "authorized, zero matching docs"
+    from "not authorized" — unlike a bare _count(), which returns the
+    identical 404 for both (#275's live-verified finding, documented on
+    metric_audit_write_failures() above).
+
+    One request per run, covering every pattern at once (not one call per
+    metric) — raises MetricUnavailable, the same loud-failure signal every
+    other unmeasurable metric in this file uses, rather than letting a
+    revoked grant masquerade as a healthy 0 anywhere else in this run.
+    """
+    patterns = _slo_metrics_reader_read_patterns()
+    if not patterns:
+        # Elasticsearch's behavior for "prove read on zero patterns" is not
+        # verified in this environment (no live cluster available) — refuse
+        # to silently treat an empty list as vacuously satisfied rather than
+        # risk it being a no-op self-check.
+        raise MetricUnavailable(
+            "slo_metrics_reader.json grants no 'read' patterns at all — "
+            "cannot run the privilege self-check"
+        )
+    body = {"index": [{"names": patterns, "privileges": ["read"]}]}
+    try:
+        r = es("POST", "/_security/user/_has_privileges", body)
+    except Exception as e:
+        raise MetricUnavailable(f"privilege self-check request failed: {e}")
+    if r.status_code != 200:
+        raise MetricUnavailable(
+            f"privilege self-check returned HTTP {r.status_code}: {r.text[:300]}"
+        )
+    try:
+        data = r.json()
+    except ValueError as e:
+        raise MetricUnavailable(f"privilege self-check returned a non-JSON response: {e}")
+    if not data.get("has_all_requested", False):
+        index_grants = data.get("index", {})
+        missing = [p for p in patterns if not index_grants.get(p, {}).get("read", False)]
+        raise MetricUnavailable(
+            f"slo_metrics_reader is missing 'read' on: {missing or patterns} "
+            f"(live cluster response: {data})"
+        )
+
+
 def _count(index, query, strict=False):
     """strict=True: allow_no_indices=false/ignore_unavailable=false, so a
     pattern resolving to zero indices raises instead of silently returning a
@@ -1351,6 +1427,16 @@ def main():
         "intel_indicator_count_drop_pct": metric_intel_indicator_count_drop_pct,
     }
     values, errors = {}, {}
+
+    # #305: run once, before any metric — a live privilege regression here
+    # would otherwise silently masquerade as a healthy 0 on whichever
+    # metric below happens to query the affected pattern.
+    try:
+        _check_slo_metrics_reader_privileges()
+    except MetricUnavailable as e:
+        errors["slo_metrics_reader_privileges"] = str(e)
+        print(f"  -> slo_metrics_reader privilege self-check failed: {e}", file=sys.stderr)
+
     for name, fn in metric_fns.items():
         try:
             values[name] = fn()

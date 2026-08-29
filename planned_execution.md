@@ -26,7 +26,7 @@ matching the M12/M13/M14 pattern.
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
-| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ⏳ 1/7 closed — 6 open (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
+| [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ⏳ 2/7 closed — 5 open (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
@@ -79,6 +79,25 @@ unattended multi-issue runs.
   found in `scripts/setup/docker-compose.ha.yml`'s `es01` service while
   reviewing this fix — a separate, explicitly-not-turnkey topology
   sketch, out of scope for #359 itself.
+
+- [x] **#304 (bug) — COMPLETE, MERGED (PR #451)** — `docker-compose.yml`'s
+  `provision` service bootstraps several ES roles inline (a hand-
+  maintained JSON PUT body per role) as a stopgap before the `roles`
+  service re-applies every `configs/elasticsearch/roles/*.json` file for
+  real; before #257/#275 only `slo_metrics_reader` had any automated
+  check that its inline copy stayed in sync with its role file.
+  Generalized that guard to every role bootstrapped this way — 9 as of
+  this writing (the issue's original "6" undercounted; 3 more roles
+  gained inline copies since it was filed) — discovered dynamically via
+  regex anchored to the actual executing `curl` command text, so a
+  future role added to `provision` is covered automatically. Live-
+  checked: all 9 already matched their role files (`logstash_writer`'s
+  drift the issue was filed against was already fixed by #257 before
+  this was picked up), so this test guards the *next* drift, not a
+  live one. Verified the test actually catches drift via a temporary
+  injected mutation, then confirmed a clean restore. Two parallel
+  reviews (security-focused, code-quality-focused) both returned "safe
+  to merge as-is," CI green on first push.
 
 **M18 progress:**
 

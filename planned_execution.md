@@ -27,7 +27,7 @@ matching the M12/M13/M14 pattern.
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
-| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ⏳ 1/6 closed — 5 open (corrected 2026-08-29: this doc's "3" undercounted; the milestone's own issue list has 6: #308, #309, #312, #373, #376, #424) | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision, ntfy header encoding, delete-by-query timeout handling, SLO dashboard/audit gaps |
+| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ⏳ 2/6 closed — 4 open (corrected 2026-08-29: this doc's "3" undercounted; the milestone's own issue list has 6: #308, #309, #312, #373, #376, #424) | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision, delete-by-query timeout handling, SLO dashboard/audit gaps |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
@@ -280,6 +280,40 @@ unattended multi-issue runs.
   environment) — verified instead via direct reproduction of the exact
   `UnicodeEncodeError`/`InvalidHeader` at the `requests`/`http.client`
   boundary.
+
+- [x] **#376 (security, priority:medium) — COMPLETE, MERGED (PR #467)** —
+  `compact_agent_checkpoints.py`'s `compact()` issued a single
+  SYNCHRONOUS `_delete_by_query` with a fixed client-side `timeout=60`
+  — the identical bug class issue #358 already fixed for a sibling
+  script, `compact_threat_intel.py` (deliberately scoped out of that
+  PR). A client-side timeout does not cancel the server-side ES task,
+  so a legitimately long-running delete surfaced as a client failure
+  while Elasticsearch kept deleting regardless, and a re-run would then
+  double the work with no record of what the first attempt actually
+  removed — arguably higher-consequence here since this index's
+  retention-job reliability interacts with the at-most-once
+  execution-gate invariants #245/#247/#256/#361 depend on (though the
+  script's own `TERMINAL_CLAIM_PHASES`/`ALL_TERMINAL_PHASES` guards
+  mean it can only ever target already-safe-to-delete terminal-phase
+  documents). Ported #358's fix verbatim: `wait_for_completion=false`
+  on the kickoff + poll `GET _tasks/<id>` via a shared `_wait_for_task()`
+  helper (including its transient-vs-permanent poll-error
+  classification and its handling of a task reporting `completed:true`
+  with an `error`, or with neither `error` nor `response`);
+  `agent_checkpoints_compactor`'s ES role gained `cluster:["monitor"]`
+  (needed for the new `GET _tasks/<id>` call, not covered by the
+  existing index-level read/delete grants) — role file and the
+  docker-compose inline bootstrap copy both updated and kept in sync;
+  `checkpoints-compact.service`'s `TimeoutStartSec` bumped 120 → 450,
+  sized the same way `threat-intel-compact.service`'s own #358 bump
+  was, adjusted for this script compacting only one index per run (not
+  two sequential ones). The query itself and the terminal-phase
+  invariants were completely untouched — this changes only how the
+  delete is dispatched/awaited, never which documents it targets.
+  Parallel review found two minor accuracy nits (a `TimeoutStartSec`
+  comment's margin claim, and a dead code branch in a ported test
+  helper), both fixed in the same commit — no blocking findings on
+  either the fix's correctness or its scope.
 
 **M18 progress:**
 

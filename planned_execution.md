@@ -27,7 +27,7 @@ matching the M12/M13/M14 pattern.
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
-| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | 3 | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
+| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ⏳ 1/6 closed — 5 open (corrected 2026-08-29: this doc's "3" undercounted; the milestone's own issue list has 6: #308, #309, #312, #373, #376, #424) | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision, ntfy header encoding, delete-by-query timeout handling, SLO dashboard/audit gaps |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
@@ -46,9 +46,10 @@ Working the corrected 15-issue set now, smallest/most-contained first
 (see M17 progress below). **M18 closed out 2026-08-17 too** (12/16, no
 actionable work left — #326 externally blocked on real telemetry,
 #396/#403/#405 are review-discovered follow-ups deliberately scoped out
-of the fixes that found them, not active gaps). **M19 started
-2026-08-28** (see M19 progress below); M20–M22 remain open calls, not
-yet started. Same approach as M16/M17/M18 whenever the next one starts:
+of the fixes that found them, not active gaps). **M19 closed out
+2026-08-29** (7/7, see M19 progress below). **M20 started 2026-08-29**
+(see M20 progress below); M21–M22 remain open calls, not yet started.
+Same approach as M16/M17/M18/M19 whenever the next one starts:
 smallest/most-contained issue first, one at a time, each through the
 full implement → parallel security-auditor + code-reviewer review →
 live-verify → PR → CI → merge → update this doc → commit+push cycle, no
@@ -244,6 +245,41 @@ unattended multi-issue runs.
   review's non-blocking observation (`deploy_detections.sh`'s local
   venv doesn't pin the Python version the way CI does). **This closes
   M19 — 7/7 issues complete.**
+
+**M20 progress:**
+
+- [x] **#424 (security) — COMPLETE, MERGED (PR #465)** — `send_soc_alert()`
+  (`scripts/setup/ai_agent/agent.py`) built an ntfy push notification's
+  `Title` HTTP header directly from a caller-supplied string.
+  `requests`/`http.client` encode header values as latin-1, and two
+  hardcoded titles ("Alert on PROTECTED asset — no action", "Response
+  DRAFTED — approval required") contain an em dash (U+2014) outside
+  latin-1's range — confirmed by direct reproduction that this raises
+  `UnicodeEncodeError` deep in `http.client.putheader()`, silently
+  swallowed by `send_soc_alert`'s broad `except Exception`. A drafted
+  containment action awaiting human approval could sit unapproved
+  indefinitely with zero signal the notification itself failed. Fixed
+  by adding `_ntfy_header_safe()`: transliterates common punctuation
+  (em/en dash, smart quotes, ellipsis) to ASCII, then falls back to
+  latin-1's own `'replace'` handler for anything else, so a future
+  non-ASCII title degrades visibly instead of dropping the notification
+  outright. Two real, in-scope findings from parallel review were fixed
+  in the same commit: (1) code review caught that
+  `weekly_ciso_report.py`'s `send_ntfy_notification()` had the
+  identical live bug via a hardcoded emoji title, uncovered by the
+  `agent.py`-only fix — duplicated the helper there too (no existing
+  import relationship between the two independent scripts); (2)
+  security review found `requests` independently rejects a bare
+  `\r`/`\n` in a header value (`InvalidHeader`, not a header-injection
+  risk — already blocked by the library — but the same silent-drop
+  failure mode via a different character class, reachable in principle
+  through `ctx.severity.upper()` feeding two of six `send_soc_alert`
+  call sites) — folded `\r`/`\n` to a space alongside the punctuation
+  table in both copies of the helper. Live verification against a real
+  ntfy.sh endpoint wasn't possible (network egress blocked in this
+  environment) — verified instead via direct reproduction of the exact
+  `UnicodeEncodeError`/`InvalidHeader` at the `requests`/`http.client`
+  boundary.
 
 **M18 progress:**
 

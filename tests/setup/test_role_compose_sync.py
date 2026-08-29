@@ -16,9 +16,12 @@ docker-compose.yml rather than a hardcoded list, so a role added to
 file.
 
 Comparison is order-insensitive (a privileges/names array reordering is not
-a real drift), and anchored to the actual executing `curl ... -d "..."`
-command text via regex, not a whole-file substring search -- a copy that
-only appeared in a comment would not satisfy this test.
+a real drift), and anchored to the actual executing `put "path" "body"`
+call text via regex (#318 replaced `provision`'s literal per-role
+`curl ... -d "..."` invocations with a shared `put()` helper that fails
+loudly on a non-2xx response; this regex was updated to match), not a
+whole-file substring search -- a copy that only appeared in a comment
+would not satisfy this test.
 
 Live-checked as of this writing: all 9 roles' inline copies already match
 their role files byte-for-byte (logstash_writer's #257 fix already covers
@@ -43,11 +46,12 @@ ROLES_DIR = ROOT / "configs" / "elasticsearch" / "roles"
 COMPOSE_PATH = ROOT / "scripts" / "setup" / "docker-compose.yml"
 COMPOSE_TEXT = COMPOSE_PATH.read_text(encoding="utf-8")
 
-# Anchored to the actual executing curl PUT line's -d payload, not a bare
-# substring search anywhere in the file (a stray comment containing the same
-# JSON would not match this).
+# Anchored to the actual executing `put "path" "body"` call (#318's shared
+# helper, replacing provision's former literal per-role curl invocations),
+# not a bare substring search anywhere in the file (a stray comment
+# containing the same JSON would not match this).
 _INLINE_ROLE_PUT = re.compile(
-    r'/_security/role/(?P<role>\w+)\s+-d\s+"(?P<body>(?:[^"\\]|\\.)*)"'
+    r'put\s+"/_security/role/(?P<role>\w+)"\s+"(?P<body>(?:[^"\\]|\\.)*)"'
 )
 
 

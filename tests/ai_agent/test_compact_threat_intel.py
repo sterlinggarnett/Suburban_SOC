@@ -703,8 +703,13 @@ class CompactorCredentialProvisioningTests(unittest.TestCase):
     def test_docker_compose_intel_writer_role_line_has_no_delete(self):
         # Same check against the inline bootstrap copy specifically — the
         # role-file test above doesn't catch drift between the two.
+        # #318 switched provision's inline PUTs from an unquoted URL (curl
+        # ... .../_security/role/intel_writer -d "...") to a shared put()
+        # helper call (put "/_security/role/intel_writer" "...") -- match
+        # the closing quote right after the role name, which still excludes
+        # the _compactor line the same way the old trailing space did.
         for line in DOCKER_COMPOSE.splitlines():
-            if "_security/role/intel_writer " in line:  # trailing space excludes _compactor
+            if '"/_security/role/intel_writer"' in line:
                 self.assertNotIn("delete", line)
                 return
         self.fail("could not find the intel_writer role provisioning line")

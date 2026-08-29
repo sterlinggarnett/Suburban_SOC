@@ -72,7 +72,10 @@ def _provision_command_block(compose_text: str) -> str:
     `setup`'s own deliberately-single-`$` ELASTIC_PASSWORD/KIBANA_PASSWORD/
     LOGSTASH_PASSWORD lines either."""
     service = _provision_service_block(compose_text)
-    command_start = service.index("\n    command: >\n")
+    # #318: provision switched from `command: >` (folded scalar, wrapped in
+    # `bash -c '...'`) to `entrypoint: [...]` + `command:\n  - |` (literal
+    # block scalar) to remove the folded-scalar re-indentation fragility.
+    command_start = service.index("\n    command:\n      - |\n")
     return service[command_start:]
 
 

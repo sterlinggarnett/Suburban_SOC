@@ -24,7 +24,6 @@ author: Suburban-SOC
 date: 2026-08-05
 tags:
     - attack.collection
-    - attack.credential_access
     - attack.t1005
 logsource:
     category: process_creation

@@ -50,6 +50,50 @@ TACTICS = {
 # Tactics with zero detections today -> explicit gaps / prioritized backlog.
 BACKLOG_TACTICS = ["Collection", "Exfiltration", "Command and Control", "Lateral Movement"]
 
+# #378 round-3 security review finding: a rule's OWN attack.<tactic> tags
+# describe the tactics the rule's author considers the detection relevant
+# to (often the broader kill-chain step being watched for), which is not
+# the same thing as the specific attack.<technique> tag's OFFICIAL MITRE
+# ATT&CK tactic membership. `_technique_tactic_pairs()`'s "broadcast a
+# singleton across every other tag" cases assumed every resulting pair was
+# real; an adversarial review found 6 real corpus rules where it wasn't
+# (e.g. proc_creation_win_esentutl_locked_file_copy.yml tags both
+# attack.collection and attack.credential_access alongside its single
+# attack.t1005 tag, but T1005 "Data from Local System" is a Collection-only
+# technique per MITRE ATT&CK — it has no Credential Access tactic entry).
+# This table is real ATT&CK ground truth (verified against
+# https://attack.mitre.org/techniques/<ID>/, ID slashed for sub-techniques,
+# e.g. T1078.003 -> techniques/T1078/003/) for exactly the technique IDs
+# that `harvest()`'s broadcast cases need to validate against today — not
+# an attempt at a complete 78-technique corpus mirror, which would be
+# unverified guessing for every technique not actually exercising the
+# ambiguity this table exists to close. See `_technique_tactic_pairs()`.
+TECHNIQUE_TACTICS = {
+    "T1005": ("Collection",),
+    "T1021": ("Lateral Movement",),
+    "T1027": ("Defense Evasion",),
+    "T1053.005": ("Execution", "Persistence", "Privilege Escalation"),
+    "T1055": ("Defense Evasion", "Privilege Escalation"),
+    "T1056.002": ("Collection", "Credential Access"),
+    "T1059.001": ("Execution",),
+    "T1059.005": ("Execution",),
+    "T1059.007": ("Execution",),
+    "T1068": ("Privilege Escalation",),
+    "T1071.004": ("Command and Control",),
+    "T1078": ("Initial Access", "Persistence", "Privilege Escalation", "Defense Evasion"),
+    "T1078.002": ("Initial Access", "Persistence", "Privilege Escalation", "Defense Evasion"),
+    "T1078.003": ("Initial Access", "Persistence", "Privilege Escalation", "Defense Evasion"),
+    "T1098": ("Persistence", "Privilege Escalation"),
+    "T1105": ("Command and Control",),
+    "T1134": ("Defense Evasion", "Privilege Escalation"),
+    "T1543.003": ("Persistence", "Privilege Escalation"),
+    "T1546.008": ("Persistence", "Privilege Escalation"),
+    "T1550.002": ("Defense Evasion", "Lateral Movement"),
+    "T1569.002": ("Execution",),
+    "T1574": ("Persistence", "Privilege Escalation", "Defense Evasion"),
+    "T1574.002": ("Persistence", "Privilege Escalation", "Defense Evasion"),
+}
+
 # Human-readable label per Sigma `service:` value (classic Windows Event Log
 # channels that aren't identified by `category:`, issue #192).
 SERVICE_LABELS = {
@@ -173,24 +217,47 @@ def _technique_tactic_pairs(techs, tacs, rule_name):
     M22 exists to eliminate, not just move.
 
     So: broadcast a SINGLE technique/tactic across every one of the other
-    (this is unambiguous, and is exactly #281's own T1078.003 case: one
-    technique legitimately scored under several tactic columns); POSITION-pair
-    when both lists are the same length > 1 (the corpus convention of
-    listing tactic tags and technique tags in corresponding order — verified
-    against both rules in this corpus that currently have this shape: pairing
-    tactic[i] with technique[i] in listed order produces only mappings that
-    are independently real per MITRE ATT&CK, unlike the cross-product); and
+    (this is exactly #281's own T1078.003 case: one technique legitimately
+    scored under several tactic columns); POSITION-pair when both lists are
+    the same length > 1 (the corpus convention of listing tactic tags and
+    technique tags in corresponding order — verified against both rules in
+    this corpus that currently have this shape: pairing tactic[i] with
+    technique[i] in listed order produces only mappings that are
+    independently real per MITRE ATT&CK, unlike the cross-product); and
     fail loudly rather than guess if the lists are both >1 and unequal
     length, since there is no way to infer intended pairing from the tags
     alone in that shape (not currently reachable by any rule in this corpus,
     but a future rule could hit it).
+
+    #378 round-3 security review finding: a broadcast is only "unambiguous"
+    in the sense that every OTHER tag gets paired with the singleton — it
+    is not automatically ATT&CK-real. A rule's attack.<tactic> tags record
+    the tactics the rule's author considers the detection relevant to, not
+    necessarily the specific technique's official MITRE tactic membership;
+    the review found 6 real corpus rules where a broadcast pair was flatly
+    wrong (e.g. T1005 "Data from Local System" is Collection-only, but
+    proc_creation_win_esentutl_locked_file_copy.yml also tags
+    attack.credential_access, which a blind broadcast would have paired
+    with T1005 as a false Navigator cell). So every broadcast pair is now
+    checked against TECHNIQUE_TACTICS before being emitted — a technique
+    missing from that table raises rather than broadcasting unverified
+    (closes the loophole for a future rule, the same way the unequal-length
+    case already refuses to guess); the positional-zip case doesn't require
+    table coverage (dropping/guessing there was never this function's
+    assumption to begin with — it already trusts the corpus's own listed
+    order), but still gets checked opportunistically when the table does
+    cover the technique.
     """
+    if len(techs) == 1 and len(tacs) == 1:
+        # The common case (~85 of 108 rules): nothing to broadcast, no
+        # ambiguity to verify — this IS the pair the rule's author wrote.
+        return [(techs[0], tacs[0])]
     if len(techs) == 1:
-        return [(techs[0], tac) for tac in tacs]
+        return _verify_pairs([(techs[0], tac) for tac in tacs], rule_name, require_known=True)
     if len(tacs) == 1:
-        return [(tech, tacs[0]) for tech in techs]
+        return _verify_pairs([(tech, tacs[0]) for tech in techs], rule_name, require_known=True)
     if len(techs) == len(tacs):
-        return list(zip(techs, tacs))
+        return _verify_pairs(list(zip(techs, tacs)), rule_name, require_known=False)
     raise ValueError(
         f"{rule_name}: {len(techs)} attack.<technique> tags and "
         f"{len(tacs)} attack.<tactic> tags — can't infer which technique "
@@ -198,6 +265,44 @@ def _technique_tactic_pairs(techs, tacs, rule_name):
         f"Sigma's tags: list has no way to express that pairing explicitly, "
         f"so this needs a human decision, not a guessed cross-product or "
         f"positional pairing")
+
+
+def _verify_pairs(pairs, rule_name, require_known):
+    """Check each (technique, tactic) pair `_technique_tactic_pairs()` is
+    about to emit against TECHNIQUE_TACTICS' real ATT&CK ground truth.
+
+    `require_known=True` (the broadcast cases) raises when the technique
+    has no TECHNIQUE_TACTICS entry at all — a broadcast pairing must be
+    verified, not assumed, so an uncatalogued technique blocks generation
+    until a human adds it rather than silently repeating #378's original
+    bug for a rule this table doesn't cover yet. `require_known=False` (the
+    positional-zip case) passes an uncatalogued technique through
+    unchecked, since that case never assumed table coverage to begin with;
+    it still raises on a pair the table actively contradicts.
+    """
+    for technique, tactic in pairs:
+        valid_tactics = TECHNIQUE_TACTICS.get(technique)
+        if valid_tactics is None:
+            if require_known:
+                raise ValueError(
+                    f"{rule_name}: broadcasting technique {technique} across "
+                    f"tactic {tactic!r} needs verifying against MITRE ATT&CK's "
+                    f"real tactic assignment for {technique}, but it has no "
+                    f"entry in TECHNIQUE_TACTICS — add {technique}'s real "
+                    f"tactic set there (see https://attack.mitre.org/techniques/"
+                    f"{technique.replace('.', '/')}/) rather than assuming the "
+                    f"broadcast is safe")
+            continue
+        if tactic not in valid_tactics:
+            raise ValueError(
+                f"{rule_name}: pairing technique {technique} with tactic "
+                f"{tactic!r} is not a real MITRE ATT&CK pairing — "
+                f"{technique}'s real tactics are {sorted(valid_tactics)}. "
+                f"This rule's own attack.<tactic> tag describes the "
+                f"detection's broader relevance, not {technique}'s official "
+                f"tactic membership, so this pair must not be emitted; fix "
+                f"the rule's tags instead of guessing a pairing here")
+    return pairs
 
 
 def harvest():

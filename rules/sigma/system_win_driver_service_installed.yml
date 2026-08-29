@@ -32,7 +32,6 @@ author: Suburban-SOC
 date: 2026-08-05
 tags:
     - attack.privilege_escalation
-    - attack.defense_evasion
     - attack.t1068
 logsource:
     product: windows

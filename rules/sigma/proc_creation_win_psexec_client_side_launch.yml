@@ -29,7 +29,6 @@ author: Suburban-SOC
 date: 2026-08-05
 tags:
     - attack.execution
-    - attack.lateral_movement
     - attack.t1569.002
 logsource:
     category: process_creation

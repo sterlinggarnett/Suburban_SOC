@@ -40,6 +40,19 @@ def _row(technique, tactic, rule="rules/sigma/x.yml", title="X",
             "rule": rule, "test": test, "title": title, "status": status}
 
 
+def _harvest_with_rule(rule_text):
+    """Runs harvest() against a single synthetic rule in a temp corpus,
+    rather than the real one — shared by every test class that needs to
+    check harvest()'s own extraction/validation behavior in isolation
+    (code-reviewer follow-up, #378 round 2: was duplicated per-class)."""
+    with tempfile.TemporaryDirectory() as d:
+        sigma_dir = Path(d)
+        (sigma_dir / "test_rule.yml").write_text(rule_text, encoding="utf-8")
+        with mock.patch.object(bac, "SIGMA_DIR", sigma_dir), \
+             mock.patch.object(bac, "CONF", ""):
+            return bac.harvest()
+
+
 class NavigatorLayerDedupTests(unittest.TestCase):
     def test_two_rules_same_technique_same_tactic_collapse_to_one_entry(self):
         rows = [
@@ -364,37 +377,29 @@ class HarvestFailsLoudlyOnBadInputTests(unittest.TestCase):
     a different route. Constructs a temp rule corpus rather than touching
     the real one, so these don't depend on (or risk mutating) real rules."""
 
-    def _harvest_with_rule(self, rule_text):
-        with tempfile.TemporaryDirectory() as d:
-            sigma_dir = Path(d)
-            (sigma_dir / "test_rule.yml").write_text(rule_text, encoding="utf-8")
-            with mock.patch.object(bac, "SIGMA_DIR", sigma_dir), \
-                 mock.patch.object(bac, "CONF", ""):
-                return bac.harvest()
-
     def test_raises_when_technique_tag_has_no_tactic_tag_at_all(self):
         rule_text = "title: Test Rule\ntags:\n    - attack.t1046\n"
         with self.assertRaises(ValueError) as ctx:
-            self._harvest_with_rule(rule_text)
+            _harvest_with_rule(rule_text)
         self.assertIn("test_rule.yml", str(ctx.exception))
 
     def test_raises_when_tactic_tag_does_not_resolve_in_tactics_map(self):
         # A plausible authoring typo: hyphen instead of underscore.
         rule_text = "title: Test Rule\ntags:\n    - attack.t1046\n    - attack.privilege-escalation\n"
         with self.assertRaises(ValueError) as ctx:
-            self._harvest_with_rule(rule_text)
+            _harvest_with_rule(rule_text)
         self.assertIn("test_rule.yml", str(ctx.exception))
 
     def test_does_not_raise_when_tactic_tag_resolves_correctly(self):
         rule_text = "title: Test Rule\ntags:\n    - attack.t1046\n    - attack.discovery\n"
-        rows = self._harvest_with_rule(rule_text)
+        rows = _harvest_with_rule(rule_text)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["tactic"], "Discovery")
 
     def test_raises_on_unsafe_title_from_a_sigma_rule(self):
         rule_text = "title: Bad | Title\ntags:\n    - attack.t1046\n    - attack.discovery\n"
         with self.assertRaises(ValueError):
-            self._harvest_with_rule(rule_text)
+            _harvest_with_rule(rule_text)
 
     def test_raises_on_unsafe_title_from_a_logstash_conf_network_entry(self):
         conf = ('"[threat][technique][id]" => "T1046",'
@@ -542,23 +547,19 @@ class TechniqueTacticPairingTests(unittest.TestCase):
     counter-example to a blind cross-product), and fails loudly on an
     unequal both->1 shape rather than guessing."""
 
-    def _harvest_with_rule(self, rule_text):
-        with tempfile.TemporaryDirectory() as d:
-            sigma_dir = Path(d)
-            (sigma_dir / "test_rule.yml").write_text(rule_text, encoding="utf-8")
-            with mock.patch.object(bac, "SIGMA_DIR", sigma_dir), \
-                 mock.patch.object(bac, "CONF", ""):
-                return bac.harvest()
-
     def test_pairs_function_broadcasts_single_technique_across_multiple_tactics(self):
         self.assertEqual(
             bac._technique_tactic_pairs(["T1078.003"], ["Initial Access", "Persistence"], "r"),
             [("T1078.003", "Initial Access"), ("T1078.003", "Persistence")])
 
     def test_pairs_function_broadcasts_single_tactic_across_multiple_techniques(self):
+        # T1059.005 and T1059.007 (the real corpus case,
+        # proc_creation_win_cscript_wscript_remote.yml) are both
+        # Execution-only per MITRE ATT&CK, so broadcasting "Execution"
+        # across both is a real pairing, not an invented one.
         self.assertEqual(
-            bac._technique_tactic_pairs(["T1059.001", "T1027"], ["Execution"], "r"),
-            [("T1059.001", "Execution"), ("T1027", "Execution")])
+            bac._technique_tactic_pairs(["T1059.005", "T1059.007"], ["Execution"], "r"),
+            [("T1059.005", "Execution"), ("T1059.007", "Execution")])
 
     def test_pairs_function_positionally_pairs_equal_length_lists(self):
         self.assertEqual(
@@ -575,15 +576,15 @@ class TechniqueTacticPairingTests(unittest.TestCase):
 
     def test_harvest_emits_a_row_per_technique_when_one_tactic_is_shared(self):
         rule_text = ("title: Test Rule\ntags:\n    - attack.execution\n"
-                     "    - attack.t1059.001\n    - attack.t1027\n")
-        rows = self._harvest_with_rule(rule_text)
+                     "    - attack.t1059.005\n    - attack.t1059.007\n")
+        rows = _harvest_with_rule(rule_text)
         pairs = {(r["technique"], r["tactic"]) for r in rows}
-        self.assertEqual(pairs, {("T1059.001", "Execution"), ("T1027", "Execution")})
+        self.assertEqual(pairs, {("T1059.005", "Execution"), ("T1059.007", "Execution")})
 
     def test_harvest_emits_a_row_per_tactic_when_one_technique_is_shared(self):
         rule_text = ("title: Test Rule\ntags:\n    - attack.initial_access\n"
                      "    - attack.persistence\n    - attack.t1078.003\n")
-        rows = self._harvest_with_rule(rule_text)
+        rows = _harvest_with_rule(rule_text)
         pairs = {(r["technique"], r["tactic"]) for r in rows}
         self.assertEqual(pairs, {("T1078.003", "Initial Access"), ("T1078.003", "Persistence")})
 
@@ -595,7 +596,7 @@ class TechniqueTacticPairingTests(unittest.TestCase):
         rule_text = ("title: Test Rule\ntags:\n    - attack.execution\n"
                      "    - attack.defense_evasion\n    - attack.t1059.001\n"
                      "    - attack.t1027\n")
-        rows = self._harvest_with_rule(rule_text)
+        rows = _harvest_with_rule(rule_text)
         pairs = {(r["technique"], r["tactic"]) for r in rows}
         self.assertEqual(pairs, {("T1059.001", "Execution"), ("T1027", "Defense Evasion")})
         self.assertNotIn(("T1059.001", "Defense Evasion"), pairs)
@@ -612,15 +613,83 @@ class TechniqueTacticPairingTests(unittest.TestCase):
         rule_text = ("title: Test Rule\ntags:\n    - attack.initial_access\n"
                      "    - attack.made_up_tactic\n    - attack.t1078.003\n")
         with self.assertRaises(ValueError) as ctx:
-            self._harvest_with_rule(rule_text)
+            _harvest_with_rule(rule_text)
         self.assertIn("test_rule.yml", str(ctx.exception))
         self.assertIn("made_up_tactic", str(ctx.exception))
 
     def test_harvest_dedups_an_accidentally_repeated_tag(self):
         rule_text = ("title: Test Rule\ntags:\n    - attack.discovery\n"
                      "    - attack.t1046\n    - attack.t1046\n")
-        rows = self._harvest_with_rule(rule_text)
+        rows = _harvest_with_rule(rule_text)
         self.assertEqual(len(rows), 1)
+
+    def test_single_technique_single_tactic_needs_no_technique_tactics_entry(self):
+        # The common case (~85 of 108 rules): nothing is being broadcast, so
+        # this must not require TECHNIQUE_TACTICS coverage at all — T1046
+        # (Network Service Discovery) has no entry in that table.
+        self.assertNotIn("T1046", bac.TECHNIQUE_TACTICS)
+        self.assertEqual(
+            bac._technique_tactic_pairs(["T1046"], ["Discovery"], "r"),
+            [("T1046", "Discovery")])
+
+
+class TechniqueTacticsGroundTruthTests(unittest.TestCase):
+    """#378 round-3 security review finding: the broadcast cases in
+    `_technique_tactic_pairs()` assumed every pairing they produced was
+    real, but a rule's own attack.<tactic> tags can legitimately describe
+    the detection's broader relevance without every one of them being that
+    specific technique's official MITRE ATT&CK tactic. `TECHNIQUE_TACTICS`
+    plus `_verify_pairs()` close that gap; these tests pin the failure mode
+    the review actually found (T1005 is Collection-only, but the real
+    proc_creation_win_esentutl_locked_file_copy.yml rule also tagged
+    attack.credential_access) and confirm the corresponding rule fix
+    (dropping the mismatched tag) is what's actually shipped."""
+
+    def test_broadcast_rejects_a_tactic_the_technique_does_not_really_have(self):
+        with self.assertRaises(ValueError) as ctx:
+            bac._technique_tactic_pairs(["T1005"], ["Collection", "Credential Access"], "r.yml")
+        self.assertIn("r.yml", str(ctx.exception))
+        self.assertIn("T1005", str(ctx.exception))
+        self.assertIn("Credential Access", str(ctx.exception))
+
+    def test_broadcast_across_techniques_rejects_a_mismatched_technique(self):
+        # T1021 (Remote Services) is Lateral Movement-only; T1569.002
+        # (Service Execution) is Execution-only — broadcasting Lateral
+        # Movement across both was the real bug in
+        # proc_creation_win_lateral_tool_parent.yml before that rule
+        # gained its own attack.execution tag (making it a positional-zip
+        # rule instead of a same-tactic broadcast).
+        with self.assertRaises(ValueError) as ctx:
+            bac._technique_tactic_pairs(["T1021", "T1569.002"], ["Lateral Movement"], "r.yml")
+        self.assertIn("T1569.002", str(ctx.exception))
+
+    def test_broadcast_of_an_uncatalogued_technique_raises_instead_of_guessing(self):
+        self.assertNotIn("T9999", bac.TECHNIQUE_TACTICS)
+        with self.assertRaises(ValueError) as ctx:
+            bac._technique_tactic_pairs(["T9999"], ["Collection", "Discovery"], "r.yml")
+        self.assertIn("T9999", str(ctx.exception))
+        self.assertIn("TECHNIQUE_TACTICS", str(ctx.exception))
+
+    def test_positional_zip_of_an_uncatalogued_technique_passes_through(self):
+        # The zip case never assumed table coverage — it trusts the
+        # corpus's own tactics-then-techniques listing order — so an
+        # uncatalogued technique there is accepted, not blocked.
+        self.assertNotIn("T9999", bac.TECHNIQUE_TACTICS)
+        self.assertEqual(
+            bac._technique_tactic_pairs(["T9999", "T1027"], ["Discovery", "Defense Evasion"], "r"),
+            [("T9999", "Discovery"), ("T1027", "Defense Evasion")])
+
+    def test_positional_zip_still_rejects_a_pairing_the_table_contradicts(self):
+        with self.assertRaises(ValueError):
+            bac._technique_tactic_pairs(["T1027", "T1005"], ["Execution", "Collection"], "r.yml")
+
+    def test_esentutl_rule_no_longer_tags_credential_access(self):
+        rule_text = (Path("rules/sigma/proc_creation_win_esentutl_locked_file_copy.yml")
+                     .read_text(encoding="utf-8"))
+        self.assertNotIn("attack.credential_access", rule_text)
+        rows = _harvest_with_rule(rule_text)
+        pairs = {(r["technique"], r["tactic"]) for r in rows}
+        self.assertEqual(pairs, {("T1005", "Collection")})
 
 
 if __name__ == "__main__":

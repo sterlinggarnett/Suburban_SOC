@@ -7,9 +7,20 @@ worst — emitted process.command_line, which this stack does NOT populate
 from rules/sigma/*.yml through that same ECS pipeline keeps the documented queries
 identical to what actually deploys (audit P1-18).
 
-Requires the Sigma toolchain (same as the Detections CI):
-    pip install sigma-cli pysigma-backend-elasticsearch
-Run:
+Requires the Sigma toolchain, pinned to match the Detections CI
+(.github/workflows/detections.yml) and this doc's own generating versions
+(#330 — an unpinned/mismatched install renders some multi-word Lucene terms
+differently, e.g. `"Domain Admins"` vs `Domain\\ Admins` — semantically
+identical, but enough to make --check report a false "STALE"):
+    pip install sigma-cli==3.1.0 pysigma==1.5.0 pysigma-backend-elasticsearch==2.1.1
+
+#330: this doc must also be regenerated under the SAME PYTHON VERSION CI
+uses (see .python-version, currently 3.11) — confirmed by direct
+reproduction that pySigma's Lucene escaping differs between Python 3.11 and
+3.12 even with these exact package versions installed under both. Pinning
+the packages alone is not sufficient; the interpreter matters too.
+
+Run (from a venv on the pinned Python version above):
     python scripts/setup/build_kql_docs.py            # write the doc
     python scripts/setup/build_kql_docs.py --check    # fail if the doc is stale
 """

@@ -149,7 +149,9 @@ def _sigma_binary() -> str:
             return str(venv_sigma)
     raise RuntimeError("sigma CLI not found (or did not identify itself as sigma) on PATH"
                         + ("" if os.environ.get("CI") else " or in .venv-detections/bin")
-                        + " — install with: pip install sigma-cli pysigma-backend-elasticsearch")
+                        + " — install with: pip install sigma-cli==3.1.0 pysigma==1.5.0"
+                        + " pysigma-backend-elasticsearch==2.1.1 (#330 — pinned to match"
+                        + " .github/workflows/detections.yml and the committed docs)")
 
 
 def sigma_convert_one(rule_path: Path) -> dict:

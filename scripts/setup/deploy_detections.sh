@@ -67,7 +67,12 @@ if [[ -z "$SIGMA" ]]; then
     blue "==> Setting up Sigma toolchain venv ($VENV)"
     python3 -m venv "$VENV"
     PY="$VENV/bin/python"; [[ -x "$PY" ]] || PY="$VENV/Scripts/python.exe"
-    "$PY" -m pip install -q --disable-pip-version-check sigma-cli pysigma-backend-elasticsearch
+    # #330: pinned to match .github/workflows/detections.yml and
+    # docs/detections/SIEM_KQL_Documentation.md's generating toolchain — an
+    # unpinned install here can compile a rule slightly differently
+    # (semantically identical, textually different Lucene escaping) than
+    # what CI/the committed docs expect.
+    "$PY" -m pip install -q --disable-pip-version-check sigma-cli==3.1.0 pysigma==1.5.0 pysigma-backend-elasticsearch==2.1.1
     SIGMA="$VENV/bin/sigma"; [[ -x "$SIGMA" ]] || SIGMA="$VENV/Scripts/sigma.exe"
   fi
 fi

@@ -28,7 +28,7 @@ matching the M12/M13/M14 pattern.
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
-| [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ⏳ 2/3 closed — 1 open (#270) | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
+| [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
@@ -47,8 +47,9 @@ Working the corrected 15-issue set now, smallest/most-contained first
 actionable work left — #326 externally blocked on real telemetry,
 #396/#403/#405 are review-discovered follow-ups deliberately scoped out
 of the fixes that found them, not active gaps). **M19 closed out
-2026-08-29** (7/7, see M19 progress below). **M20 started 2026-08-29**
-(see M20 progress below); M21–M22 remain open calls, not yet started.
+2026-08-29** (7/7, see M19 progress below). **M20 closed out 2026-08-29**
+(6/6, see M20 progress below). **M21 closed out 2026-08-29** (3/3, see
+M21 progress below). M22 remains open, not yet started.
 Same approach as M16/M17/M18/M19 whenever the next one starts:
 smallest/most-contained issue first, one at a time, each through the
 full implement → parallel security-auditor + code-reviewer review →
@@ -248,6 +249,54 @@ unattended multi-issue runs.
 
 **M21 progress:**
 
+- [x] **#270 (security) — COMPLETE, MERGED (PR #482). This closes M21 —
+  3/3 issues complete.** Two related hardening gaps in
+  `configs/systemd/intel-refresh.service`, deliberately deferred as out of
+  scope when #222 shipped. (1) `intel-refresh.service`'s sandboxed
+  `ReadWritePaths` grant used to cover the whole `configs/intel/`
+  directory, including `config.zeek` (Zeek policy, executed as root by
+  `zeek-host-capture.service` once that unit's own `cp` propagates it) —
+  a compromise of this sandboxed process via any vector other than feed
+  content (already fully IPv4/bogon-sanitized) would have had write
+  access to code executed with far higher privilege elsewhere. Moved
+  `refresh_intel.sh`'s regenerated `intel.dat` into a new
+  `configs/intel/data/` subdirectory, narrowed `ReadWritePaths` to just
+  that subdirectory, and split the 4 real capture invocations'
+  (`zeek-host-capture.service` and 3 sibling manual scripts) blanket
+  `cp -r configs/intel/*` into two explicit single-file copies
+  (`config.zeek`; `intel.dat` from the new `data/` subdirectory), since
+  the wildcard would otherwise silently stop picking up `intel.dat` once
+  it moved. (2) `intel-refresh.service` and `slo-metrics.service` both
+  re-extract the ES CA cert from the `elasticsearch` container every run
+  with no verification. The issue's own suggested fix was a
+  repo-committed static pin, but this repo has no access to any real
+  deployment's actual generated CA — a fabricated placeholder value would
+  violate this repo's own "never invent hashes" convention — so a
+  trust-on-first-use (TOFU) design was implemented instead: a new
+  `scripts/setup/verify_ca_fingerprint.sh` pins the fingerprint seen on
+  the first run (persisted under a new `StateDirectory=`, survives across
+  runs unlike `RuntimeDirectory=`) and hard-fails + deletes the cert on
+  any later mismatch. Wired best-effort into `intel-refresh.service`
+  (matching its existing graceful-degradation posture) and hard-fail into
+  `slo-metrics.service` (matching its all-ES-or-nothing posture). Two
+  rounds of parallel security/code review both surfaced real findings
+  fixed before merging: round 1 found `refresh_intel.sh` sources
+  `es_common.sh` directly (not a subshell), and `es_common.sh`'s own hard
+  `exit 1` on an unreadable CA would have unwound `refresh_intel.sh`'s
+  whole process on every legitimate CA rotation (the new TOFU check's
+  deliberate delete-on-mismatch behavior) — `intel-refresh.service`'s
+  `SuccessExitStatus=0 2` doesn't cover 1, so systemd would have reported
+  the whole unit FAILED over what's supposed to be a "skip indexing only"
+  case. Fixed by checking `ES_CA` usability in `refresh_intel.sh`'s own
+  gate before ever sourcing `es_common.sh`; verified with a functional
+  test reproducing the exact bug against a stand-in `es_common.sh`,
+  confirmed to fail against the pre-fix gate. Round 1 also flagged that
+  TOFU's first-run scope limit wasn't stated explicitly (documented) and
+  a stale `cp -r` comment reference in `zeek_run_pcap.sh` left over from
+  the split (fixed). New `tests/pipeline/test_intel_config_data_separation.py`
+  and `tests/pipeline/test_es_ca_fingerprint_pinning.py` (28 tests
+  combined, including functional subprocess tests against real
+  self-signed certs via `openssl` — no live systemd/Docker/ES needed).
 - [x] **#321 (security) — COMPLETE, MERGED (PR #480)** — three residual
   defense-in-depth findings from the same #320/#222 security-auditor
   review thread on `configs/systemd/zeek-host-capture.service`'s

@@ -23,6 +23,13 @@
 # defeating the entire point). Every later run must match that persisted
 # pin, or this script fails and deletes the untrusted cert.
 #
+# Scope limit (security-auditor review): TOFU only catches a LATER swap —
+# it cannot protect the very first extraction ever made on a given host.
+# An attacker who wins the race to be that first extraction (e.g. on a
+# freshly provisioned host, before the real `elasticsearch` container is
+# up) gets THEIR cert pinned as permanently trusted. This narrows the
+# threat described above; it does not close it for a first-ever run.
+#
 # Usage: verify_ca_fingerprint.sh <ca.crt path> <pin file path>
 #   - ca.crt path missing/empty: nothing to verify yet (the extraction step
 #     that should have produced it already logs/handles that failure on its

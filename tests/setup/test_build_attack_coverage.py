@@ -151,6 +151,43 @@ class MarkdownCoverageCountTests(unittest.TestCase):
         self.assertIn("**Coverage:** 2 techniques", md)
 
 
+class MarkdownTableEscapingTests(unittest.TestCase):
+    """#431: source/rule/test reach markdown()'s table with no guard
+    against a literal '|' — unlike title, which _validate_title() already
+    bans. source in particular is built from regex captures using \\S+
+    (logsource_label()), so e.g. `category: proc|creation` would land here
+    unescaped and corrupt the row's column alignment."""
+
+    def test_pipe_in_source_field_is_escaped_not_left_raw(self):
+        rows = [_row("T1046", "Discovery", rule="rules/sigma/x.yml",
+                      title="X", test="test")]
+        rows[0]["source"] = "Sysmon/Winlogbeat (proc|creation)"
+        md = bac.markdown(rows)
+        self.assertIn("proc\\|creation", md)
+        self.assertNotIn("proc|creation)", md)
+
+    def test_pipe_in_rule_field_is_escaped(self):
+        rows = [_row("T1046", "Discovery", rule="rules/sigma/weird|name.yml")]
+        md = bac.markdown(rows)
+        self.assertIn("weird\\|name.yml", md)
+
+    def test_pipe_in_test_field_is_escaped(self):
+        rows = [_row("T1046", "Discovery", test="tests/some|thing.py")]
+        md = bac.markdown(rows)
+        self.assertIn("some\\|thing.py", md)
+
+    def test_escaped_row_still_renders_the_correct_number_of_columns(self):
+        # The actual failure mode #431 describes: an unescaped '|' splits
+        # into extra table cells, misattributing which column holds which
+        # value for the rest of the row (and visually for every row after,
+        # in a rendered table). 6 columns -> 7 pipe delimiters per row.
+        rows = [_row("T1046", "Discovery", rule="rules/sigma/x.yml")]
+        rows[0]["source"] = "weird|source"
+        md = bac.markdown(rows)
+        row_line = next(line for line in md.splitlines() if "T1046" in line and line.startswith("|"))
+        self.assertEqual(row_line.count("|") - row_line.count("\\|"), 7)
+
+
 class RealCorpusRegressionTests(unittest.TestCase):
     """Guards the exact real-data shape #281 was filed over — not just
     synthetic fixtures. harvest() reads the real rules/sigma/*.yml +
@@ -389,6 +426,13 @@ class HarvestFailsLoudlyOnBadInputTests(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             _harvest_with_rule(rule_text)
         self.assertIn("test_rule.yml", str(ctx.exception))
+        # #436: the strict tacs_raw regex can't even capture a hyphenated
+        # typo as a candidate, so the message used to show "found: None" —
+        # useless for a maintainer trying to find their own mistake. Assert
+        # the real mistyped text is shown, and the rule's own technique tag
+        # isn't misreported as a bogus tactic candidate.
+        self.assertIn("privilege-escalation", str(ctx.exception))
+        self.assertNotIn("t1046", str(ctx.exception).lower())
 
     def test_does_not_raise_when_tactic_tag_resolves_correctly(self):
         rule_text = "title: Test Rule\ntags:\n    - attack.t1046\n    - attack.discovery\n"

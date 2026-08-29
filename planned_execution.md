@@ -27,8 +27,8 @@ matching the M12/M13/M14 pattern.
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏳ 18/34 closed — 14 real follow-ups still open, 2 permanently not actionable (#283, #333) | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
 | [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 12/16 closed, 4 not actionable (no actionable work left) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
-| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ⏳ 5/6 closed — 1 open (#312) | Autonomous-isolation MAC-gate policy decision |
-| [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | 3 | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
+| [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
+| [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ⏳ 0/3 closed — in progress | No liveness/dead-man detection for a silently-dead capture source; symlink/ownership primitives; CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | 5 (corrected 2026-08-18 — the 08-16 restructure's "3" predates 3 later review-follow-up filings; #289 also closed invalid same day) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
@@ -47,9 +47,10 @@ Working the corrected 15-issue set now, smallest/most-contained first
 actionable work left — #326 externally blocked on real telemetry,
 #396/#403/#405 are review-discovered follow-ups deliberately scoped out
 of the fixes that found them, not active gaps). **M19 closed out
-2026-08-29** (7/7, see M19 progress below). **M20 started 2026-08-29**
-(see M20 progress below); M21–M22 remain open calls, not yet started.
-Same approach as M16/M17/M18/M19 whenever the next one starts:
+2026-08-29** (7/7, see M19 progress below). **M20 closed out 2026-08-29
+too** (6/6, see M20 progress below). **M21 started** (see M21 progress
+below); M22 remains an open call, not yet started.
+Same approach as M16/M17/M18/M19/M20 whenever the next one starts:
 smallest/most-contained issue first, one at a time, each through the
 full implement → parallel security-auditor + code-reviewer review →
 live-verify → PR → CI → merge → update this doc → commit+push cycle, no
@@ -415,6 +416,35 @@ unattended multi-issue runs.
   instead of the clean text). Two full review rounds plus a dedicated
   round-3 verification pass (which empirically confirmed the new tests
   fail against the round-1 code) — all clean by the final pass.
+
+- [x] **#312 (security) — COMPLETE, MERGED (PR #475).** `agent.py`'s
+  autonomous-isolation gate required a resolved device MAC before letting
+  the agent isolate a host with zero human approval. Since #286,
+  `target_mac` only ever populates for outbound intel hits (an internal
+  device calling out to a bad IP), never for inbound hits (an external
+  attacker connecting in) — inverting the intended risk posture: the
+  higher-blast-radius action (autonomously cutting off one of your own
+  devices) could fire, while the lower-blast-radius, trivially-reversible
+  action (blocking an external attacker IP) could never fire autonomously
+  at all. Per the repo owner's direct decision among #312's three named
+  options: allow autonomy on IP alone for a confirmed-external target,
+  while autonomous action against an internal host still always requires
+  the MAC. Added `_is_private_ip()` (fails closed toward "private/unknown"
+  on any unparseable input, so a malformed `target_ip` can never read as
+  "confirmed external"); gate condition became `ctx.target_mac or not
+  _is_private_ip(ctx.target_ip)`; `log_soar_action()`'s `action_type`
+  renamed `"quarantine_mac"` → `"quarantine"` (no longer always
+  MAC-based, verified not hardcoded as a filter anywhere in `configs/`);
+  documented the `AUTONOMOUS_ISOLATION` env var in `.env.example` for the
+  first time. Two rounds of parallel security + code review both came
+  back clean beyond one documented residual nuance: CGNAT space
+  (100.64.0.0/10) evaluates as "not private" under Python's `ipaddress`
+  module, so it reads as "confirmed external" despite being shared
+  carrier-NAT space with a broader blast radius than a dedicated public
+  IP — not a deviation from the chosen policy, just a sharper edge on it.
+  Full test suite (616 tests) passes; no live ES/Kibana cluster available
+  in this environment, consistent with prior M20 issues. **This closes
+  M20 — 6/6 issues complete.**
 
 **M18 progress:**
 

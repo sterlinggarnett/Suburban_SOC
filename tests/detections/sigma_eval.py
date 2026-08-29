@@ -129,6 +129,18 @@ import re
 _SUPPORTED_MODS = {"contains", "endswith", "startswith", "all", "cased", "re", "gt", "gte", "lt", "lte", "cidr"}
 _NUMERIC_MODS = {"gt", "gte", "lt", "lte"}
 
+# #407: the four mutually-exclusive modifier groups this evaluator supports.
+# `all` is deliberately NOT a member of any group here — it's a cross-
+# cutting modifier valid (or invalid, per _validate_modifier_combination's
+# other check) alongside any of the four, not itself part of the "which
+# comparison semantics does this key use" question these groups answer.
+_MOD_GROUPS = (
+    frozenset({"gt", "gte", "lt", "lte"}),
+    frozenset({"cidr"}),
+    frozenset({"re"}),
+    frozenset({"contains", "endswith", "startswith", "cased"}),
+)
+
 # Fields mapped `text` (analyzed, tokenized) rather than `keyword` (exact,
 # unanalyzed) in configs/elasticsearch/logstash-security-template.json.
 # Every field the other 100+ rules in this corpus select on is `keyword`
@@ -439,6 +451,46 @@ def _sigma_wildcard_to_regex(value: str) -> str:
     return "".join(out)
 
 
+def _validate_modifier_combination(mods, target, key) -> None:
+    """#407: modifier-COMBINATION validation, run unconditionally for every
+    block key — unlike the equivalent per-branch guards already inside
+    _match_one (added piecemeal by #386: the numeric/cidr/re `all` checks,
+    each reachable only if evaluation gets that far), which is only
+    reached for a given key if every EARLIER key in the same block already
+    matched the fixture currently being evaluated. A malformed key placed
+    second in a block whose first key fails against every fixture in the
+    corpus would otherwise never be validated at all, for any fixture,
+    ever — it ships CI-green with a modifier combination pySigma compiles
+    without complaint but this evaluator can never actually check.
+
+    Two checks, matching _SUPPORTED_MODS' own unconditional, data-
+    independent name check just above this function's call site:
+      1. The four modifier groups (_MOD_GROUPS) are mutually exclusive —
+         `contains|gt` (numeric silently wins in _match_one, `contains`
+         silently dropped), `re|cidr`, `cidr|gt` etc. are all the same
+         cross-branch silent-drop class, just for combinations #386 didn't
+         happen to touch.
+      2. `all` requires a list target, for every modifier that supports
+         `all` at all — not just cidr/numeric/re (#386's own scope), also
+         contains/endswith/startswith/cased, which #386 left silently
+         inert (no error, `all` just never consulted) against a scalar
+         target rather than validated. Confirmed zero live impact: every
+         real `|all` usage in the corpus already uses a list target.
+    """
+    groups_touched = [g for g in _MOD_GROUPS if g & set(mods)]
+    if len(groups_touched) > 1:
+        raise ValueError(
+            f"'{key}': modifiers span more than one mutually-exclusive "
+            f"comparison group ({[sorted(g & set(mods)) for g in groups_touched]}) "
+            f"— cidr/re/numeric-comparison/string-matching modifiers cannot "
+            f"combine with each other on the same key")
+    if "all" in mods and not isinstance(target, list):
+        raise ValueError(
+            f"'{key}': the all modifier requires a list target (got "
+            f"{target!r}) — Sigma's all expands one selector into several "
+            f"ANDed clauses, meaningless against a single scalar value")
+
+
 def _block_match(block, event: dict) -> bool:
     # Sigma allows a selection to be a LIST of maps, meaning OR across them —
     # the idiomatic way to write "Image endswith X OR OriginalFileName is X"
@@ -452,11 +504,24 @@ def _block_match(block, event: dict) -> bool:
         return any(_block_match(sub, event) for sub in block)
     if not isinstance(block, dict):
         raise ValueError(f"unsupported Sigma selection shape: {block!r}")
+    # #407: validate EVERY key's modifier name/combination up front, in its
+    # own pass, before any matching happens. The matching pass below still
+    # short-circuits on the first non-matching key (by design) — before
+    # this split, BOTH the bad-mods name check above and the new
+    # combination check below shared the identical reachability gap: a
+    # malformed key placed second in a block whose first key fails against
+    # every fixture in the corpus was never even reached, for either
+    # check, for any fixture, ever. Splitting validation into its own pass
+    # makes both checks genuinely unconditional, not just the combination
+    # check #407 was filed over.
     for key, target in block.items():
         field, *mods = key.split("|")
         bad = [m for m in mods if m not in _SUPPORTED_MODS]
         if bad:
             raise ValueError(f"unsupported Sigma modifier(s) {bad} in '{key}'")
+        _validate_modifier_combination(mods, target, key)
+    for key, target in block.items():
+        field, *mods = key.split("|")
         if not _match_one(event.get(field), mods, target, field):
             return False
     return True

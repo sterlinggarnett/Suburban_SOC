@@ -484,6 +484,58 @@ class SigmaDetectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _match_one(["10.0.0.5"], ["contains", "all"], [], "field")
 
+    def test_block_match_rejects_cross_group_combo_regardless_of_key_order(self):
+        # #407: modifier-COMBINATION validation now runs in _block_match's
+        # own up-front pass, over every key, before any matching happens —
+        # not just reachable if evaluation gets that far, like the
+        # equivalent per-branch guards buried inside _match_one. Placed as
+        # the SECOND key in a block whose FIRST key never matches the
+        # fixture (so the pre-#407 single-pass loop would have returned
+        # False before ever reaching key 2's own bad-mods/combination
+        # check) — pins the exact reachability gap #407 describes: a
+        # malformed key that previously would never be validated at all,
+        # for any fixture, now fails loudly regardless of key order.
+        from sigma_eval import _block_match
+        block = {
+            "never_matches|contains": "unreachable-value",
+            "field|contains|gt": "5",  # cross-group: #386-era code let numeric silently win
+        }
+        with self.assertRaises(ValueError):
+            _block_match(block, {"never_matches": "something else entirely", "field": "10"})
+
+    def test_block_match_rejects_cross_branch_silent_drop_combinations(self):
+        # #407 "more broadly": contains+gt/re+cidr/cidr+gt previously never
+        # raised at all — one branch's modifier silently won over the
+        # other's (branch precedence inside _match_one), not just an
+        # unreachable-key ordering gap.
+        from sigma_eval import _block_match
+        with self.assertRaises(ValueError):
+            _block_match({"field|contains|gt": "5"}, {"field": "10"})
+        with self.assertRaises(ValueError):
+            _block_match({"field|re|cidr": "10.0.0.0/24"}, {"field": "10.0.0.5"})
+        with self.assertRaises(ValueError):
+            _block_match({"field|cidr|gt": "10.0.0.0/24"}, {"field": "10.0.0.5"})
+
+    def test_all_with_scalar_target_now_rejected_for_string_modifiers_too(self):
+        # #407: contains/endswith/startswith `all` against a scalar target
+        # used to be silently INERT (no error, `all` just never consulted —
+        # #386 only guarded cidr/numeric/re). Confirmed zero live impact:
+        # every real |all usage in the corpus already uses a list target
+        # (grep-verified against rules/sigma/*.yml).
+        from sigma_eval import _block_match
+        with self.assertRaises(ValueError):
+            _block_match({"field|contains|all": "not-a-list"}, {"field": "value"})
+
+    def test_valid_modifier_combinations_are_unaffected_by_407(self):
+        # Regression guard: single-group modifiers, and the real |all usage
+        # shape (contains|all with a list target), must still validate and
+        # match clean.
+        from sigma_eval import _block_match
+        self.assertTrue(_block_match({"field|cidr": "10.0.0.0/24"}, {"field": "10.0.0.5"}))
+        self.assertTrue(_block_match({"field|gt": "3"}, {"field": "5"}))
+        self.assertTrue(_block_match({"field|re": "abc"}, {"field": "abc"}))
+        self.assertTrue(_block_match({"field|contains|all": ["a", "b"]}, {"field": "abc"}))
+
     def test_match_one_rejects_dict_shaped_values_and_validates_empty_list_shape(self):
         # #351: security-auditor findings.
         # (1) A dict-shaped value (the ECS-canonical dns.answers.data/type/
@@ -667,6 +719,27 @@ class SigmaDetectionTests(unittest.TestCase):
                 det["selection_payload"]["mime_type"], expected,
                 f"{rule_name}: mime_type list no longer matches its sibling rule's "
                 f"list exactly — both rules' descriptions claim they're kept in sync")
+
+    def test_ssh_session_cadence_rules_share_the_exact_same_detection_block(self):
+        # #420: net_zeek_ssh_session_cadence.yml and its
+        # _sustained.yml companion are two separate Sigma logic-of-record
+        # files (own UUIDs, required by test_threshold_rules.py's strict
+        # 1:1 rule_id == <sigma_id>-threshold pairing invariant — see #392/
+        # #420's own issue text for why an N:1 pairing wasn't pursued
+        # instead) whose detection: blocks are deliberately byte-identical
+        # (both select on client|startswith: 'SSH-'). Nothing enforced
+        # that identity — a future change to the shared selector (e.g.
+        # addressing net_zeek_ssh_session_cadence.yml's own KNOWN
+        # LIMITATION note about SSH::Info$client being &optional) could
+        # silently drift between the two files with no test noticing,
+        # same failure shape the mime_type sync test above guards against.
+        cadence = load_rule(SIGMA_DIR / "net_zeek_ssh_session_cadence.yml")["detection"]
+        sustained = load_rule(SIGMA_DIR / "net_zeek_ssh_session_cadence_sustained.yml")["detection"]
+        self.assertEqual(
+            cadence, sustained,
+            "net_zeek_ssh_session_cadence.yml and net_zeek_ssh_session_cadence_"
+            "sustained.yml's detection: blocks have drifted apart — both rules' "
+            "descriptions claim the selector logic is shared/reused verbatim")
 
     def test_zeek_executable_and_smtp_rules_no_longer_match_the_dead_mime_types(self):
         # #365: application/x-msdownload, application/vnd.microsoft.

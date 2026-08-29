@@ -14,5 +14,5 @@ falsepositives:
     - IT administrators forcefully connecting to specific sessions.
 level: high
 tags:
-    - attack.privilege_escalation
-    - attack.t1574
+    - attack.lateral_movement
+    - attack.t1563.002

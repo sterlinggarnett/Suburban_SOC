@@ -37,7 +37,8 @@ One rule per category named in the issue's acceptance criteria:
                        production incident, not a synthetic example.
   - threshold:         every file in rules/elastic/threshold/*.ndjson (#393:
                        generalized from the original single hardcoded file
-                       to all 8, via THRESHOLD_TEST_CONFIGS)
+                       to all of them, via THRESHOLD_TEST_CONFIGS — 8 at the
+                       time, #434 added 2 more later)
 
 Two known scope limits, security-auditor/code-reviewer verified (both reviews
 run in parallel per this repo's standing rules) but not fully closed here:
@@ -738,6 +739,19 @@ def _zeek_ssh_base_doc() -> dict:
     return {"event": {"dataset": "zeek.ssh"}, "client": "SSH-2.0-OpenSSH_9.6"}
 
 
+def _zeek_dns_base_doc(seed_question_name: str) -> dict:
+    # #434: dns.question.name is BOTH the field the two DNS cardinality
+    # threshold rules' own query filters on (must match the parent Sigma
+    # rule's bare/subdomain domain list) AND the cardinality field itself —
+    # unlike every other cardinality rule in this corpus, where the two are
+    # unrelated fields (e.g. winlog.event_id vs. TargetUserName). The
+    # seed value here only matters for the (non-cardinality-configured)
+    # generic base shape; THRESHOLD_TEST_CONFIGS' cardinality_value_for
+    # override is what actually keeps every per-doc value both distinct
+    # AND still matching the query for these two rules specifically.
+    return {"event": {"dataset": "zeek.dns"}, "dns": {"question": {"name": seed_question_name}}}
+
+
 def _sigma_fixture_base_doc(sigma_filename: str) -> dict:
     """Builds a base document from the paired Sigma rule's own true_positive
     fixture, translated through the real pipeline field mapping — the same
@@ -835,6 +849,23 @@ THRESHOLD_TEST_CONFIGS = {
         "base_doc": lambda: _zeek_ssh_base_doc(), "cardinality": None,
         "entity_for": _ip_entity_for(2),
     },
+    "net-zeek-dns-doh-non-standard-cardinality.ndjson": {
+        "base_doc": lambda: _zeek_dns_base_doc("seed.quad9.net"),
+        "cardinality": "dns.question.name",
+        # Must still match the rule's own query (event.dataset:zeek.dns AND
+        # dns.question.name in {bare list} OR *.<bare>) — a bare "seq-N"
+        # would match neither branch. A distinct quad9.net subdomain per
+        # seq matches the wildcard selection_subdomain branch and is
+        # genuinely unique, satisfying both requirements at once.
+        "cardinality_value_for": lambda i: f"seq-{i}.quad9.net",
+        "entity_for": _ip_entity_for(3),
+    },
+    "net-zeek-dns-crypto-mining-pool-cardinality.ndjson": {
+        "base_doc": lambda: _zeek_dns_base_doc("seed.nanopool.org"),
+        "cardinality": "dns.question.name",
+        "cardinality_value_for": lambda i: f"seq-{i}.nanopool.org",
+        "entity_for": _ip_entity_for(4),
+    },
 }
 
 
@@ -880,8 +911,16 @@ class ThresholdLiveFireTests(LiveFireTestCase):
         if config["cardinality"]:
             # A repeated cardinality-field value would never cross a
             # cardinality threshold no matter how many documents are
-            # indexed — each must get its own distinct value.
-            _set_dotted(doc, config["cardinality"], f"seq-{seq}")
+            # indexed — each must get its own distinct value. Default
+            # shape is a bare "seq-N" (fine when the cardinality field is
+            # independent of the rule's own query-matching field, true for
+            # every rule except the two below); cardinality_value_for lets
+            # a rule override that shape when the cardinality field is
+            # ALSO what the query filters on (#434's two DNS rules: a bare
+            # "seq-N" would never match either rule's own domain-list
+            # query at all).
+            value_for = config.get("cardinality_value_for", lambda i: f"seq-{i}")
+            _set_dotted(doc, config["cardinality"], value_for(seq))
         self._index(doc_id, doc)
 
     @staticmethod
@@ -1023,7 +1062,7 @@ class ThresholdLiveFireTests(LiveFireTestCase):
 
 
 class ThresholdQueryMatchesCompiledSigmaTests(unittest.TestCase):
-    """#393 Gap 3: all 8 threshold .ndjson files' `query` strings are
+    """#393 Gap 3: every threshold .ndjson file's `query` string is
     hand-maintained, derived once from a real `sigma convert` run at
     authoring time, with nothing enforcing they stay in sync if the paired
     Sigma file's `detection:` block is edited later. Compile-only (no live

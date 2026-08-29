@@ -63,6 +63,8 @@ DETECTION_WINDOW_MINUTES = {
     "disc-win-user-discovery-repeat.ndjson": 10,
     "net-zeek-ssh-session-cadence.ndjson": 5,
     "net-zeek-ssh-session-cadence-sustained.ndjson": 30,
+    "net-zeek-dns-doh-non-standard-cardinality.ndjson": 10,
+    "net-zeek-dns-crypto-mining-pool-cardinality.ndjson": 10,
 }
 
 

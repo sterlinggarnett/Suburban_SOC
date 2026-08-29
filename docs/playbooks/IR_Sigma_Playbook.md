@@ -130,7 +130,7 @@ vocabularies defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-work
 | [Cscript/Wscript Executing from a Non-Standard Location](#proc_creation_win_cscript_wscript_remote) | T1059.005, T1059.007 | `Image`, `CommandLine` | Hash → VT ≥5; Domain/URL → OTX | Tier C — indicator block on TI-confirm |
 | [Windows Defender Real-Time Protection Disabled](#proc_creation_win_defender_tamper) | T1562.001 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
 | [DNS Server Plugin DLL Side-Loading via dnscmd](#proc_creation_win_dnscmd_serverlevelplugindll) | T1574.002 | `Image`, `OriginalFileName`, `CommandLine` | Hash → VT ≥5 | Tier A — auto-isolate + identity kill |
-| [Domain Group Discovery via Net.exe](#proc_creation_win_domain_group_discovery) | T1087.002 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier D — triage-only |
+| [Domain Group Discovery via Net.exe](#proc_creation_win_domain_group_discovery) | T1069.002 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier D — triage-only |
 | [Locked File Copied via esentutl VSS Trick (Browser Credential Access)](#proc_creation_win_esentutl_locked_file_copy) | T1005 | `Image`, `OriginalFileName`, `CommandLine` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
 | [Indirect Command Execution via Forfiles](#proc_creation_win_forfiles_execution) | T1202 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier C — indicator block on TI-confirm |
 | [InstallUtil Execution Bypassing Uninstall Logging](#proc_creation_win_installutil_bypass) | T1218.004 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
@@ -151,7 +151,7 @@ vocabularies defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-work
 | [Suspicious PowerShell Encoded Command Execution](#proc_creation_win_powershell_encoded) | T1059.001 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier C — indicator block on TI-confirm |
 | [PsExec Client-Side Remote Execution Launch](#proc_creation_win_psexec_client_side_launch) | T1569.002 | `Image`, `OriginalFileName`, `CommandLine` | Hash → VT ≥5 | Tier C — indicator block on TI-confirm |
 | [Password-Protected Archive Staging via RAR/WinRAR](#proc_creation_win_rar_archive_staging) | T1560.001 | `Image`, `OriginalFileName`, `CommandLine` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
-| [RDP Session Hijacking via Tscon](#proc_creation_win_rdp_hijack_tscon) | T1574 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
+| [RDP Session Hijacking via Tscon](#proc_creation_win_rdp_hijack_tscon) | T1563.002 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
 | [SAM Hive Dump via Reg.exe](#proc_creation_win_reg_save_sam) | T1003.002 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
 | [Regasm/Regsvcs Proxy Execution](#proc_creation_win_regasm_regsvcs_bypass) | T1218.009 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier C — indicator block on TI-confirm |
 | [Regsvr32 Execution from Remote Server](#proc_creation_win_regsvr32_remote_sct) | T1218.010 | `Image`, `CommandLine` | Hash → VT ≥5; Domain/URL → OTX | Tier A — auto-isolate + identity kill |
@@ -1015,7 +1015,7 @@ Detects `dnscmd.exe /config /serverlevelplugindll <path>`, which sets a registry
 | Attribute | Value |
 |---|---|
 | Tactic(s) | Discovery |
-| Technique(s) | T1087.002 — Account Discovery: Domain Account |
+| Technique(s) | T1069.002 — Permission Groups Discovery: Domain Groups |
 | Severity (`level`) | low |
 | Data source | Sysmon/Winlogbeat (process_creation) |
 | Trigger condition | `net.exe` or `net1.exe` whose command line contains both `group` and `/domain` |
@@ -2140,8 +2140,8 @@ Detects RAR creating a password-protected archive — the classic collection-sta
 
 | Attribute | Value |
 |---|---|
-| Tactic(s) | Privilege Escalation |
-| Technique(s) | T1574 — Hijack Execution Flow (per the rule's `attack.t1574` tag) |
+| Tactic(s) | Lateral Movement |
+| Technique(s) | T1563.002 — Remote Service Session Hijacking: RDP Hijacking (per the rule's `attack.t1563.002` tag) |
 | Severity (`level`) | high |
 | Data source | Sysmon/Winlogbeat (process_creation) |
 | Trigger condition | `tscon.exe` executed with a command line containing `/dest:` |

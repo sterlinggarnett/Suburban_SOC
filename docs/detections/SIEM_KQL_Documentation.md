@@ -513,7 +513,7 @@ process.executable:*\\cmstp.exe AND (process.args:(*\/s* OR *\/ns* OR *.inf* OR 
 
 ## Domain Group Discovery via Net.exe
 
-- **Rule:** `proc_creation_win_domain_group_discovery.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1087.002
+- **Rule:** `proc_creation_win_domain_group_discovery.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1069.002
 
 ```
 (process.executable:(*\\net.exe OR *\\net1.exe)) AND (process.args:*group* AND process.args:*\/domain*)
@@ -681,7 +681,7 @@ process.executable:*\\nltest.exe AND (process.args:(*\/dclist\:* OR *\/domain_tr
 
 ## RDP Session Hijacking via Tscon
 
-- **Rule:** `proc_creation_win_rdp_hijack_tscon.yml` · **level:** high · **status:** stable · **ATT&CK:** T1574
+- **Rule:** `proc_creation_win_rdp_hijack_tscon.yml` · **level:** high · **status:** stable · **ATT&CK:** T1563.002
 
 ```
 process.executable:*\\tscon.exe AND process.args:*\/dest\:*

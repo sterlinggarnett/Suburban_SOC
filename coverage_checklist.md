@@ -1,6 +1,6 @@
 # Suburban-SOC :: Emulation -> Detection Coverage Checklist
 
-Two lanes, 22 emulation->detection pairs. `[x]` = wiring validated by `validate_emulation_map.py`; operational/live-fire steps are unchecked.
+Two lanes, 24 emulation->detection pairs. `[x]` = wiring validated by `validate_emulation_map.py`; operational/live-fire steps are unchecked.
 
 ## Network / Linux lane (Zeek)
 
@@ -19,6 +19,7 @@ Two lanes, 22 emulation->detection pairs. `[x]` = wiring validated by `validate_
       `configs/detections/emulation_telemetry.map`'s EXPLOITATION_UNVERIFIED
       section.
 - [x] **CREDENTIAL_ACCESS_SSH** (T1110) — `sim_brute_ssh.sh` -> `net_zeek_ssh_bruteforce.yml`
+- [x] **CREDENTIAL_ACCESS_SSH_CADENCE** (T1110) — `sim_brute_ssh.sh` -> `net_zeek_ssh_session_cadence.yml`
 - [x] ⚠️ **CREDENTIAL_ACCESS_SSH_CADENCE_SUSTAINED** (T1110) — `sim_brute_ssh.sh` -> `net_zeek_ssh_session_cadence_sustained.yml`
       ⚠️ **#392: `sim_brute_ssh.sh`'s default (5 attempts) does NOT exercise
       this rule** (threshold.value:15) — needs an explicit
@@ -29,11 +30,7 @@ Two lanes, 22 emulation->detection pairs. `[x]` = wiring validated by `validate_
       capture path in this repo). See
       `configs/detections/emulation_telemetry.map`'s
       CREDENTIAL_ACCESS_SSH_CADENCE_SUSTAINED section for the exact
-      command. (Note: this checklist's own row count is already known
-      stale vs. `emulation_telemetry.map` — see #414 — the pre-existing
-      `CREDENTIAL_ACCESS_SSH_CADENCE` pairing from #332 has no row here
-      either; not fixed in this change to avoid duplicating #414's own
-      scope.)
+      command.
 
 Operational to-dos (Linux lane):
 - [ ] `chmod +x tests/anomaly_simulation/sim_portscan.sh`
@@ -57,7 +54,7 @@ Operational to-dos (Linux lane):
 - [x] **PERSISTENCE_LOCAL_ACCOUNT** (T1136.001) — `sim_win_local_acct_create.ps1` -> `proc_creation_win_local_acct_create.yml`
 - [x] **CREDENTIAL_ACCESS_LSASS** (T1003.001) — `sim_win_lsass_dump.ps1` -> `proc_creation_win_lsass_dump.yml`  ⚠ destructive in armed mode
 - [x] **DEFENSE_EVASION_MSHTA** (T1218.005) — `sim_win_mshta_remote.ps1` -> `proc_creation_win_mshta_remote.yml`
-- [x] **DISCOVERY_DOMAIN_TRUST** (T1482) — `sim_win_nltest_discovery.ps1` -> `proc_creation_win_nltest_discovery.yml`
+- [x] **DISCOVERY_DOMAIN_TRUST** (T1018) — `sim_win_nltest_discovery.ps1` -> `proc_creation_win_nltest_discovery.yml`
 - [x] **EXECUTION_POWERSHELL_ENCODED** (T1059.001) — `sim_win_powershell_encoded.ps1` -> `proc_creation_win_powershell_encoded.yml`
 - [x] **LATERAL_MOVEMENT_RDP_HIJACK** (T1563.002) — `sim_win_rdp_hijack_tscon.ps1` -> `proc_creation_win_rdp_hijack_tscon.yml`  ⚠ destructive in armed mode
 - [x] **CREDENTIAL_ACCESS_SAM** (T1003.002) — `sim_win_reg_save_sam.ps1` -> `proc_creation_win_reg_save_sam.yml`  ⚠ destructive in armed mode

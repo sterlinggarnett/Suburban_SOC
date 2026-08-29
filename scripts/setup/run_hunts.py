@@ -14,6 +14,7 @@ Cron: see configs/hunts/hunts.cron.
 """
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,6 +55,38 @@ class HuntQueryUnavailable(Exception):
     Elasticsearch must never be reported as 'no findings'."""
 
 
+# #432: the composite ES _id main() builds (hunt_key:day_bucket) is a
+# deliberate UPSERT, not a create-only op — a colliding hunt_key (an unsafe
+# character like ':' inside a hunt's own id, or two hunts falling back to
+# the same filename-stem-derived key) SILENTLY OVERWRITES one hunt's stored
+# findings with another's, rather than erroring or appending. Lost hunt
+# data, not just a display/tooltip ambiguity.
+_HUNT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _validate_hunt_ids(hunts):
+    """Fails loudly, before any bulk write, on an unsafe hunt id or a
+    collision between two hunts' composite _id keys — whether from a
+    colliding literal `id:` or a colliding filename-stem fallback."""
+    seen = {}
+    for path in hunts:
+        h = yaml.safe_load(path.read_text(encoding="utf-8"))
+        hunt_key = h.get("id") or path.stem
+        if not _HUNT_ID_RE.match(hunt_key):
+            print(f"ERROR: {path.name}: hunt id {hunt_key!r} contains characters "
+                  f"outside [A-Za-z0-9_-] — would corrupt the composite ES _id "
+                  f"('{hunt_key}:<day-bucket>') this script builds from it",
+                  file=sys.stderr)
+            sys.exit(1)
+        if hunt_key in seen:
+            print(f"ERROR: {path.name} and {seen[hunt_key].name} both resolve to "
+                  f"hunt id {hunt_key!r} — would silently overwrite one hunt's "
+                  f"stored findings with the other's via a colliding composite "
+                  f"ES _id", file=sys.stderr)
+            sys.exit(1)
+        seen[hunt_key] = path
+
+
 def es_count(index, query_string):
     body = {"query": {"bool": {"filter": [
         {"query_string": {"query": query_string}},
@@ -79,6 +112,7 @@ def main():
     if not hunts:
         print("No hunts found in hunts/", file=sys.stderr)
         sys.exit(1)
+    _validate_hunt_ids(hunts)
     now_dt = datetime.now(timezone.utc)
     now = now_dt.isoformat()
     # audit #176: cron runs this hourly (configs/hunts/hunts.cron), and every

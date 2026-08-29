@@ -189,6 +189,17 @@ description: |
     at this logsource - a genuine, currently-unclosable blind spot, not
     an oversight. Filed as #417 for anyone who wants to pursue a
     hash/heuristic-based secondary check instead of mime_type filtering.
+    #417 decision: NOT pursued at this network logsource - mime_type
+    filtering structurally cannot discriminate the two file classes here
+    (see Zeek's own office.sig comment above), and a correlation-based
+    approach (source-reputation/threat-intel-gated application/msword
+    alerting) was judged not worth the added false-positive-tuning
+    surface for a technique this repo already covers more precisely
+    elsewhere. T1218.007 is instead covered at the endpoint logsource by
+    rules/sigma/proc_creation_win_msiexec_remote.yml (Sysmon
+    process_creation, msiexec.exe with an install verb adjacent to an
+    http(s) URL) - the "more tractable" option #417 itself suggested,
+    already shipped, not a gap needing a new rule.
     Tags deliberately UNCHANGED by #384, recorded so this reads as a
     decision, not an oversight: an ATT&CK tag for LNK delivery
     (T1204.002) and one for scripting (the T1059 family) were considered
@@ -204,6 +215,24 @@ description: |
     shell-script download, but inherits the same severity. Not split
     here (a bigger design/test-invariant change than a mime_type-list
     fix); filed as #418.
+    #418 decision: not split into a sibling rule (would need
+    tests/detections/test_sigma_detections.py's
+    test_zeek_executable_and_smtp_rules_share_the_exact_same_mime_type_list
+    sync-invariant rethought for a partial split, and this rule's own
+    Sigma id/history stays intact for the entries that don't move) -
+    documenting per-entry fidelity here instead, per the issue's own
+    "at minimum" fallback, so a tuning pass can act per-entry:
+    HIGH-FIDELITY (near-zero legitimate base rate - do NOT suppress
+    these when tuning shell-script/routine-binary noise out of this
+    rule): application/x-ms-shortcut (bare LNK, T1204.002 - see the
+    LNK entry above for what it does and doesn't cover),
+    application/x-mach-o-executable (macOS-targeted payload, unusual
+    outside macOS-heavy environments). LOW-FIDELITY / HIGH-BASE-RATE
+    (the routine provisioning-script and ordinary-binary traffic
+    described in falsepositives below): application/x-dosexec,
+    application/x-executable, application/x-sharedlib,
+    text/x-shellscript, text/x-python, text/x-perl, text/x-ruby,
+    text/x-msdos-batch.
 references:
     - https://attack.mitre.org/techniques/T1105/
     - https://docs.zeek.org/en/master/logs/files.html

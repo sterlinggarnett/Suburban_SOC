@@ -398,15 +398,20 @@ services:
         fi;
         if [ x$${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD} != x ]; then
           echo "Provisioning agent_checkpoints_compactor role + user (#256 — a SEPARATE delete-capable identity for the scheduled TTL-retention script, deliberately never merged into agent_checkpoints above: the whole point of that role (#245) is holding NO delete privilege, so a compromised live agent/CLI credential cannot erase a claim doc and re-open the at-most-once execution gate)";
-          # read+delete, same index pattern as agent_checkpoints — nothing
-          # else. The TERMINAL_CLAIM_PHASES of compact_agent_checkpoints.py
-          # never includes CLAIMED (asserted in the script itself), so even
-          # with delete granted here, a live/unresolved claim is never a
-          # candidate this credential could act on.
+          # read+delete on agent-checkpoints-* (same index pattern as
+          # agent_checkpoints), plus cluster:monitor (#376 — GET _tasks/<id>,
+          # polled after every async _delete_by_query kickoff, needs it;
+          # without it every scheduled compaction run 403s on its very first
+          # task poll, after the delete has already been kicked off
+          # server-side). The TERMINAL_CLAIM_PHASES of
+          # compact_agent_checkpoints.py never includes CLAIMED (asserted in
+          # the script itself), so even with delete granted here, a
+          # live/unresolved claim is never a candidate this credential could
+          # act on.
           # configs/elasticsearch/roles/agent_checkpoints_compactor.json is
           # authoritative (re-applied by apply_roles.sh) - keep this inline
           # copy in sync.
-          put "/_security/role/agent_checkpoints_compactor" "{\"indices\":[{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\",\"delete\"]}]}";
+          put "/_security/role/agent_checkpoints_compactor" "{\"cluster\":[\"monitor\"],\"indices\":[{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\",\"delete\"]}]}";
           # $$ (not $), same reasoning as AGENT_CHECKPOINTS_PASSWORD above.
           put "/_security/user/agent_checkpoints_compactor" "{\"password\":\"$${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD}\",\"roles\":[\"agent_checkpoints_compactor\"],\"full_name\":\"SOC agent-checkpoints TTL retention (Suburban-SOC, #256)\"}";
         fi;

@@ -376,6 +376,19 @@ def navigator_layer(rows):
             # markdown()'s deduped technique total below.
             {"name": "detections", "value": str(len(rows))},
             {"name": "source", "value": "rules/sigma/*.yml + configs/logstash.conf"},
+            # #379: the UNIQUE technique count (unique_technique_count(rows),
+            # same figure markdown()'s "Coverage: N techniques" line reports)
+            # — deliberately NOT len(techs)/len(this JSON's own "techniques"
+            # array), which is a (techniqueID, tactic) PAIR count (#281) and
+            # over-reports by one per technique that legitimately spans more
+            # than one tactic (T1078.003 today). Named "unique_techniques",
+            # not "techniques", specifically so it can't be confused with
+            # the top-level "techniques" array above — the exact two
+            # different "technique counts" this fix exists to disambiguate
+            # (code-reviewer follow-up). slo_metrics.py's metric_coverage()
+            # reads this field instead of re-deriving it, so the two can't
+            # silently drift apart.
+            {"name": "unique_techniques", "value": str(unique_technique_count(rows))},
         ],
     }
 

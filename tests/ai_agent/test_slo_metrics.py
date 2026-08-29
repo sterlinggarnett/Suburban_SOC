@@ -20,6 +20,7 @@ from unittest import mock
 # ES_PASS is read at import time; must be truthy or main() exits(1) immediately.
 os.environ["ES_PASS"] = "unit_test_pass"
 
+import build_attack_coverage as bac
 import env_loader
 import slo_metrics
 
@@ -99,6 +100,8 @@ class MetricFunctionTests(unittest.TestCase):
                 slo_metrics.metric_coverage()
 
     def test_coverage_returns_technique_count_on_success(self):
+        # No "metadata" field at all (an artifact predating #379) — exercises
+        # the fallback path: len(techniques), unchanged pre-#379 behavior.
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             coverage_path = repo / "docs" / "detections"
@@ -107,6 +110,44 @@ class MetricFunctionTests(unittest.TestCase):
                 json.dumps({"techniques": ["T1110", "T1046", "T1078"]}), encoding="utf-8")
             with mock.patch.object(slo_metrics, "REPO", repo):
                 self.assertEqual(slo_metrics.metric_coverage(), 3.0)
+
+    def test_coverage_prefers_the_unique_techniques_metadata_field_over_array_length(self):
+        # #379: a technique legitimately spanning two tactics (e.g. T1078.003)
+        # produces TWO (techniqueID, tactic) entries in "techniques" but is
+        # only ONE unique technique — len(techniques) would over-report by
+        # one. The "unique_techniques" metadata field carries the correct
+        # unique count and must win over the array length.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            coverage_path = repo / "docs" / "detections"
+            coverage_path.mkdir(parents=True)
+            (coverage_path / "attack-coverage.json").write_text(
+                json.dumps({
+                    "techniques": [
+                        {"techniqueID": "T1078.003", "tactic": "initial-access"},
+                        {"techniqueID": "T1078.003", "tactic": "privilege-escalation"},
+                        {"techniqueID": "T1110", "tactic": "credential-access"},
+                    ],
+                    "metadata": [
+                        {"name": "detections", "value": "3"},
+                        {"name": "unique_techniques", "value": "2"},
+                    ],
+                }), encoding="utf-8")
+            with mock.patch.object(slo_metrics, "REPO", repo):
+                self.assertEqual(slo_metrics.metric_coverage(), 2.0)
+
+    def test_coverage_matches_the_real_committed_artifact_and_corpus(self):
+        # code-reviewer follow-up: the two tests above only exercise
+        # synthetic fixtures — neither proves slo_metrics.py can correctly
+        # PARSE the actual, real docs/detections/attack-coverage.json this
+        # repo ships, nor that the number it reads still matches the real
+        # rule corpus. `build_attack_coverage.py --check` (run in CI)
+        # already proves the committed JSON/MD are in sync with each
+        # other and with rules/sigma/*.yml — this closes the remaining gap
+        # by proving slo_metrics.py's real read path agrees with both.
+        rows = bac.harvest()
+        expected = float(bac.unique_technique_count(rows))
+        self.assertEqual(slo_metrics.metric_coverage(), expected)
 
     def test_false_positive_pct_raises_on_kibana_failure(self):
         with mock.patch.object(slo_metrics, "kb", side_effect=ConnectionError("refused")):

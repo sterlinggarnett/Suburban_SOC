@@ -641,6 +641,10 @@
     {
       "name": "source",
       "value": "rules/sigma/*.yml + configs/logstash.conf"
+    },
+    {
+      "name": "unique_techniques",
+      "value": "75"
     }
   ]
 }

@@ -272,6 +272,7 @@ Do **not** fabricate endpoint data. Instead prove the path exists:
 - `configs/endpoint/winlogbeat.yml` + `filebeat_endpoint.yml` ship TLS to `:5044`.
 - The pipeline maps endpoint fields; the 32 endpoint Sigma rules convert/deploy.
 - The 19 Windows emulation scripts (`tests/anomaly_simulation/sim_win_*.ps1`) exist to drive them once an endpoint attaches.
+- Linux side (#442): `filebeat_endpoint.yml`'s `audit-logs` input + `configs/endpoint/audit.rules` (execve watches, requires `auditd.conf`'s `log_format = ENRICHED`) + `configs/logstash.conf`'s auditd SYSCALL+EXECVE correlation branch — `event.module:auditd` populates `process.executable`/`process.args`/`user.name` for a `linux/process_creation` logsource. No consuming Sigma rules yet (#441 Part A); mark this path "wired, not yet detecting" until those land, same honesty standard as the Windows side.
 
 Mark live process-anomaly / auth / Sigma-hit panels **"awaiting a live endpoint."**
 

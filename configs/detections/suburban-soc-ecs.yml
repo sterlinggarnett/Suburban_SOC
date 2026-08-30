@@ -49,6 +49,29 @@ transformations:
         product: windows
         category: process_creation
 
+  # #442: Linux execve telemetry (configs/logstash.conf's new auditd
+  # SYSCALL+EXECVE correlation branch), the prerequisite for #441 Part A's 5
+  # proc_creation_lnx_* rules. Field names match upstream SigmaHQ's
+  # cross-platform process_creation convention (Image/CommandLine/User, same
+  # as field-mapping-sysmon-process-creation just above) so an imported
+  # SigmaHQ linux/process_creation rule needs no renaming to run here either.
+  # Deliberately does NOT map ParentImage/ParentCommandLine — unlike Sysmon,
+  # the auditd branch never populates process.parent.name (auditd's SYSCALL
+  # record only gives ppid, a PID NUMBER, and this pipeline has no PID->
+  # exe-name process-tree cache); mapping a field nothing produces is this
+  # repo's own #217 anti-pattern, so no proc_creation_lnx_* rule may select
+  # on ParentImage/ParentCommandLine until a real producer exists.
+  - id: field-mapping-auditd-process-creation
+    type: field_name_mapping
+    mapping:
+      Image: process.executable
+      CommandLine: process.args
+      User: user.name
+    rule_conditions:
+      - type: logsource
+        product: linux
+        category: process_creation
+
   # Sysmon CreateRemoteThread (EventID 8, issue #192 rule 6) — none of these fields
   # are in the logstash.conf Sysmon rename list, so they stay under winlog.event_data.
   - id: field-mapping-sysmon-create-remote-thread

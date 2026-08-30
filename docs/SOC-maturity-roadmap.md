@@ -162,8 +162,8 @@ Detect/Identify gaps closed with technical controls.
 - **Accept:** feed auto-updates on schedule; a known-bad test indicator matches end-to-end; stale-feed alert if refresh fails.
 
 ### WS1.4 — Confirm & expand data sources (NIST Identify/Detect) — **M**
-- **Now:** endpoint configs exist (`configs/endpoint/winlogbeat.yml`, `filebeat_endpoint.yml`) but architecture is network-first; endpoint detections only fire if telemetry actually arrives.
-- **Target:** prove endpoint telemetry flows (Sysmon/Winlogbeat, Linux auth); add passive asset inventory from Zeek `conn`/`known_hosts`/`known_services` per tenant; consider Suricata for signature coverage alongside Zeek.
+- **Now:** endpoint configs exist (`configs/endpoint/winlogbeat.yml`, `filebeat_endpoint.yml`) but architecture is network-first; endpoint detections only fire if telemetry actually arrives. #442 added a Linux execve source (`configs/endpoint/audit.rules` + `filebeat_endpoint.yml`'s `audit-logs` input, correlated in `configs/logstash.conf`) alongside the pre-existing Linux auth-log source — `linux/process_creation` was an empty logsource against 51 `windows/process_creation` rules until this; not yet exercised against a live auditd host, and the 5 `proc_creation_lnx_*` rules that consume it (#441 Part A) haven't landed yet either.
+- **Target:** prove endpoint telemetry flows (Sysmon/Winlogbeat, Linux auth + execve); add passive asset inventory from Zeek `conn`/`known_hosts`/`known_services` per tenant; consider Suricata for signature coverage alongside Zeek.
 - **Files:** `configs/endpoint/*`, `configs/zeek/local.zeek`, new asset-inventory index + panel.
 - **Accept:** Data Quality dashboard shows a live heartbeat per source per tenant; per-tenant asset list populated.
 

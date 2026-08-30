@@ -32,7 +32,7 @@ since — see the last two rows):
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 | [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 4 open, all not actionable here (needs a live capture host) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
-| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ⏳ 3/5 in PR (#505), 2 queued next | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
+| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ⏳ 4/5 implemented (#442 ready to PR), #441's 10 rules still open | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -125,28 +125,72 @@ static regression test (`tests/setup/test_docker_compose_ports.py`'s new
 `ElasticsearchHaPortBindingTests`, `tests/setup/test_soc_admin_role_scope.py`'s
 new `test_excludes_soc_audit`) — not yet merged, CI pending.
 
-**#441/#442 deliberately NOT picked up this session** — assessed and
-scoped, not attempted partially. #442 (ship Linux execve telemetry: a new
-Filebeat input, multi-record auditd-log correlation in
-`configs/logstash.conf`, ES template mapping, WS1.4 heartbeat coverage, a
-`tests/pipeline` case) is itself a full new telemetry lane with no way to
-live-verify the hardest part — the SYSCALL+EXECVE correlation — against a
-real auditd stream in this sandbox. #441 then needs 10 new Sigma rules on
-top of it (5 `proc_creation_lnx_*`, blocked on #442; 5
-Collection/Exfiltration), each carrying this repo's full per-rule DoD: TP+TN
+**#442 picked up as its own follow-up session (2026-08-30, later the same
+day)** — the queued task from the entry above. Ships Linux execve
+telemetry: a new `audit-logs` filestream input
+(`configs/endpoint/filebeat_endpoint.yml`), a new auditd ruleset
+(`configs/endpoint/audit.rules` — execve for `auid>=1000` and `euid=0`,
+both `arch=b64`/`b32`, documents the `log_format = ENRICHED` dependency), a
+new Component 4 branch in `configs/logstash.conf` that correlates auditd's
+`SYSCALL`+`EXECVE` record pair via Logstash's `aggregate` filter (keyed on
+the shared `audit(<id>)`) into `process.executable`/`process.args`
+(quote-aware regex scan over `a0.."aN"`, not a whitespace-splitting `kv`
+filter, since an argv element can itself contain spaces)/`process.pid`/
+`process.parent.pid`/`user.id`/`user.name`, a new
+`field-mapping-auditd-process-creation` pySigma transformation
+(`configs/detections/suburban-soc-ecs.yml`, `product: linux, category:
+process_creation`), and explicit `process.pid`/`process.parent.pid`
+(long)/`user.id` (keyword) mappings in
+`configs/elasticsearch/logstash-security-template.json` (previously left to
+ES's own dynamic type inference — the #288-class "decided by whichever
+document creates the field first" risk). Deliberately does NOT map
+`process.parent.name`/`ParentImage`/`ParentCommandLine` anywhere — auditd's
+`SYSCALL` record only gives `ppid` as a PID number, and this pipeline has
+no PID→exe-name process-tree cache; claiming that mapping would be this
+doc's own #217 shape (a field mapping that reads correctly but nothing
+produces). New `tests/pipeline/test_auditd_execve_telemetry.py` (25 static
+tests, pure stdlib regex assertions against the real config files, no live
+Logstash/auditd — same convention as `test_mac_correlation.py`); full
+existing `tests/pipeline`/`tests/detections`/`tests/setup` suites re-run
+clean, `build_attack_coverage.py --check` and
+`tests/validate_emulation_map.py` unaffected (no new rule added yet).
+WS1.4 heartbeat needed no code change — the dashboard's "Source Heartbeat"
+panel is a generic `event.module`/`tenant.id` terms aggregation with no
+hardcoded source list. Documented in `docs/SOC-maturity-roadmap.md`'s
+WS1.4 entry and `docs/SOP-147-evidence-validation-procedure.md`'s Section
+B.3 ("wired, not yet detecting" — same honesty standard as the Windows
+endpoint path). **Not live-verified against a real auditd/kernel
+combination** (no reachable Docker daemon / Linux audit host in this
+sandbox) — confirm the real field order/shape auditd emits before relying
+on the grok patterns in production, same caveat as #454 and this repo's
+other environment-blocked static-only changes. **Second, separate
+operational caveat found and disclosed (not resolved) while writing this:**
+Logstash's `aggregate` filter only correlates a SYSCALL+EXECVE pair
+correctly when both land on the SAME pipeline worker thread — unsafe under
+`pipeline.workers` > 1 per Elastic's own docs, and `configs/logstash.yml`
+sets no override, so this container runs the default (one worker per CPU
+core). Pinning `pipeline.workers: 1` would fix it but is a whole-pipeline
+throughput tradeoff affecting every other source in this file, not a call
+to make unilaterally alongside one new branch — left as a documented,
+tested-for-presence disclosure (`test_discloses_the_pipeline_workers_
+correlation_caveat`) for whoever verifies this against a real multi-core
+deployment next.
+
+**#441 (10 new Sigma rules) still NOT picked up** — #442 unblocks Part A
+(5 `proc_creation_lnx_*` rules) but doesn't do the rule work itself. Each
+of the 10 rules (5 Part A + 5 Collection/Exfiltration in Part B, which
+doesn't depend on #442 at all) carries this repo's full per-rule DoD: TP+TN
 fixtures, a benign-baseline FP guard, `build_attack_coverage.py --check`,
-`build_kql_docs.py --check`, `validate_emulation_map.py` (which requires a
-real emulation script per rule, not just the Sigma file), and a
-`coverage_checklist.md` row. Every individual rule change closed under M17
-this session (#407/#420, #413, #414, #417/#418, #434, #411 — see above) was
-its own full implement → test → PR → CI → merge cycle; #441 asks for 10 at
-once plus the telemetry prerequisite. Attempting that in one unverified
-pass risks shipping exactly the silent-mapping-drift class of bug this
-doc's own M17/M18 history exists to catch (the #217 shape: a field mapping
-that reads correctly but the pipeline never actually produces) — starting
-with #442 alone, one session, matches this doc's own established cadence
-better than a rushed 10-rule dump. Queued as a follow-up task (not just
-noted here) — see the M24 milestone issue list for current state.
+`build_kql_docs.py --check`, `validate_emulation_map.py` (needs a real
+emulation script per rule, not just the Sigma file), and a
+`coverage_checklist.md` row — every individual rule change closed under
+M17 this session (#407/#420, #413, #414, #417/#418, #434, #411 — see above)
+was its own full implement → test → PR → CI → merge cycle, and #441 asks
+for 10 at once. Matches this doc's own established cadence better as
+separate follow-up work, one or a few rules per session, than a batch
+dump — not yet queued as a task; pick up Part B first (no telemetry
+prerequisite) or Part A now that #442 is live, whichever a future session
+takes on.
 
 **M19 progress:**
 

@@ -1,0 +1,52 @@
+title: PowerShell Clipboard Access or Polling
+id: 1a5f9c73-4b8e-4d02-9f6a-7e2c8b1d5a94
+status: experimental
+description: |
+    Detects PowerShell ScriptBlock logging (4104) capturing clipboard
+    access — either the native `Get-Clipboard` cmdlet (PowerShell 5.0+)
+    or the older `Add-Type`-against-`user32`/`GetClipboardData` P/Invoke
+    pattern scripts use on older PowerShell versions or when avoiding the
+    higher-signature cmdlet name. Clipboard content routinely contains
+    credentials, crypto-wallet addresses, and other sensitive text a user
+    copied for legitimate use moments earlier — collecting it is a common,
+    low-effort collection technique.
+    Requires the "Turn on PowerShell Script Block Logging" Group Policy for
+    EventID 4104, same prerequisite as this corpus's other 4104 rules
+    (e.g. posh_ps_amsi_bypass_attempt.yml).
+    Deliberately broad on the Get-Clipboard branch, same as
+    auth_linux_sudo_privilege_escalation.yml's own stated design: a single
+    `Get-Clipboard` invocation is common in legitimate admin/automation
+    scripts too (reading a value a human just copied for a scripted paste
+    step) — this is a visibility-layer tripwire, not a high-confidence
+    standalone signal. The GetClipboardData/user32 branch is the higher-
+    confidence half: legitimate PowerShell scripts essentially never
+    reach for the raw Win32 API when the built-in cmdlet does the same
+    job, so that combination is a stronger indicator of a script
+    deliberately avoiding the cmdlet's own audit signature.
+    Known scope limit, same as this repo's other 4104 rules: substring
+    matching only, not regex — trivial string-splitting/concatenation of
+    these literal tokens evades it.
+references:
+    - https://attack.mitre.org/techniques/T1115/
+author: Suburban-SOC
+date: 2026-08-30
+tags:
+    - attack.collection
+    - attack.t1115
+logsource:
+    product: windows
+    service: powershell
+detection:
+    selection_id:
+        EventID: 4104
+    selection_cmdlet:
+        ScriptBlockText|contains: 'Get-Clipboard'
+    selection_winapi:
+        ScriptBlockText|contains:
+            - 'user32'
+            - 'GetClipboardData'
+    condition: selection_id and (selection_cmdlet or selection_winapi)
+falsepositives:
+    - A legitimate admin/automation script reading a value the operator just copied for a scripted paste step, or a clipboard-manager/productivity tool implemented in PowerShell — baseline and exclude by script hash/path if recurring.
+    - Accessibility tooling or IT helpdesk scripts that legitimately poll or relay clipboard content.
+level: medium

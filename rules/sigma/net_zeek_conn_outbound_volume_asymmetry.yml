@@ -1,0 +1,52 @@
+title: Asymmetric Outbound Connection Volume (Possible Exfiltration)
+id: 8c1e4f92-6a3d-4b17-9e58-2f0c7a5d9e64
+status: experimental
+description: |
+    Single-event logic-of-record for the paired Elastic threshold rule
+    (rules/elastic/threshold/net-zeek-conn-outbound-volume-asymmetry.ndjson),
+    which alerts when a single source produces 3+ flows matching this
+    shape within a 30-minute lookback. On a residential uplink (upload
+    bandwidth is the constrained, asymmetric direction by design), a flow
+    that sends a lot and receives little back is the highest-value
+    available signal for bulk exfiltration — most legitimate traffic
+    (browsing, streaming, video calls) is either balanced or
+    download-heavy.
+    KNOWN LIMITATION, disclosed not hidden: Sigma/Lucene express per-FIELD
+    numeric comparisons (`field|gte: N`), not a RATIO between two fields —
+    there is no way to express "orig_bytes is N times resp_bytes" directly.
+    This rule approximates asymmetry with two independent absolute
+    thresholds instead (a large orig_bytes AND a small resp_bytes on the
+    SAME flow) — a real, if de-facto, form of asymmetry, but not a true
+    ratio: a flow with orig_bytes=6MB and resp_bytes=400KB (a 15:1 ratio)
+    matches identically to orig_bytes=6MB and resp_bytes=0 (a total
+    one-way transfer). Thresholds are a starting point, not a validated
+    baseline for any specific deployment — see falsepositives.
+    Needed a new resp_bytes -> destination.bytes field mapping
+    (configs/logstash.conf, configs/detections/suburban-soc-ecs.yml) —
+    the deliberately-deferred half of orig_bytes -> source.bytes (#228,
+    net_zeek_conn_icmp_tunnel_large.yml), added now that a rule actually
+    needs it. Uses the `gte`/`lte` numeric-comparison Sigma modifiers,
+    same as that rule.
+    Deliberately status: experimental so deploy_detections.sh does not
+    also deploy this as a noisy per-flow Detection Engine query rule
+    (issue #192 pattern, same as every other threshold-companion rule in
+    this corpus) — the paired threshold rule is the deployed enforcement.
+references:
+    - https://attack.mitre.org/techniques/T1048/
+author: Suburban-SOC
+date: 2026-08-30
+tags:
+    - attack.exfiltration
+    - attack.t1048
+logsource:
+    product: zeek
+    service: conn
+detection:
+    selection:
+        orig_bytes|gte: 5000000
+        resp_bytes|lte: 200000
+    condition: selection
+falsepositives:
+    - A large one-way upload that is entirely legitimate — cloud backup/sync, video/photo upload, a large email attachment sent over SMTP-adjacent infrastructure, a VoIP/video call's outbound leg, or a CI/CD artifact push. Tune the thresholds or allowlist known-legitimate destinations before relying on this in production.
+    - A single ordinary asymmetric flow is expected occasionally (this rule's own description) — only the paired threshold rule's repetition-based alert is meant to be actioned; this Sigma file's own per-flow match is not deployed as a standalone alert (status: experimental).
+level: medium

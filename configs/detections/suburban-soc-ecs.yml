@@ -327,12 +327,14 @@ transformations:
       id.resp_p: destination.port
       proto: network.transport
       service: network.protocol
-      # Needed by conn_icmp_tunnel_large's volume threshold. resp_bytes
-      # deliberately omitted (code-reviewer, #228 round 2): no rule selects
-      # on it yet - add it in the same commit as whichever rule first does,
+      # Needed by conn_icmp_tunnel_large's volume threshold.
+      orig_bytes: source.bytes
+      # #441 Part B: needed by net_zeek_conn_outbound_volume_asymmetry's
+      # threshold companion — the deliberately-deferred half of the
+      # orig_bytes mapping above, added now that a rule actually needs it,
       # per this file's own "map only when needed" convention (see uri's
       # history in field-mapping-zeek-http below).
-      orig_bytes: source.bytes
+      resp_bytes: destination.bytes
     rule_conditions:
       - type: logsource
         product: zeek

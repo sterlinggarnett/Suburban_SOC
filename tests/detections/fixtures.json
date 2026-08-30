@@ -1891,5 +1891,101 @@
         "client": "unknown-banner-format"
       }
     ]
+  },
+  "net_zeek_conn_outbound_volume_asymmetry.yml": {
+    "true_positive": {
+      "orig_bytes": 8000000,
+      "resp_bytes": 50000
+    },
+    "true_negatives": [
+      {
+        "orig_bytes": 8000000,
+        "resp_bytes": 5000000
+      },
+      {
+        "orig_bytes": 1000000,
+        "resp_bytes": 50000
+      },
+      {
+        "orig_bytes": 8000000,
+        "resp_bytes": 300000
+      }
+    ]
+  },
+  "net_zeek_ssl_cloud_storage_exfil.yml": {
+    "true_positive": {
+      "server_name": "mega.nz"
+    },
+    "true_negatives": [
+      {
+        "server_name": "www.google.com"
+      },
+      {
+        "server_name": "notmega.nz"
+      },
+      {
+        "server_name": "faketransfer.sh"
+      }
+    ]
+  },
+  "posh_ps_clipboard_capture.yml": {
+    "true_positive": {
+      "EventID": 4104,
+      "ScriptBlockText": "Get-Clipboard | Out-File C:\\temp\\clip.txt"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "Get-Process | Where-Object {$_.CPU -gt 100}"
+      },
+      {
+        "EventID": 4103,
+        "ScriptBlockText": "Get-Clipboard reference in a 4103 event, wrong EventID"
+      }
+    ]
+  },
+  "proc_creation_win_local_data_staging.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\robocopy.exe",
+      "CommandLine": "robocopy C:\\Users\\alice\\Documents C:\\Users\\Public\\staged *.docx *.pdf *.xlsx /E"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\robocopy.exe",
+        "CommandLine": "robocopy C:\\Users\\alice\\Documents C:\\Backup\\Documents *.docx /E"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\robocopy.exe",
+        "CommandLine": "robocopy C:\\Users\\alice\\Documents C:\\Users\\Public\\staged *.docx"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\robocopy.exe",
+        "CommandLine": "robocopy C:\\Program Files\\App C:\\Users\\Public\\backup /E"
+      },
+      {
+        "Image": "C:\\Windows\\explorer.exe",
+        "CommandLine": "C:\\Windows\\explorer.exe"
+      }
+    ]
+  },
+  "proc_creation_win_archive_staging_non_rar.yml": {
+    "true_positive": {
+      "Image": "C:\\Program Files\\7-Zip\\7z.exe",
+      "CommandLine": "7z.exe a -pSecret123 archive.7z C:\\data\\*"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Program Files\\7-Zip\\7z.exe",
+        "CommandLine": "7z.exe a archive.7z C:\\data\\*"
+      },
+      {
+        "Image": "C:\\Program Files\\7-Zip\\7z.exe",
+        "CommandLine": "7z.exe x -pSecret123 archive.7z"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\makecab.exe",
+        "CommandLine": "makecab.exe C:\\data\\file.txt C:\\output\\file.cab"
+      }
+    ]
   }
 }

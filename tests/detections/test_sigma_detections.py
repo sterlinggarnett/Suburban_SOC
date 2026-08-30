@@ -235,6 +235,57 @@ class SigmaDetectionTests(unittest.TestCase):
                          "PowerShell data-compression-staging rule regressed: "
                          "Compress-Archive + temp destination branch no longer fires")
 
+    def test_clipboard_capture_winapi_branch_fires_independently(self):
+        # #441 Part B: fixtures.json's true_positive only exercises
+        # selection_cmdlet (Get-Clipboard) — the higher-confidence
+        # selection_winapi branch (Add-Type against user32/
+        # GetClipboardData, the P/Invoke pattern a script avoiding the
+        # cmdlet's own audit signature would use) never fires in any
+        # fixture. A typo dropping either winapi token would pass CI
+        # silently without this.
+        det = load_rule(SIGMA_DIR / "posh_ps_clipboard_capture.yml")["detection"]
+        winapi = {"EventID": 4104,
+                  "ScriptBlockText": "Add-Type -MemberDefinition '[DllImport(\"user32.dll\")] public static extern IntPtr GetClipboardData(uint uFormat);' -Name Win32Clip"}
+        self.assertTrue(detection_matches(det, winapi),
+                         "clipboard-capture rule regressed: user32/GetClipboardData "
+                         "branch no longer fires")
+
+    def test_archive_staging_non_rar_makecab_tar_branch_fires_independently(self):
+        # #441 Part B: fixtures.json's true_positive only exercises the 7z
+        # password branch — the makecab/tar branch (staging-path-scoped,
+        # since neither utility has a password/encryption flag at all —
+        # see this rule's own description) never fires in any fixture.
+        det = load_rule(SIGMA_DIR / "proc_creation_win_archive_staging_non_rar.yml")["detection"]
+        makecab_staged = {"Image": "C:\\Windows\\System32\\makecab.exe",
+                          "CommandLine": "makecab.exe C:\\data\\file.txt C:\\Users\\Public\\staged\\file.cab"}
+        self.assertTrue(detection_matches(det, makecab_staged),
+                         "archive-staging-non-rar rule regressed: makecab + staging "
+                         "destination branch no longer fires")
+        tar_staged = {"Image": "C:\\Windows\\System32\\tar.exe",
+                     "CommandLine": "tar.exe -cf C:\\ProgramData\\out.tar C:\\data"}
+        self.assertTrue(detection_matches(det, tar_staged),
+                         "archive-staging-non-rar rule regressed: tar + staging "
+                         "destination branch no longer fires")
+
+    def test_cloud_storage_exfil_subdomain_branch_fires_independently(self):
+        # #441 Part B: fixtures.json's true_positive only exercises
+        # selection_bare (an exact provider domain) — the dot-anchored
+        # selection_subdomain branch (a real subdomain of a listed
+        # provider, e.g. a per-user Mega/Dropbox subdomain) never fires
+        # in any fixture, and neither does the anti-lookalike anchoring
+        # this branch relies on (a bare-suffix-only match would also
+        # wrongly accept an unrelated lookalike domain).
+        det = load_rule(SIGMA_DIR / "net_zeek_ssl_cloud_storage_exfil.yml")["detection"]
+        real_subdomain = {"server_name": "eu.transfer.sh"}
+        self.assertTrue(detection_matches(det, real_subdomain),
+                         "cloud-storage-exfil rule regressed: real provider subdomain "
+                         "no longer fires")
+        lookalike_subdomain = {"server_name": "eu.faketransfer.sh"}
+        self.assertFalse(detection_matches(det, lookalike_subdomain),
+                          "cloud-storage-exfil rule over-fired: a subdomain of a "
+                          "LOOKALIKE domain (faketransfer.sh, not transfer.sh) "
+                          "should not match")
+
     def test_lazagne_survives_rename_off_lazagne_path(self):
         # M13 US2 (#232) security review: the fixtures.json true_positive for
         # this rule has "lazagne" in its own filename, so it alone cannot prove

@@ -219,6 +219,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1048",
+      "tactic": "exfiltration",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Asymmetric Outbound Connection Volume (Possible Exfiltration) :: rules/sigma/net_zeek_conn_outbound_volume_asymmetry.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1021.002",
       "tactic": "lateral-movement",
       "score": 75,
@@ -315,6 +323,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1567.002",
+      "tactic": "exfiltration",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "TLS Connection SNI Matching a Cloud-Storage or Paste Provider :: rules/sigma/net_zeek_ssl_cloud_storage_exfil.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1573.002",
       "tactic": "command-and-control",
       "score": 75,
@@ -363,6 +379,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1115",
+      "tactic": "collection",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "PowerShell Clipboard Access or Polling :: rules/sigma/posh_ps_clipboard_capture.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1059.001",
       "tactic": "execution",
       "score": 75,
@@ -392,6 +416,14 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "Accessibility Feature Backdoor via Image/OriginalFileName Mismatch :: rules/sigma/proc_creation_win_accessibility_binary_debugger_swap.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1560.001",
+      "tactic": "collection",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Password-Protected or Staged Archive Creation via 7-Zip, MakeCab, or Tar :: rules/sigma/proc_creation_win_archive_staging_non_rar.yml; Password-Protected Archive Staging via RAR/WinRAR :: rules/sigma/proc_creation_win_rar_archive_staging.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -531,6 +563,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1074.001",
+      "tactic": "collection",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Recursive Document Copy Into a Temp or Public Staging Path :: rules/sigma/proc_creation_win_local_data_staging.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1003.001",
       "tactic": "credential-access",
       "score": 75,
@@ -592,14 +632,6 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "NTDS.dit Extraction via ntdsutil IFM Media Creation :: rules/sigma/proc_creation_win_ntdsutil_ifm_dump.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
-      "enabled": true
-    },
-    {
-      "techniqueID": "T1560.001",
-      "tactic": "collection",
-      "score": 75,
-      "color": "#2ca02c",
-      "comment": "Password-Protected Archive Staging via RAR/WinRAR :: rules/sigma/proc_creation_win_rar_archive_staging.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -732,7 +764,7 @@
   "metadata": [
     {
       "name": "detections",
-      "value": "129"
+      "value": "134"
     },
     {
       "name": "source",
@@ -740,7 +772,7 @@
     },
     {
       "name": "unique_techniques",
-      "value": "78"
+      "value": "82"
     }
   ]
 }

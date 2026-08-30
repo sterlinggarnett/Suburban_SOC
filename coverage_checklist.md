@@ -1,6 +1,6 @@
 # Suburban-SOC :: Emulation -> Detection Coverage Checklist
 
-Two lanes, 24 emulation->detection pairs. `[x]` = wiring validated by `validate_emulation_map.py`; operational/live-fire steps are unchecked.
+Two lanes, 28 emulation->detection pairs. `[x]` = wiring validated by `validate_emulation_map.py`; operational/live-fire steps are unchecked.
 
 ## Network / Linux lane (Zeek)
 
@@ -31,6 +31,17 @@ Two lanes, 24 emulation->detection pairs. `[x]` = wiring validated by `validate_
       `configs/detections/emulation_telemetry.map`'s
       CREDENTIAL_ACCESS_SSH_CADENCE_SUSTAINED section for the exact
       command.
+- [x] ⚠️ **EXFILTRATION_OUTBOUND_VOLUME_ASYMMETRY** (T1048) — `sim_outbound_volume_asymmetry.sh` -> `net_zeek_conn_outbound_volume_asymmetry.yml`
+      ⚠️ Requires a listener already running on `TARGET_HOST` (the sim does
+      not stand one up itself — same convention as `sim_brute_ssh.sh`
+      needing real SSH on the target) and a real capture-path host (not
+      loopback). A single run produces one asymmetric flow, which is
+      expected and not itself alerted on — the paired threshold rule
+      (`rules/elastic/threshold/net-zeek-conn-outbound-volume-asymmetry.ndjson`)
+      is the deployed enforcement and needs 3+ runs within a 30-minute
+      window from the same source. See
+      `configs/detections/emulation_telemetry.map`'s
+      EXFILTRATION_OUTBOUND_VOLUME_ASYMMETRY section for the exact command.
 
 Operational to-dos (Linux lane):
 - [ ] `chmod +x tests/anomaly_simulation/sim_portscan.sh`
@@ -65,6 +76,13 @@ Operational to-dos (Linux lane):
 - [x] **DISCOVERY_USER** (T1033) — `sim_win_user_discovery.ps1` -> `proc_creation_win_user_discovery.yml`
 - [x] **IMPACT_DELETE_SHADOWS** (T1490) — `sim_win_vss_delete_shadows.ps1` -> `proc_creation_win_vss_delete_shadows.yml`  ⚠ destructive in armed mode
 - [x] **EXECUTION_WMI** (T1047) — `sim_win_wmi_process_create.ps1` -> `proc_creation_win_wmi_process_create.yml`
+- [x] **COLLECTION_CLIPBOARD** (T1115) — `sim_win_clipboard_capture.ps1` -> `posh_ps_clipboard_capture.yml`
+- [x] **COLLECTION_LOCAL_DATA_STAGING** (T1074.001) — `sim_win_local_data_staging.ps1` -> `proc_creation_win_local_data_staging.yml`
+- [x] ⚠️ **COLLECTION_ARCHIVE_STAGING_NON_RAR** (T1560.001) — `sim_win_archive_staging_non_rar.ps1` -> `proc_creation_win_archive_staging_non_rar.yml`
+      ⚠️ The sim's 7z branch is skipped (not failed) when `7z.exe` isn't
+      installed on the test host — the makecab branch (bundled on every
+      Windows host) always runs regardless, so the sim still exercises the
+      rule either way.
 
 Operational to-dos (Windows lane):
 - [ ] Deploy the `.ps1` sims to a Windows test host (`chmod +x` so the validator's exec-bit check passes on Linux)

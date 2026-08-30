@@ -65,6 +65,7 @@ DETECTION_WINDOW_MINUTES = {
     "net-zeek-ssh-session-cadence-sustained.ndjson": 30,
     "net-zeek-dns-doh-non-standard-cardinality.ndjson": 10,
     "net-zeek-dns-crypto-mining-pool-cardinality.ndjson": 10,
+    "net-zeek-conn-outbound-volume-asymmetry.ndjson": 15,
 }
 
 

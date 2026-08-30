@@ -32,7 +32,7 @@ since — see the last two rows):
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 | [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 4 open, all not actionable here (needs a live capture host) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
-| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ⏳ 4/5 implemented (#442 ready to PR), #441's 10 rules still open | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
+| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ⏳ #449/#453/#463/#442 implemented; #441 Part B (5 rules) implemented, Part A (5 rules) still open | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -176,21 +176,100 @@ tested-for-presence disclosure (`test_discloses_the_pipeline_workers_
 correlation_caveat`) for whoever verifies this against a real multi-core
 deployment next.
 
-**#441 (10 new Sigma rules) still NOT picked up** — #442 unblocks Part A
-(5 `proc_creation_lnx_*` rules) but doesn't do the rule work itself. Each
-of the 10 rules (5 Part A + 5 Collection/Exfiltration in Part B, which
-doesn't depend on #442 at all) carries this repo's full per-rule DoD: TP+TN
-fixtures, a benign-baseline FP guard, `build_attack_coverage.py --check`,
-`build_kql_docs.py --check`, `validate_emulation_map.py` (needs a real
-emulation script per rule, not just the Sigma file), and a
-`coverage_checklist.md` row — every individual rule change closed under
-M17 this session (#407/#420, #413, #414, #417/#418, #434, #411 — see above)
-was its own full implement → test → PR → CI → merge cycle, and #441 asks
-for 10 at once. Matches this doc's own established cadence better as
-separate follow-up work, one or a few rules per session, than a batch
-dump — not yet queued as a task; pick up Part B first (no telemetry
-prerequisite) or Part A now that #442 is live, whichever a future session
-takes on.
+**#441 Part B (5 Collection/Exfiltration rules) picked up 2026-08-30, its
+own follow-up session** — the 5 rules named in the issue's Part B table,
+none dependent on #442 (unlike Part A's 5 `proc_creation_lnx_*` rules,
+still not picked up — see below):
+
+- `net_zeek_conn_outbound_volume_asymmetry.yml` (T1048, medium, zeek/conn)
+  — needed a new `resp_bytes` → `destination.bytes` field mapping (the
+  deliberately-deferred half of `orig_bytes` → `source.bytes` from #228,
+  added now that a rule needs it) in both `configs/logstash.conf` and
+  `configs/detections/suburban-soc-ecs.yml`, plus explicit `long` mappings
+  for `source.bytes`/`destination.bytes` in the ES template (the former
+  had been a live, unpinned field since #228 — the same #288-class
+  dynamic-type-inference risk, closed retroactively alongside the new
+  field rather than left as a known-but-unfixed gap). Ships as a paired
+  `rules/elastic/threshold/net-zeek-conn-outbound-volume-asymmetry.ndjson`
+  companion, matching the `auth_win_bruteforce_*`/SSH-cadence precedent —
+  the Sigma file's own single-flow selection is a documented, disclosed
+  APPROXIMATION of asymmetry (two independent absolute thresholds, not a
+  true ratio; Sigma/Lucene cannot express a computed ratio between two
+  fields).
+- `net_zeek_ssl_cloud_storage_exfil.yml` (T1567.002, low, zeek/ssl) —
+  SNI-only signal (bare + dot-anchored-subdomain pairs, same
+  anti-lookalike pattern as the crypto-mining-pool/DoH rules), no byte-
+  volume corroboration (disclosed limitation: ssl.log carries no byte
+  counts, a conn.log join by `uid` is real separate work). Deliberately
+  has NO `emulation_telemetry.map`/`coverage_checklist.md` entry — same
+  precedent as this corpus's other domain-list rules: an automated sim
+  contacting real third-party cloud-storage providers is a different
+  category from `sim_malware_download.sh`'s eicar.org precedent (a
+  service purpose-built for exactly this kind of automated testing).
+- `posh_ps_clipboard_capture.yml` (T1115, medium, windows/powershell) —
+  two independent branches (`Get-Clipboard` cmdlet OR user32/
+  `GetClipboardData` P/Invoke), each with its own fixture and a dedicated
+  "branch fires independently" test.
+- `proc_creation_win_local_data_staging.yml` (T1074.001, medium,
+  windows/process_creation) — robocopy/xcopy + doc-extension + staging-
+  path (`%TEMP%`/`C:\Users\Public\`/`C:\ProgramData\`), same disclosed
+  destination-scoping COVERAGE GAP class as `posh_data_compression_staging.yml`.
+- `proc_creation_win_archive_staging_non_rar.yml` (T1560.001, medium,
+  windows/process_creation) — extends the RAR rule's password-flag
+  pattern to `7z.exe` (which has a real password flag) and separately
+  scopes `makecab.exe`/`tar.exe` by staging path (neither has a
+  password/encryption concept at all — "with password/encryption flags"
+  from the issue's own wording is not literally satisfiable for those
+  two). Deliberately does NOT also duplicate `Compress-Archive` here —
+  already covered by `posh_data_compression_staging.yml` via a genuinely
+  different telemetry path (ScriptBlock logging vs. process_creation);
+  documented as a scoping decision, not an oversight.
+
+All 5: TP+TN fixtures in `tests/detections/fixtures.json`, a benign-
+baseline check, `build_attack_coverage.py` regenerated (82 techniques, up
+from 78 — `docs/detections/attack-coverage.{json,md}`),
+`build_kql_docs.py` regenerated (113 rules —
+`docs/detections/SIEM_KQL_Documentation.md`), 4 of 5 have real
+`tests/anomaly_simulation/` emulation scripts (3 new `.ps1`, 1 new `.sh`)
+wired into `configs/detections/emulation_telemetry.map` +
+`coverage_checklist.md` (28/28 clean per `validate_emulation_map.py`,
+`--strict` included). `README.md`'s live rule-count/technique-count
+summary updated to match (108→113 rules, 75→82 techniques — the
+technique count was already stale by 3 before this session, from drift
+since #440; corrected to the real current number while touching this
+line rather than perpetuating a partial fix).
+
+Toolchain note: this session installed the pinned Sigma toolchain
+(`sigma-cli==3.1.0 pysigma==1.5.0 pysigma-backend-elasticsearch==2.1.1`,
+Python 3.11 matching `.python-version`) into a local `.venv-detections`
+to actually run `sigma convert` and regenerate the docs above — the first
+time this session's environment had it available. Caught and fixed a
+real bug this way: the threshold ndjson's hand-authored Lucene query
+first used the wrong numeric-range syntax (`>=`/`<=` vs. pySigma's actual
+`field:[N TO *]` bracket-range compiled form on a first, mistaken
+transcription — then corrected by reading the exact compiled string
+back out of the regenerated KQL doc rather than trusting memory a second
+time), which `tests/detections/test_threshold_rules.py`'s and
+`test_live_fire.py`'s containment/drift guards caught immediately. One
+piece remains genuinely environment-blocked, not fixed: `sigma convert
+-f siem_rule_ndjson` (used by `test_live_fire.py`'s
+`ZeekEventDatasetScopingTests`, and by `deploy_detections.sh` for the
+real Kibana import payload) needs an online MITRE ATT&CK data fetch from
+`github.com` that this sandbox's egress policy blocks (403) — confirmed
+this is pre-existing and unrelated to this session's rules (it errors
+identically on `net_zeek_conn_external_rdp_inbound.yml`, an existing
+rule) and will run fine in the real CI environment, which has full
+internet access — same "report the blocked host, don't route around an
+org policy denial" posture the sandbox's own proxy docs require.
+
+**#441 Part A (5 `proc_creation_lnx_*` rules) still NOT picked up** — now
+genuinely unblocked (#442 landed and merged), but still its own separate
+piece of work: TP+TN fixtures, an emulation sim per rule (auditd-execve-
+sourced telemetry, not yet live-verified against a real host per #442's
+own disclosed caveats), and the same doc-regeneration/coverage-checklist
+cycle Part B just went through. Matches this doc's own established
+cadence better as separate follow-up work than folding into the same
+session as Part B.
 
 **M19 progress:**
 

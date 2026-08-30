@@ -1,0 +1,66 @@
+title: Recursive Document Copy Into a Temp or Public Staging Path
+id: 5e8a2d61-3c9f-4b17-8a04-6d1e9c7b3f52
+status: experimental
+description: |
+    Detects `robocopy.exe`/`xcopy.exe` performing a recursive copy of
+    common document/data extensions into a staging path an attacker (or a
+    script running under a compromised account) can freely write to and
+    later collect from in bulk — `%TEMP%`, `C:\Users\Public\`, or
+    `C:\ProgramData\`. Bulk-copying documents into one collection point is
+    a standard precursor to archiving and exfiltrating them, the same
+    staging role posh_data_compression_staging.yml/
+    proc_creation_win_rar_archive_staging.yml serve for the compression
+    step that typically follows.
+    Requires an extension in the selection list AND a staging-shaped
+    destination — `robocopy C:\Users\alice\Documents C:\Backup\Documents
+    /E` (no doc-extension filter present, destination is not one of the
+    three staging paths) does not match; robocopy/xcopy invocations are
+    extremely common in legitimate backup/deployment tooling, so this
+    rule leans on the destination-path signal to separate staging from
+    routine copying, same FP-reduction judgment call
+    posh_data_compression_staging.yml already makes for its own
+    destination scoping.
+    COVERAGE GAP, same class as posh_data_compression_staging.yml's own
+    disclosed one: staging to any path outside the three listed —
+    e.g. a mapped network share, a OneDrive sync folder, or a
+    non-default temp location — evades this rule entirely. Extension
+    list is a starting set (common Office/document/archive formats), not
+    exhaustive.
+references:
+    - https://attack.mitre.org/techniques/T1074/001/
+author: Suburban-SOC
+date: 2026-08-30
+tags:
+    - attack.collection
+    - attack.t1074.001
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection_img:
+        - Image|endswith: '\robocopy.exe'
+        - Image|endswith: '\xcopy.exe'
+    selection_recursive:
+        CommandLine|contains:
+            - ' /E'
+            - ' /S'
+    selection_doc_ext:
+        CommandLine|contains:
+            - '.doc'
+            - '.docx'
+            - '.xls'
+            - '.xlsx'
+            - '.pdf'
+            - '.pst'
+            - '.csv'
+    selection_staging_dest:
+        CommandLine|contains:
+            - '\Temp\'
+            - '\AppData\Local\Temp\'
+            - '\Users\Public\'
+            - '\ProgramData\'
+    condition: selection_img and selection_recursive and selection_doc_ext and selection_staging_dest
+falsepositives:
+    - A legitimate IT/backup script recursively copying documents into a temp or public staging path as an intermediate deployment/migration step — baseline and exclude by script hash/path if recurring.
+    - Application installers or update tooling that stage document/template assets under ProgramData as part of normal operation.
+level: medium

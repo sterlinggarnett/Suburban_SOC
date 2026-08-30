@@ -1,0 +1,74 @@
+title: Password-Protected or Staged Archive Creation via 7-Zip, MakeCab, or Tar
+id: 4b7e1f83-9c6d-4a02-b5e8-1f3a6c9d2e75
+status: experimental
+description: |
+    Extends proc_creation_win_rar_archive_staging.yml's password-protected
+    archive-staging pattern to the non-RAR archivers a host may have
+    instead (or in addition): `7z.exe`/`7za.exe`, `makecab.exe`, and
+    `tar.exe` (bundled in Windows 10 1803+ / Server 2019+).
+    Two independent branches, deliberately NOT symmetric, because only
+    7-Zip actually has a password/encryption flag:
+      - 7z branch: an add-archive verb (`7z.exe a ...`) combined with a
+        real password flag (`-p<password>`), the same password-is-the-
+        exfil-staging-signal judgment call the RAR rule already makes.
+      - makecab/tar branch: NEITHER utility supports a password or
+        encryption flag at all (makecab is a plain CAB compressor with no
+        encryption concept; Windows' bundled bsdtar likewise has none) —
+        "with password/encryption flags" from this rule's own originating
+        issue is not literally satisfiable for these two. Scoped instead
+        by destination path, the same staging-path FP-reduction judgment
+        call proc_creation_win_local_data_staging.yml/
+        posh_data_compression_staging.yml already make: an archive
+        created by either utility with output landing in a temp or
+        public staging path is the available signal.
+    Compress-Archive (the PowerShell-native archiver, also named in the
+    originating issue) is DELIBERATELY NOT duplicated here — it is
+    already covered by posh_data_compression_staging.yml via ScriptBlock
+    logging (4104), a genuinely different and complementary telemetry
+    path from this rule's process_creation (4688/Sysmon EID1) logsource:
+    an attacker invoking `powershell.exe -EncodedCommand <base64
+    Compress-Archive ...>` from cmd.exe or another launcher is visible on
+    process_creation via its full command line regardless of whether
+    4104 script-block logging is enabled/deep enough to capture the
+    decoded block content — but building a THIRD near-duplicate
+    Compress-Archive branch here, on top of that existing rule and this
+    rule's own two archiver branches, would add complexity without a new
+    signal Compress-Archive itself doesn't already have a home for.
+    Documented scoping decision, not an oversight.
+references:
+    - https://attack.mitre.org/techniques/T1560/001/
+author: Suburban-SOC
+date: 2026-08-30
+tags:
+    - attack.collection
+    - attack.t1560.001
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection_7z_img:
+        - Image|endswith: '\7z.exe'
+        - Image|endswith: '\7za.exe'
+        - OriginalFileName: '7z.exe'
+        - OriginalFileName: '7za.exe'
+    selection_7z_verb:
+        CommandLine|contains: '.exe a '
+    selection_7z_password:
+        # Leading space, same collision-avoidance reasoning as the RAR
+        # rule's own -p/-hp selectors: a bare '-p' substring would also
+        # match an unrelated path/filename fragment.
+        CommandLine|contains: ' -p'
+    selection_makecab_tar_img:
+        - Image|endswith: '\makecab.exe'
+        - Image|endswith: '\tar.exe'
+    selection_staging_dest:
+        CommandLine|contains:
+            - '\Temp\'
+            - '\AppData\Local\Temp\'
+            - '\Users\Public\'
+            - '\ProgramData\'
+    condition: (selection_7z_img and selection_7z_verb and selection_7z_password) or (selection_makecab_tar_img and selection_staging_dest)
+falsepositives:
+    - Legitimate IT/backup tooling creating a password-protected 7-Zip archive for authorized data transfer — correlate the destination and archive contents against the change calendar.
+    - A legitimate deployment/packaging script using makecab or tar to stage a CAB/tarball in a temp or public path as an intermediate build/install step — baseline and exclude by script hash/path if recurring.
+level: medium

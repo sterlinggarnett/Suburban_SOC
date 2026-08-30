@@ -1,0 +1,83 @@
+title: TLS Connection SNI Matching a Cloud-Storage or Paste Provider
+id: 9d2b6c04-7e51-4a83-b0f6-3c8e1f4a7d92
+status: experimental
+description: |
+    Detects a TLS ClientHello SNI matching a curated list of file-sharing,
+    cloud-storage, and paste/dead-drop providers commonly abused as a
+    free, TLS-covered exfiltration or C2-staging channel (transfer.sh,
+    mega.nz, pastebin.com, anonfiles.com, gofile.io, mediafire.com,
+    wetransfer.com, dropboxusercontent.com, send.exploit.in-style
+    disposable-upload services).
+    KNOWN LIMITATION, disclosed not hidden: AGENTS.md scopes HTTPS payload
+    inspection out of this platform without a decryption proxy, so this
+    rule can see WHERE a connection went (the SNI, sent in cleartext
+    during the TLS handshake before encryption begins) but not WHAT was
+    sent — it cannot distinguish "uploaded 2GB of exfiltrated data" from
+    "loaded one Pastebin page to read a snippet." Pairing the SNI match
+    with a byte-volume corroboration (the way
+    net_zeek_conn_outbound_volume_asymmetry.yml does for the volume side
+    of this same threat) is NOT implemented here: Zeek's ssl.log does not
+    itself carry byte counts (conn.log does), and joining the two by
+    `uid` at query time is real, separate design/implementation work,
+    deliberately out of scope for this rule — SNI alone is the available
+    shape today. level:low reflects this low-confidence, indicator-only
+    signal, not the severity of a confirmed exfil event.
+    Deliberately NO net_zeek_ssl_cloud_storage_exfil entry in
+    configs/detections/emulation_telemetry.map / coverage_checklist.md —
+    same precedent as this corpus's other domain-list-based rules
+    (net_zeek_dns_crypto_mining_pool.yml, net_zeek_dns_doh_non_standard.yml):
+    an automated emulation script that actually contacts real third-party
+    cloud-storage providers is a different category from this project's
+    existing external-contact precedent (sim_malware_download.sh's
+    eicar.org pull, a service purpose-built and endorsed for exactly this
+    kind of automated AV/IDS testing) — real, unsolicited automated
+    traffic to Dropbox/Mega/Pastebin-class services from a test script is
+    not something to build without separate consideration.
+    Bare + dot-anchored-subdomain selection pairs, same anti-lookalike
+    pattern as net_zeek_dns_crypto_mining_pool.yml/net_zeek_dns_doh_non_standard.yml
+    (an unanchored `endswith` against a bare suffix like `mega.nz` would
+    also match a lookalike domain sharing the same trailing characters,
+    e.g. `evilmega.nz`).
+references:
+    - https://attack.mitre.org/techniques/T1567/002/
+author: Suburban-SOC
+date: 2026-08-30
+tags:
+    - attack.exfiltration
+    - attack.t1567.002
+logsource:
+    product: zeek
+    service: ssl
+detection:
+    # Invariant: each subdomain entry here must be "." + the matching bare
+    # entry, same order — a future provider added to only one of the two
+    # lists reintroduces either an unanchored-suffix gap (bare-only) or
+    # drops real subdomain coverage (subdomain-only). Same convention as
+    # net_zeek_dns_crypto_mining_pool.yml.
+    selection_bare:
+        server_name:
+            - 'transfer.sh'
+            - 'mega.nz'
+            - 'pastebin.com'
+            - 'anonfiles.com'
+            - 'gofile.io'
+            - 'mediafire.com'
+            - 'wetransfer.com'
+            - 'dropboxusercontent.com'
+            - 'send.vis.ee'
+    selection_subdomain:
+        server_name|endswith:
+            - '.transfer.sh'
+            - '.mega.nz'
+            - '.pastebin.com'
+            - '.anonfiles.com'
+            - '.gofile.io'
+            - '.mediafire.com'
+            - '.wetransfer.com'
+            - '.dropboxusercontent.com'
+            - '.send.vis.ee'
+    condition: selection_bare or selection_subdomain
+falsepositives:
+    - Legitimate use of a listed provider — these are real, widely-used consumer file-sharing/cloud-storage services, not exclusively malicious infrastructure. Expect meaningful baseline volume; correlate with the account/user context and destination byte volume before escalating, and tune the list per deployment (add/remove providers to match observed legitimate usage).
+    - A hit is an SNI/connection-destination signal only — it does not confirm data was actually uploaded, only that a TLS connection to the provider was established.
+level: low

@@ -1,0 +1,7 @@
+# Suburban-SOC — local (non-vendor-derived) Suricata signatures.
+#
+# Standard Suricata idiom for site-authored rules, kept separate from the
+# categorized starter set #446 (M23 Stage 3) lands alongside it. Empty for
+# now (Stage 1, #443/#444 — sensor deployment + eve.json ingest only, no
+# rule content yet). Local SIDs, if any land here later, use a range
+# distinct from the 9000001-9000100 reserved for #446's starter set.

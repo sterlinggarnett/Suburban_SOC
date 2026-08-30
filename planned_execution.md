@@ -31,8 +31,8 @@ since — see the last two rows):
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
-| [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 4 open, all not actionable here (needs a live capture host) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
-| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ⏳ #449/#453/#463/#442 implemented; #441 Part A + Part B (all 10 rules) implemented — all on PR #505, not yet merged | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
+| [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏳ Stage 1 (#443 sensor config + #444 eve.json ingest) implemented 2026-08-30, in progress; Stage 2 (#445 CI lane) and Stage 3 (#446 100-rule set, source file in hand, reconciled against existing Sigma coverage) not yet started | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
+| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ✅ 5/5 closed — **CLOSED** (#449/#453/#463/#442/#441 all merged via PR #505, 2026-08-30) | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -101,18 +101,128 @@ permanently not actionable (externally blocked / speculative / needs a
 live Docker+Zeek+ES stack this environment doesn't have) — no further M17
 work is queued.
 
-**M23 assessed 2026-08-30, not picked up.** All 4 issues (#443-446) form a
-strict chain (#443 → #444 → #445 → #446) whose first step is deploying
-Suricata onto the real capture host next to Zeek — measuring CPU headroom,
-wiring a systemd unit into `stream_capture.sh`/`zeek-host-capture.service`,
-confirming survival across a reboot. Same class of blocker as M17's
-#415/#421 above: no live Docker/capture-host access in this sandbox
-(`docker version` succeeds for the client, fails to connect to
-`/var/run/docker.sock`). Left open, milestoned M23, for a session with real
-capture-host access — not attempted partially, since #444-#446 are each
-explicitly blocked on #443 landing for real (its own issue text: "the
-syntax gate needs a real suricata.yaml to validate against", "the rules
-land into the CI lane, not ahead of it").
+**M23 re-assessed and picked up 2026-08-30, Stage 1 of 3 implemented.** The
+earlier same-day assessment above concluded M23 needed a live capture host
+and left it fully untouched — written before this session's own #442
+(auditd telemetry) precedent proved that class of problem (a new telemetry
+source whose "done when" criterion needs live traffic to fully satisfy)
+can still be implemented for real — config, pipeline, tests — with the
+live-verification gap disclosed rather than used as a reason to skip the
+issue entirely. Applied the same posture here, sequenced into 3 stages
+(mirroring #441's own Part A/Part B split) rather than attempting all 4
+issues (#443→#444→#445→#446, a strict chain) at once, after presenting the
+full plan for approval first.
+
+One fact changed the picture from the earlier assessment: `apt-get install
+suricata suricata-update` succeeds in this sandbox (Suricata 7.0.3-1build3,
+confirmed via `suricata --build-info` and a real `suricata -T` run) — no
+Docker daemon needed, since #443 chose **host-package deployment**
+specifically (an open decision the issue itself left unresolved) over
+Zeek's Docker-image pattern. That makes local syntax validation genuinely
+possible, unlike the #442 precedent which had no equivalent local check.
+
+**Stage 1 (#443 sensor config + #444 eve.json ingest) implemented:**
+- `configs/suricata/suricata.yaml` — the real Ubuntu 24.04 apt package's
+  stock config (`1:7.0.3-1build3`), customized: `HOME_NET` pinned to the
+  two real mesh subnets `scripts/setup/stream_capture.sh` already names
+  (`10.18.81.0/24` bat0, `192.168.1.0/24` br-lan) rather than the upstream
+  RFC1918-wide default; `eve-log` enabled with `rotate-interval: day`;
+  `default-log-dir` moved to `/storage/PCAP/suricata/` (mirrors Zeek's own
+  `/storage/PCAP/zeek_logs` convention); `default-rule-path` repo-relative
+  (`rules/suricata/`, detection-as-code, not `suricata-update` against a
+  live host path). `suricata -T` verified clean against this exact file,
+  including the `--af-packet=<iface>` CLI-override form
+  `suricata-host-capture.service`'s `ExecStart` uses.
+- `configs/systemd/suricata-host-capture.service` (new) — modeled directly
+  on `zeek-host-capture.service`: same `CAPTURE_IFACE` env-var override
+  convention, `Restart=always`/`StartLimitIntervalSec=0`,
+  `CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN` narrowing instead of a
+  full privilege drop (no dedicated system user exists for this apt
+  package — confirmed via `getent passwd`). Deliberately does NOT copy the
+  stock package's own `ProtectSystem=`/`ProtectHome=` sandboxing directives
+  — `zeek-host-capture.service`'s own header records exactly that kind of
+  untested addition being reverted (#182) after it broke live capture;
+  repeating it blind for a second sensor was judged not worth the risk.
+- `scripts/setup/redeploy_systemd_units.sh` — new unit wired into the same
+  install/before-after-security-score/restart-prompt loop
+  `zeek-host-capture.service` already uses.
+- `scripts/setup/ai_agent/slo_metrics.py` — `metric_suricata_ingest_lag_
+  seconds()`, a direct port of `metric_zeek_ingest_lag_seconds()` (#320's
+  established per-source-liveness pattern — M21, which introduced it, is
+  closed, contrary to #443's own issue text implying it's still open).
+  Filters on `event.module:"suricata"` rather than an `event.dataset`
+  wildcard the way the Zeek metric does, since #444's `event.dataset`
+  stamp is itself gated on `alert.*` presence and would invisibly narrow
+  this metric's coverage to alert-type records only. Wiring this into
+  `main()`'s registry surfaced a real test-fixture gap:
+  `tests/ai_agent/test_slo_metrics.py`'s `_mock_all_metrics()` helper
+  didn't know about the new metric, so `main()`'s default healthy-ES mock
+  made it return `None` — a `BREACH_IF_NA` breach — and would have broken
+  every existing `_run_main_capturing_exit()`-based test expecting a clean
+  exit; fixed by extending the helper, same shape as the existing `zeek_
+  ingest_lag` parameter.
+- `configs/network/filebeat.yml` — new `suricata-eve` filestream input
+  (`/storage/PCAP/suricata/eve.json` + rotated siblings), same fingerprint-
+  identity treatment as the existing Zeek input.
+- `configs/logstash.conf` — new top-level "Category 0b" branch, gated
+  purely on `[log][file][path]` (same pattern as Category 0's Zeek block,
+  deliberately NOT nested inside `"endpoint_logs" in [tags]`, since that
+  tag is stamped generically by the shared Beats `:5044` input for every
+  source regardless of which Filebeat config shipped it).
+  `event.module:"suricata"` stamped unconditionally (the WS1.4 dimension
+  `metric_suricata_ingest_lag_seconds()` keys on); `event.dataset` derived
+  from Suricata's own `event_type` field per-record-type (mirrors Zeek's
+  `zeek.<stream>` convention). `alert.signature`/`alert.signature_id`/
+  `alert.category` → `[rule][name]`/`[rule][id]`/`[rule][category]`, ET
+  `attack_technique` metadata → `[threat][technique][id]` (reusing the
+  existing namespace, no new field family) — gated on `alert.signature`
+  actually being present before the rename runs (the #217-shape discipline
+  #442's auditd branch established), bracket notation throughout (#328's
+  dotted-string footgun, named explicitly in #444's own issue text).
+  **Deliberately not wired into Category 6's SOAR trigger** — #444's own
+  explicit either-is-defensible policy choice, decided as dashboard-only
+  for this stage since there's no live alert-quality data yet to justify
+  auto-triggering containment off an untuned source; flagged in the code
+  comment for revisiting once #443 runs against real traffic.
+- `configs/elasticsearch/logstash-security-template.json` — explicit
+  `rule.name`/`rule.id`/`rule.category` (keyword, `ignore_above:1024`,
+  matching the #337 discipline of never leaving an explicit keyword
+  property without one). No byte-clamp entry needed — none raised to
+  32766, since rule content is maintainer-authored, not attacker-
+  controlled traffic content.
+- `tests/pipeline/test_suricata_config.py` (new, 19 tests) and `tests/
+  pipeline/test_suricata_eve_telemetry.py` (new, 16 tests) — mirror `test_
+  auditd_execve_telemetry.py`'s static-assertion structure. The config test
+  includes one REAL `suricata -T` subprocess check (skips, doesn't fail, if
+  the binary isn't installed) — genuine local verification the #442 auditd
+  work had no equivalent for.
+
+**Disclosed, not done** (same posture as #442): no real capture host to
+deploy either unit to, no live traffic through the sensor, CPU headroom
+alongside Zeek unmeasured (#443's own flagged resource risk), reboot
+survival unconfirmed. Stated in the new files' own headers and `coverage_
+checklist.md`, not hidden.
+
+**Stage 3's source material arrived mid-session** (the user supplied
+`university_soc_starter_ruleset.rules` — the exact 100-rule/10-category/
+SID-9000001-9000100 set #446 describes, previously confirmed absent from
+this repo and its history). Checked for originality before anything lands:
+zero pre-existing overlap in this repo's tracked content (no rule anywhere
+already claims that SID range or any `UNIV`-prefixed signature). Cross-
+checked the ruleset's own claimed 8 overlapping-Sigma-rule pairs — all 8
+real, all confirmed present — and found one correction: its "RDP (9000071/
+77)" overlap claim only actually holds for 9000071 (inbound,
+`net_zeek_conn_external_rdp_inbound.yml` covers external→HOME_NET only);
+9000077 (HOME_NET-initiated outbound RDP) has no existing Sigma equivalent
+— a genuine new gap, not overlap, to note when Stage 3 lands. Source file
+saved to the session scratchpad (not the repo tree) pending Stage 3's own
+work: per-category split, real placeholder values, all-disabled, and the
+2 DLP rules (9000065/66) flagged for explicit owner sign-off per the
+issue's own instruction not to bulk-enable them.
+
+**Stage 2 (#445 CI syntax gate/SID registry/pcap replay/promotion gate)
+and Stage 3 (#446 rule content) remain not started** — next follow-up
+sessions, same cadence as #441 Part A/Part B.
 
 **M24 progress 2026-08-30:** picked up all 5 open issues. #449 (HA
 compose file's `es01` had the same 0.0.0.0 port exposure #359 fixed for
@@ -123,7 +233,7 @@ closing the #330 root cause CI only half-fixed) are in
 [PR #505](https://github.com/voltron-1/Suburban_SOC/pull/505), each with a
 static regression test (`tests/setup/test_docker_compose_ports.py`'s new
 `ElasticsearchHaPortBindingTests`, `tests/setup/test_soc_admin_role_scope.py`'s
-new `test_excludes_soc_audit`) — not yet merged, CI pending.
+new `test_excludes_soc_audit`) — merged 2026-08-30, CI green (18/18 checks).
 
 **#442 picked up as its own follow-up session (2026-08-30, later the same
 day)** — the queued task from the entry above. Ships Linux execve
@@ -265,9 +375,8 @@ org policy denial" posture the sandbox's own proxy docs require.
 **#441 Part A (5 `proc_creation_lnx_*` rules) picked up 2026-08-30, its own
 follow-up session** — all 5 rules named in the issue's Part A table, all on
 `configs/logstash.conf`'s new Component 4 auditd branch (#442, on this same
-branch/PR — not yet merged to main at the time this was written, PR #505
-still open) via the existing `field-mapping-auditd-process-creation`
-pySigma transformation:
+branch/PR — merged to main 2026-08-30 via PR #505) via the existing
+`field-mapping-auditd-process-creation` pySigma transformation:
 
 - `proc_creation_lnx_reverse_shell_interpreter.yml` (T1059.004, critical)
   — bash `/dev/tcp/`, `nc`/`ncat`/`netcat` with `-e`, Python `pty.spawn`,

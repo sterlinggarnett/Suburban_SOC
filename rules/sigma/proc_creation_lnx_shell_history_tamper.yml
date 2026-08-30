@@ -1,0 +1,58 @@
+title: Linux Shell History Tampering
+id: 9b1e4f73-2d85-4a6c-8f30-1a7b6c9e2d48
+status: experimental
+description: |
+    Detects four common ways an attacker (or a script running under a
+    compromised account) erases evidence of its own prior commands:
+    `history -c` (clear the in-memory history for the current shell),
+    `unset HISTFILE` (stop the shell from ever writing history to disk
+    for the rest of the session), symlinking a history file to
+    `/dev/null` (every future write silently discards), or overwriting/
+    truncating an existing `.bash_history`/`.zsh_history` file directly
+    (`> ~/.bash_history`, `cat /dev/null > ~/.bash_history`).
+    #442 prerequisite — see proc_creation_lnx_reverse_shell_interpreter.yml's
+    own note; this logsource has no telemetry without it.
+    `history -c` and `unset HISTFILE` fire unconditionally (no companion
+    path requirement) — both strings are narrow and rarely legitimate on
+    their own. The symlink and truncate branches additionally require a
+    history-file path in the same command line, since `ln -sf /dev/null
+    <anything>` and a bare `>`/`cat /dev/null >` redirect are far too
+    generic to use alone.
+    KNOWN GAP: `export HISTFILE=/dev/null` (functionally equivalent to
+    `unset HISTFILE`, redirecting future writes to the null device instead
+    of suppressing them) is NOT covered — only the `unset` form named in
+    the originating issue is matched. Add an `export HISTFILE=` branch in
+    a follow-up if this gap proves to matter in practice.
+references:
+    - https://attack.mitre.org/techniques/T1070/003/
+author: Suburban-SOC
+date: 2026-08-30
+tags:
+    - attack.defense_evasion
+    - attack.t1070.003
+logsource:
+    product: linux
+    category: process_creation
+detection:
+    selection_history_c:
+        CommandLine|contains: 'history -c'
+    selection_unset_histfile:
+        CommandLine|contains: 'unset HISTFILE'
+    selection_symlink_devnull:
+        CommandLine|contains: 'ln -sf /dev/null'
+    selection_truncate_verb:
+        CommandLine|contains:
+            - 'cat /dev/null >'
+            - '> ~/.bash_history'
+            - '>~/.bash_history'
+            - '> ~/.zsh_history'
+            - '>~/.zsh_history'
+    selection_history_path:
+        CommandLine|contains:
+            - '.bash_history'
+            - '.zsh_history'
+    condition: selection_history_c or selection_unset_histfile or selection_truncate_verb or (selection_symlink_devnull and selection_history_path)
+falsepositives:
+    - A user or script legitimately clearing their own shell history for privacy reasons on a shared/jump host — not inherently malicious, but worth correlating with what that session did immediately before the clear.
+    - Hardened shell-profile configurations that deliberately disable history for compliance/PII reasons on specific service accounts.
+level: high

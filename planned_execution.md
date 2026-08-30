@@ -32,7 +32,7 @@ since — see the last two rows):
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 | [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 4 open, all not actionable here (needs a live capture host) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
-| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ⏳ #449/#453/#463/#442 implemented; #441 Part B (5 rules) implemented, Part A (5 rules) still open | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
+| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ⏳ #449/#453/#463/#442 implemented; #441 Part A + Part B (all 10 rules) implemented — all on PR #505, not yet merged | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -262,14 +262,63 @@ rule) and will run fine in the real CI environment, which has full
 internet access — same "report the blocked host, don't route around an
 org policy denial" posture the sandbox's own proxy docs require.
 
-**#441 Part A (5 `proc_creation_lnx_*` rules) still NOT picked up** — now
-genuinely unblocked (#442 landed and merged), but still its own separate
-piece of work: TP+TN fixtures, an emulation sim per rule (auditd-execve-
-sourced telemetry, not yet live-verified against a real host per #442's
-own disclosed caveats), and the same doc-regeneration/coverage-checklist
-cycle Part B just went through. Matches this doc's own established
-cadence better as separate follow-up work than folding into the same
-session as Part B.
+**#441 Part A (5 `proc_creation_lnx_*` rules) picked up 2026-08-30, its own
+follow-up session** — all 5 rules named in the issue's Part A table, all on
+`configs/logstash.conf`'s new Component 4 auditd branch (#442, on this same
+branch/PR — not yet merged to main at the time this was written, PR #505
+still open) via the existing `field-mapping-auditd-process-creation`
+pySigma transformation:
+
+- `proc_creation_lnx_reverse_shell_interpreter.yml` (T1059.004, critical)
+  — bash `/dev/tcp/`, `nc`/`ncat`/`netcat` with `-e`, Python `pty.spawn`,
+  `socat ... EXEC:`. `nc`/`socat` branches require the companion flag/token,
+  not the bare binary alone (a listener-only `nc -l` must not fire).
+- `proc_creation_lnx_ingress_tool_transfer.yml` (T1105, medium) — curl/wget
+  piped to a shell or writing into a temp path.
+- `proc_creation_lnx_cron_at_persistence.yml` (T1053.003, medium) —
+  `crontab` (excluding the read-only `-l`/`-r` forms), a write-verb-scoped
+  reference to a system cron directory (a bare path substring alone would
+  also match a harmless `ls`/`cat`, so a `>`/`tee` companion is required —
+  itself only a coarse text approximation, disclosed, since #442's auditd
+  telemetry covers execve only, not real file-write syscalls), or `at`
+  (deliberately broad, matching this corpus's own established "visibility
+  layer, not standalone high-confidence" precedent for a comparably common
+  admin binary).
+- `proc_creation_lnx_shell_history_tamper.yml` (T1070.003, high) —
+  `history -c`, `unset HISTFILE`, a `.bash_history`/`.zsh_history`
+  truncate, or a symlink-to-`/dev/null` combined with a history-file path
+  in the same command line. Documented gap: `export HISTFILE=/dev/null`
+  (functionally equivalent to `unset`) is not covered — only the `unset`
+  form the issue named.
+- `proc_creation_lnx_systemd_service_persistence.yml` (T1543.002, high) —
+  two INDEPENDENT branches (a write-verb-scoped reference to a systemd
+  unit search path, OR `systemctl enable`/`daemon-reload`), not the
+  issue's literal two-step "written THEN enabled" sequence — Sigma's
+  single-event model has no mechanism for a cross-event temporal
+  sequence (the same limitation the threshold-companion pattern works
+  around for volume/rate signals, but that pattern doesn't fit a
+  two-DIFFERENT-events sequence either); documented as an honest scoping
+  decision matching this corpus's own established disclosure convention,
+  not a silent narrowing.
+
+All 5: TP+TN fixtures, a benign-baseline check, 5 new branch-independence
+tests (`tests/detections/test_sigma_detections.py`, mirroring this
+session's Part B additions), `sigma convert -t lucene` verified against
+the real pipeline for all 5, ATT&CK coverage regenerated (86 techniques,
+up from 82), KQL docs regenerated (118 rules). All 5 get real
+`tests/anomaly_simulation/sim_lnx_*.sh` emulation scripts (new "Linux
+endpoint lane (auditd execve, #442)" section in `emulation_telemetry.map`/
+`coverage_checklist.md`, 33/33 clean including `--strict`) — each reversible
+and self-contained (a loopback-only reverse-shell listener, the same
+`eicar.org` pull `sim_malware_download.sh` already uses, a throwaway
+crontab/cron.d/at entry, a disposable-subshell history clear, a throwaway
+inert systemd unit), consistent with this repo's "LAB USE ONLY,
+benign/reversible" convention for every existing sim. **None of the 5 have
+been live-verified against a real auditd stream** — same disclosed,
+unresolved caveat #442 itself carries, explicitly called out again in both
+the rule descriptions and the new coverage-checklist section rather than
+silently inherited. `README.md`'s live rule/technique counts updated to
+match (113→118, 82→86).
 
 **M19 progress:**
 

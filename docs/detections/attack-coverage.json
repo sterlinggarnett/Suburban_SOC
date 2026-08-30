@@ -279,7 +279,7 @@
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Executable or Script Payload Downloaded Over HTTP (Zeek Files) :: rules/sigma/net_zeek_executable_download.yml; Malicious File Download via Bitsadmin :: rules/sigma/proc_creation_win_bitsadmin_download.yml; Ingress Tool Transfer via Certutil URL Cache :: rules/sigma/proc_creation_win_certutil_urlcache_download.yml; PowerShell Remote Download Cradle :: rules/sigma/proc_creation_win_powershell_downloadstring.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Executable or Script Payload Downloaded Over HTTP (Zeek Files) :: rules/sigma/net_zeek_executable_download.yml; Linux Ingress Tool Transfer via curl/wget to a Temp Path or Piped to a Shell :: rules/sigma/proc_creation_lnx_ingress_tool_transfer.yml; Malicious File Download via Bitsadmin :: rules/sigma/proc_creation_win_bitsadmin_download.yml; Ingress Tool Transfer via Certutil URL Cache :: rules/sigma/proc_creation_win_certutil_urlcache_download.yml; PowerShell Remote Download Cradle :: rules/sigma/proc_creation_win_powershell_downloadstring.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -400,6 +400,38 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "Obfuscated or Encoded PowerShell Script Block :: rules/sigma/posh_ps_obfuscated_scriptblock.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1053.003",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Linux Cron/At Job Persistence :: rules/sigma/proc_creation_lnx_cron_at_persistence.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1059.004",
+      "tactic": "execution",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Linux Reverse Shell via Interpreter Redirect or Exec Flag :: rules/sigma/proc_creation_lnx_reverse_shell_interpreter.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1070.003",
+      "tactic": "defense-evasion",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Linux Shell History Tampering :: rules/sigma/proc_creation_lnx_shell_history_tamper.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1543.002",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Linux systemd Service Persistence :: rules/sigma/proc_creation_lnx_systemd_service_persistence.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -764,7 +796,7 @@
   "metadata": [
     {
       "name": "detections",
-      "value": "134"
+      "value": "139"
     },
     {
       "name": "source",
@@ -772,7 +804,7 @@
     },
     {
       "name": "unique_techniques",
-      "value": "82"
+      "value": "86"
     }
   ]
 }

@@ -1,0 +1,58 @@
+title: Linux systemd Service Persistence
+id: 6e2c8a15-9f47-4d03-b681-5a3e7c9d1f62
+status: experimental
+description: |
+    Detects two independent shapes of systemd-based persistence: a shell
+    command writing (`>`/`tee`) into a systemd unit search path
+    (`/etc/systemd/system/`, `/usr/lib/systemd/system/`, or a user-level
+    `~/.config/systemd/user/`), or `systemctl enable`/`systemctl
+    daemon-reload` — the activation step a newly-dropped unit needs
+    before it actually runs (also fires without a preceding
+    /etc/systemd/system write in view, e.g. `systemctl daemon-reload`
+    alone after a package install).
+    #442 prerequisite — see proc_creation_lnx_reverse_shell_interpreter.yml's
+    own note; this logsource has no telemetry without it.
+    KNOWN GAP, disclosed not hidden: the originating issue's own signal is
+    "unit file written ... FOLLOWED BY systemctl enable/daemon-reload" — a
+    two-step temporal SEQUENCE. Sigma's single-event model has no
+    mechanism to express "event A, then event B" (the same limitation
+    this repo's threshold-companion pattern exists to work around for
+    volume/rate signals, but that pattern doesn't fit a two-DIFFERENT-
+    events sequence either — it counts repeats of ONE event shape). This
+    rule instead matches EITHER shape independently, same honest
+    single-event-limitation framing as this file's sibling
+    `proc_creation_lnx_cron_at_persistence.yml` for its own write-verb
+    approximation. `systemctl enable`/`daemon-reload` alone is common
+    during ordinary package installation and service management — expect
+    real false-positive volume; see falsepositives.
+references:
+    - https://attack.mitre.org/techniques/T1543/002/
+author: Suburban-SOC
+date: 2026-08-30
+tags:
+    - attack.persistence
+    - attack.t1543.002
+logsource:
+    product: linux
+    category: process_creation
+detection:
+    selection_unit_path:
+        CommandLine|contains:
+            - '/etc/systemd/system/'
+            - '/usr/lib/systemd/system/'
+            - '.config/systemd/user/'
+    selection_write_verb:
+        CommandLine|contains:
+            - '>'
+            - 'tee '
+    selection_systemctl_img:
+        Image|endswith: '/systemctl'
+    selection_systemctl_verb:
+        CommandLine|contains:
+            - 'enable '
+            - 'daemon-reload'
+    condition: (selection_unit_path and selection_write_verb) or (selection_systemctl_img and selection_systemctl_verb)
+falsepositives:
+    - Ordinary package installation and configuration-management tooling (apt/dpkg postinst scripts, Ansible, Puppet) legitimately writing unit files and running systemctl enable/daemon-reload as part of normal software deployment — expect meaningful baseline volume; correlate with the change calendar and the specific unit name before escalating.
+    - An administrator manually enabling or reloading a legitimate service.
+level: high

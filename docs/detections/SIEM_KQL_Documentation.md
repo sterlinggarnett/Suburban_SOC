@@ -5,7 +5,7 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**113 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**118 rules.** Each query is the exact Lucene the Sigma rule compiles to.
 
 ## SSH Login Attempt for a Nonexistent User
 
@@ -421,6 +421,46 @@ winlog.event_id:4104 AND (((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ 
 
 ```
 winlog.event_id:4104 AND winlog.event_data.ScriptBlockText:*Net.Sockets.TCPClient* AND (winlog.event_data.ScriptBlockText:(*GetStream\(\)* OR *NetworkStream* OR *.Read\(* OR *.Write\(*))
+```
+
+## Linux Cron/At Job Persistence
+
+- **Rule:** `proc_creation_lnx_cron_at_persistence.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1053.003
+
+```
+(process.executable:*\/crontab AND (NOT (process.args:(*\ \-l* OR *\ \-r*)))) OR ((process.args:(*\/etc\/cron.d\/* OR *\/etc\/cron.daily\/* OR *\/etc\/cron.hourly\/* OR *\/etc\/cron.weekly\/* OR *\/etc\/cron.monthly\/*)) AND (process.args:(*\>* OR *tee\ *))) OR process.executable:*\/at
+```
+
+## Linux Ingress Tool Transfer via curl/wget to a Temp Path or Piped to a Shell
+
+- **Rule:** `proc_creation_lnx_ingress_tool_transfer.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1105
+
+```
+(process.executable:(*\/curl OR *\/wget)) AND ((process.args:(*\|\ sh* OR *\|sh* OR *\|\ bash* OR *\|bash*)) OR (process.args:(*\/tmp\/* OR *\/dev\/shm\/* OR *\/var\/tmp\/*)))
+```
+
+## Linux Reverse Shell via Interpreter Redirect or Exec Flag
+
+- **Rule:** `proc_creation_lnx_reverse_shell_interpreter.yml` · **level:** critical · **status:** experimental · **ATT&CK:** T1059.004
+
+```
+process.args:*\/dev\/tcp\/* OR ((process.executable:(*\/nc OR *\/ncat OR *\/netcat)) AND process.args:*\ \-e\ *) OR process.args:*pty.spawn* OR (process.executable:*\/socat AND process.args:*EXEC\:*)
+```
+
+## Linux Shell History Tampering
+
+- **Rule:** `proc_creation_lnx_shell_history_tamper.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1070.003
+
+```
+process.args:*history\ \-c* OR process.args:*unset\ HISTFILE* OR (process.args:(*cat\ \/dev\/null\ \>* OR *\>\ \~\/.bash_history* OR *\>\~\/.bash_history* OR *\>\ \~\/.zsh_history* OR *\>\~\/.zsh_history*)) OR (process.args:*ln\ \-sf\ \/dev\/null* AND (process.args:(*.bash_history* OR *.zsh_history*)))
+```
+
+## Linux systemd Service Persistence
+
+- **Rule:** `proc_creation_lnx_systemd_service_persistence.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1543.002
+
+```
+((process.args:(*\/etc\/systemd\/system\/* OR *\/usr\/lib\/systemd\/system\/* OR *.config\/systemd\/user\/*)) AND (process.args:(*\>* OR *tee\ *))) OR (process.executable:*\/systemctl AND (process.args:(*enable\ * OR *daemon\-reload*)))
 ```
 
 ## Accessibility Feature Backdoor via Image/OriginalFileName Mismatch

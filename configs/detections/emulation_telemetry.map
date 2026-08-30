@@ -127,6 +127,48 @@ ECS_Mapping       : threat.technique.id = "T1048" | threat.tactic.name = "Exfilt
 Target_Sigma_Rule : rules/sigma/net_zeek_conn_outbound_volume_asymmetry.yml
 NIST_CSF_Control  : DE.CM-01 (Security Continuous Monitoring)
 
+# --------------------------- LINUX ENDPOINT LANE (auditd, #442) ---------------------------
+# #441 Part A. Requires #442's auditd execve telemetry actually deployed and
+# working on the target host (audit.rules loaded, Filebeat shipping
+# /var/log/audit/audit.log) — none of these have been live-verified against
+# a real auditd stream in the environment this was written in (#442's own
+# disclosed caveat), unlike the Windows/Sysmon entries above.
+
+[EMULATION: EXECUTION_LNX_REVERSE_SHELL]
+Execution_Vector  : tests/anomaly_simulation/sim_lnx_reverse_shell.sh
+Log_Source        : configs/endpoint/audit.rules -> auditd (execve)
+ECS_Mapping       : threat.technique.id = "T1059.004" | threat.tactic.name = "Execution"
+Target_Sigma_Rule : rules/sigma/proc_creation_lnx_reverse_shell_interpreter.yml
+NIST_CSF_Control  : DE.CM-01
+
+[EMULATION: COMMAND_AND_CONTROL_LNX_INGRESS_TRANSFER]
+Execution_Vector  : tests/anomaly_simulation/sim_lnx_ingress_tool_transfer.sh
+Log_Source        : configs/endpoint/audit.rules -> auditd (execve)
+ECS_Mapping       : threat.technique.id = "T1105" | threat.tactic.name = "Command and Control"
+Target_Sigma_Rule : rules/sigma/proc_creation_lnx_ingress_tool_transfer.yml
+NIST_CSF_Control  : DE.CM-01
+
+[EMULATION: PERSISTENCE_LNX_CRON_AT]
+Execution_Vector  : tests/anomaly_simulation/sim_lnx_cron_at_persistence.sh
+Log_Source        : configs/endpoint/audit.rules -> auditd (execve)
+ECS_Mapping       : threat.technique.id = "T1053.003" | threat.tactic.name = "Persistence"
+Target_Sigma_Rule : rules/sigma/proc_creation_lnx_cron_at_persistence.yml
+NIST_CSF_Control  : DE.CM-01
+
+[EMULATION: DEFENSE_EVASION_LNX_HISTORY_TAMPER]
+Execution_Vector  : tests/anomaly_simulation/sim_lnx_shell_history_tamper.sh
+Log_Source        : configs/endpoint/audit.rules -> auditd (execve)
+ECS_Mapping       : threat.technique.id = "T1070.003" | threat.tactic.name = "Defense Evasion"
+Target_Sigma_Rule : rules/sigma/proc_creation_lnx_shell_history_tamper.yml
+NIST_CSF_Control  : DE.CM-09
+
+[EMULATION: PERSISTENCE_LNX_SYSTEMD]
+Execution_Vector  : tests/anomaly_simulation/sim_lnx_systemd_service_persistence.sh
+Log_Source        : configs/endpoint/audit.rules -> auditd (execve)
+ECS_Mapping       : threat.technique.id = "T1543.002" | threat.tactic.name = "Persistence"
+Target_Sigma_Rule : rules/sigma/proc_creation_lnx_systemd_service_persistence.yml
+NIST_CSF_Control  : DE.CM-01
+
 # --------------------------- WINDOWS ENDPOINT LANE (Sysmon) ---------------------------
 
 [EMULATION: DELIVERY_BITSADMIN]

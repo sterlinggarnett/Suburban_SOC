@@ -1,0 +1,57 @@
+title: Linux Reverse Shell via Interpreter Redirect or Exec Flag
+id: 3a6f8d17-4c92-4b56-9e01-7d5c8a2f6b93
+status: experimental
+description: |
+    Detects the handful of one-liner reverse-shell idioms that dominate
+    real-world Linux post-exploitation: bash's `/dev/tcp/` pseudo-device
+    redirected onto a controlling shell, `nc`/`ncat`/`netcat`'s `-e` exec
+    flag piping a shell to the connection, Python's `pty.spawn` upgrading
+    a raw socket to an interactive TTY, and `socat`'s `EXEC:` address type
+    running a shell over the connection. These four cover the vast
+    majority of copy-pasted public reverse-shell one-liners
+    (revshells.com/PayloadsAllTheThings-class payloads) without needing a
+    process-ancestry chain — the interpreter invocation itself, seen via
+    #442's auditd execve telemetry, is already the signal.
+    #442 prerequisite: this logsource (`linux/process_creation`) has no
+    telemetry at all without #442's auditd SYSCALL+EXECVE correlation
+    landing first — `process.executable`/`process.args` are only
+    populated for a Linux host once that pipeline work is deployed and
+    verified against a real auditd stream (#442's own disclosed caveat:
+    not live-verified in this environment).
+    `nc`/`socat` branches require BOTH the binary AND the exec-flag/EXEC:
+    token — a bare `nc -l -p 4444` (listener only, no shell attached) is
+    routine and must not fire; `bash`'s `/dev/tcp/` branch and Python's
+    `pty.spawn` branch need no companion flag since both are already
+    narrow, rarely-legitimate strings on their own.
+references:
+    - https://attack.mitre.org/techniques/T1059/004/
+author: Suburban-SOC
+date: 2026-08-30
+tags:
+    - attack.execution
+    - attack.t1059.004
+logsource:
+    product: linux
+    category: process_creation
+detection:
+    selection_bash_dev_tcp:
+        CommandLine|contains: '/dev/tcp/'
+    selection_nc_img:
+        Image|endswith:
+            - '/nc'
+            - '/ncat'
+            - '/netcat'
+    selection_nc_exec_flag:
+        CommandLine|contains: ' -e '
+    selection_python_pty:
+        CommandLine|contains: 'pty.spawn'
+    selection_socat_img:
+        Image|endswith: '/socat'
+    selection_socat_exec:
+        CommandLine|contains: 'EXEC:'
+    condition: selection_bash_dev_tcp or (selection_nc_img and selection_nc_exec_flag) or selection_python_pty or (selection_socat_img and selection_socat_exec)
+falsepositives:
+    - Legitimate use of bash's /dev/tcp redirection for a health check or a port-connectivity test (rare but real — e.g. `(exec 3<>/dev/tcp/host/port)` style scripts with no shell attached to the far end).
+    - A pentest/red-team exercise or CTF authorized on this host.
+    - nc/ncat used as a legitimate one-shot file-transfer or health-check tool with -e for a non-shell purpose (uncommon; most modern nc builds compile -e out by default specifically because of this abuse pattern).
+level: critical

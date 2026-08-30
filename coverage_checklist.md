@@ -1,6 +1,6 @@
 # Suburban-SOC :: Emulation -> Detection Coverage Checklist
 
-Two lanes, 28 emulation->detection pairs. `[x]` = wiring validated by `validate_emulation_map.py`; operational/live-fire steps are unchecked.
+Three lanes, 33 emulation->detection pairs. `[x]` = wiring validated by `validate_emulation_map.py`; operational/live-fire steps are unchecked.
 
 ## Network / Linux lane (Zeek)
 
@@ -54,6 +54,34 @@ Operational to-dos (Linux lane):
       in the same two real capture entry points (#261)
 - [ ] Confirm Filebeat ships Zeek `files.log`
 - [ ] Live-fire: run each sim, confirm the Zeek notice fires and the rule matches
+
+## Linux endpoint lane (auditd execve, #442)
+
+⚠️ None of these 5 have been live-verified against a real auditd stream in
+the environment they were written in — see #442's own disclosed caveats
+(not exercised against live auditd; the Logstash `aggregate` filter's
+pipeline-worker-affinity requirement). `[x]` below means
+`validate_emulation_map.py`'s wiring check passes, same as every other lane
+— it does not mean this has live-fired.
+
+- [x] **EXECUTION_LNX_REVERSE_SHELL** (T1059.004) — `sim_lnx_reverse_shell.sh` -> `proc_creation_lnx_reverse_shell_interpreter.yml`
+- [x] **COMMAND_AND_CONTROL_LNX_INGRESS_TRANSFER** (T1105) — `sim_lnx_ingress_tool_transfer.sh` -> `proc_creation_lnx_ingress_tool_transfer.yml`
+- [x] ⚠️ **PERSISTENCE_LNX_CRON_AT** (T1053.003) — `sim_lnx_cron_at_persistence.sh` -> `proc_creation_lnx_cron_at_persistence.yml`
+      ⚠️ The cron.d-write branch needs passwordless sudo and the at branch
+      needs `at` installed — both skipped (not failed) if unavailable; the
+      crontab branch (no root needed) always runs regardless.
+- [x] **DEFENSE_EVASION_LNX_HISTORY_TAMPER** (T1070.003) — `sim_lnx_shell_history_tamper.sh` -> `proc_creation_lnx_shell_history_tamper.yml`
+- [x] ⚠️ **PERSISTENCE_LNX_SYSTEMD** (T1543.002) — `sim_lnx_systemd_service_persistence.sh` -> `proc_creation_lnx_systemd_service_persistence.yml`
+      ⚠️ Needs passwordless sudo (systemd unit persistence requires root) —
+      the whole sim is skipped, not failed, if unavailable.
+
+Operational to-dos (Linux endpoint lane):
+- [ ] Deploy `configs/endpoint/audit.rules` + `filebeat_endpoint.yml`'s
+      `audit-logs` input to a real Linux test host (#442)
+- [ ] Confirm `auditd.conf`'s `log_format = ENRICHED` is set (needed for
+      `user.name` resolution — see `audit.rules`' own header)
+- [ ] Live-fire: run each sim, confirm auditd + Filebeat + Logstash produce
+      a correlated `event.dataset:auditd.execve` document and the rule matches
 
 ## Windows endpoint lane (Sysmon / 4688)
 

@@ -219,6 +219,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1048",
+      "tactic": "exfiltration",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Asymmetric Outbound Connection Volume (Possible Exfiltration) :: rules/sigma/net_zeek_conn_outbound_volume_asymmetry.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1021.002",
       "tactic": "lateral-movement",
       "score": 75,
@@ -271,7 +279,7 @@
       "tactic": "command-and-control",
       "score": 75,
       "color": "#2ca02c",
-      "comment": "Executable or Script Payload Downloaded Over HTTP (Zeek Files) :: rules/sigma/net_zeek_executable_download.yml; Malicious File Download via Bitsadmin :: rules/sigma/proc_creation_win_bitsadmin_download.yml; Ingress Tool Transfer via Certutil URL Cache :: rules/sigma/proc_creation_win_certutil_urlcache_download.yml; PowerShell Remote Download Cradle :: rules/sigma/proc_creation_win_powershell_downloadstring.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "comment": "Executable or Script Payload Downloaded Over HTTP (Zeek Files) :: rules/sigma/net_zeek_executable_download.yml; Linux Ingress Tool Transfer via curl/wget to a Temp Path or Piped to a Shell :: rules/sigma/proc_creation_lnx_ingress_tool_transfer.yml; Malicious File Download via Bitsadmin :: rules/sigma/proc_creation_win_bitsadmin_download.yml; Ingress Tool Transfer via Certutil URL Cache :: rules/sigma/proc_creation_win_certutil_urlcache_download.yml; PowerShell Remote Download Cradle :: rules/sigma/proc_creation_win_powershell_downloadstring.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -312,6 +320,14 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "SMTP Session with an Anomalously Deep Transaction Count \u2014 Plaintext SMTP Only :: rules/sigma/net_zeek_smtp_mass_outbound.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1567.002",
+      "tactic": "exfiltration",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "TLS Connection SNI Matching a Cloud-Storage or Paste Provider :: rules/sigma/net_zeek_ssl_cloud_storage_exfil.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -363,6 +379,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1115",
+      "tactic": "collection",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "PowerShell Clipboard Access or Polling :: rules/sigma/posh_ps_clipboard_capture.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1059.001",
       "tactic": "execution",
       "score": 75,
@@ -379,6 +403,38 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1053.003",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Linux Cron/At Job Persistence :: rules/sigma/proc_creation_lnx_cron_at_persistence.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1059.004",
+      "tactic": "execution",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Linux Reverse Shell via Interpreter Redirect or Exec Flag :: rules/sigma/proc_creation_lnx_reverse_shell_interpreter.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1070.003",
+      "tactic": "defense-evasion",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Linux Shell History Tampering :: rules/sigma/proc_creation_lnx_shell_history_tamper.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1543.002",
+      "tactic": "persistence",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Linux systemd Service Persistence :: rules/sigma/proc_creation_lnx_systemd_service_persistence.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1546.008",
       "tactic": "persistence",
       "score": 75,
@@ -392,6 +448,14 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "Accessibility Feature Backdoor via Image/OriginalFileName Mismatch :: rules/sigma/proc_creation_win_accessibility_binary_debugger_swap.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1560.001",
+      "tactic": "collection",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Password-Protected or Staged Archive Creation via 7-Zip, MakeCab, or Tar :: rules/sigma/proc_creation_win_archive_staging_non_rar.yml; Password-Protected Archive Staging via RAR/WinRAR :: rules/sigma/proc_creation_win_rar_archive_staging.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -531,6 +595,14 @@
       "enabled": true
     },
     {
+      "techniqueID": "T1074.001",
+      "tactic": "collection",
+      "score": 75,
+      "color": "#2ca02c",
+      "comment": "Recursive Document Copy Into a Temp or Public Staging Path :: rules/sigma/proc_creation_win_local_data_staging.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
+      "enabled": true
+    },
+    {
       "techniqueID": "T1003.001",
       "tactic": "credential-access",
       "score": 75,
@@ -592,14 +664,6 @@
       "score": 75,
       "color": "#2ca02c",
       "comment": "NTDS.dit Extraction via ntdsutil IFM Media Creation :: rules/sigma/proc_creation_win_ntdsutil_ifm_dump.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
-      "enabled": true
-    },
-    {
-      "techniqueID": "T1560.001",
-      "tactic": "collection",
-      "score": 75,
-      "color": "#2ca02c",
-      "comment": "Password-Protected Archive Staging via RAR/WinRAR :: rules/sigma/proc_creation_win_rar_archive_staging.yml (test: Detections CI: sigma->Lucene conversion + fixture replay (tests/detections/))",
       "enabled": true
     },
     {
@@ -732,7 +796,7 @@
   "metadata": [
     {
       "name": "detections",
-      "value": "129"
+      "value": "139"
     },
     {
       "name": "source",
@@ -740,7 +804,7 @@
     },
     {
       "name": "unique_techniques",
-      "value": "78"
+      "value": "86"
     }
   ]
 }

@@ -31,8 +31,8 @@ since — see the last two rows):
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
-| [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | 📋 4 open (added after the restructure) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
-| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | 📋 5 open (created 2026-08-29) | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
+| [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 4 open, all not actionable here (needs a live capture host) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
+| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ⏳ #449/#453/#463/#442 implemented; #441 Part A + Part B (all 10 rules) implemented — all on PR #505, not yet merged | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -100,6 +100,225 @@ closed** — #283, #333, #415, #421 are the only issues remaining, all four
 permanently not actionable (externally blocked / speculative / needs a
 live Docker+Zeek+ES stack this environment doesn't have) — no further M17
 work is queued.
+
+**M23 assessed 2026-08-30, not picked up.** All 4 issues (#443-446) form a
+strict chain (#443 → #444 → #445 → #446) whose first step is deploying
+Suricata onto the real capture host next to Zeek — measuring CPU headroom,
+wiring a systemd unit into `stream_capture.sh`/`zeek-host-capture.service`,
+confirming survival across a reboot. Same class of blocker as M17's
+#415/#421 above: no live Docker/capture-host access in this sandbox
+(`docker version` succeeds for the client, fails to connect to
+`/var/run/docker.sock`). Left open, milestoned M23, for a session with real
+capture-host access — not attempted partially, since #444-#446 are each
+explicitly blocked on #443 landing for real (its own issue text: "the
+syntax gate needs a real suricata.yaml to validate against", "the rules
+land into the CI lane, not ahead of it").
+
+**M24 progress 2026-08-30:** picked up all 5 open issues. #449 (HA
+compose file's `es01` had the same 0.0.0.0 port exposure #359 fixed for
+the single-node stack), #453 (extended #374's `soc_admin` RBAC carve-out
+to `soc-audit-*` — the audit trail itself), and #463 (`deploy_detections.sh`'s
+venv now resolves the same Python version CI pins via `.python-version`,
+closing the #330 root cause CI only half-fixed) are in
+[PR #505](https://github.com/voltron-1/Suburban_SOC/pull/505), each with a
+static regression test (`tests/setup/test_docker_compose_ports.py`'s new
+`ElasticsearchHaPortBindingTests`, `tests/setup/test_soc_admin_role_scope.py`'s
+new `test_excludes_soc_audit`) — not yet merged, CI pending.
+
+**#442 picked up as its own follow-up session (2026-08-30, later the same
+day)** — the queued task from the entry above. Ships Linux execve
+telemetry: a new `audit-logs` filestream input
+(`configs/endpoint/filebeat_endpoint.yml`), a new auditd ruleset
+(`configs/endpoint/audit.rules` — execve for `auid>=1000` and `euid=0`,
+both `arch=b64`/`b32`, documents the `log_format = ENRICHED` dependency), a
+new Component 4 branch in `configs/logstash.conf` that correlates auditd's
+`SYSCALL`+`EXECVE` record pair via Logstash's `aggregate` filter (keyed on
+the shared `audit(<id>)`) into `process.executable`/`process.args`
+(quote-aware regex scan over `a0.."aN"`, not a whitespace-splitting `kv`
+filter, since an argv element can itself contain spaces)/`process.pid`/
+`process.parent.pid`/`user.id`/`user.name`, a new
+`field-mapping-auditd-process-creation` pySigma transformation
+(`configs/detections/suburban-soc-ecs.yml`, `product: linux, category:
+process_creation`), and explicit `process.pid`/`process.parent.pid`
+(long)/`user.id` (keyword) mappings in
+`configs/elasticsearch/logstash-security-template.json` (previously left to
+ES's own dynamic type inference — the #288-class "decided by whichever
+document creates the field first" risk). Deliberately does NOT map
+`process.parent.name`/`ParentImage`/`ParentCommandLine` anywhere — auditd's
+`SYSCALL` record only gives `ppid` as a PID number, and this pipeline has
+no PID→exe-name process-tree cache; claiming that mapping would be this
+doc's own #217 shape (a field mapping that reads correctly but nothing
+produces). New `tests/pipeline/test_auditd_execve_telemetry.py` (25 static
+tests, pure stdlib regex assertions against the real config files, no live
+Logstash/auditd — same convention as `test_mac_correlation.py`); full
+existing `tests/pipeline`/`tests/detections`/`tests/setup` suites re-run
+clean, `build_attack_coverage.py --check` and
+`tests/validate_emulation_map.py` unaffected (no new rule added yet).
+WS1.4 heartbeat needed no code change — the dashboard's "Source Heartbeat"
+panel is a generic `event.module`/`tenant.id` terms aggregation with no
+hardcoded source list. Documented in `docs/SOC-maturity-roadmap.md`'s
+WS1.4 entry and `docs/SOP-147-evidence-validation-procedure.md`'s Section
+B.3 ("wired, not yet detecting" — same honesty standard as the Windows
+endpoint path). **Not live-verified against a real auditd/kernel
+combination** (no reachable Docker daemon / Linux audit host in this
+sandbox) — confirm the real field order/shape auditd emits before relying
+on the grok patterns in production, same caveat as #454 and this repo's
+other environment-blocked static-only changes. **Second, separate
+operational caveat found and disclosed (not resolved) while writing this:**
+Logstash's `aggregate` filter only correlates a SYSCALL+EXECVE pair
+correctly when both land on the SAME pipeline worker thread — unsafe under
+`pipeline.workers` > 1 per Elastic's own docs, and `configs/logstash.yml`
+sets no override, so this container runs the default (one worker per CPU
+core). Pinning `pipeline.workers: 1` would fix it but is a whole-pipeline
+throughput tradeoff affecting every other source in this file, not a call
+to make unilaterally alongside one new branch — left as a documented,
+tested-for-presence disclosure (`test_discloses_the_pipeline_workers_
+correlation_caveat`) for whoever verifies this against a real multi-core
+deployment next.
+
+**#441 Part B (5 Collection/Exfiltration rules) picked up 2026-08-30, its
+own follow-up session** — the 5 rules named in the issue's Part B table,
+none dependent on #442 (unlike Part A's 5 `proc_creation_lnx_*` rules,
+still not picked up — see below):
+
+- `net_zeek_conn_outbound_volume_asymmetry.yml` (T1048, medium, zeek/conn)
+  — needed a new `resp_bytes` → `destination.bytes` field mapping (the
+  deliberately-deferred half of `orig_bytes` → `source.bytes` from #228,
+  added now that a rule needs it) in both `configs/logstash.conf` and
+  `configs/detections/suburban-soc-ecs.yml`, plus explicit `long` mappings
+  for `source.bytes`/`destination.bytes` in the ES template (the former
+  had been a live, unpinned field since #228 — the same #288-class
+  dynamic-type-inference risk, closed retroactively alongside the new
+  field rather than left as a known-but-unfixed gap). Ships as a paired
+  `rules/elastic/threshold/net-zeek-conn-outbound-volume-asymmetry.ndjson`
+  companion, matching the `auth_win_bruteforce_*`/SSH-cadence precedent —
+  the Sigma file's own single-flow selection is a documented, disclosed
+  APPROXIMATION of asymmetry (two independent absolute thresholds, not a
+  true ratio; Sigma/Lucene cannot express a computed ratio between two
+  fields).
+- `net_zeek_ssl_cloud_storage_exfil.yml` (T1567.002, low, zeek/ssl) —
+  SNI-only signal (bare + dot-anchored-subdomain pairs, same
+  anti-lookalike pattern as the crypto-mining-pool/DoH rules), no byte-
+  volume corroboration (disclosed limitation: ssl.log carries no byte
+  counts, a conn.log join by `uid` is real separate work). Deliberately
+  has NO `emulation_telemetry.map`/`coverage_checklist.md` entry — same
+  precedent as this corpus's other domain-list rules: an automated sim
+  contacting real third-party cloud-storage providers is a different
+  category from `sim_malware_download.sh`'s eicar.org precedent (a
+  service purpose-built for exactly this kind of automated testing).
+- `posh_ps_clipboard_capture.yml` (T1115, medium, windows/powershell) —
+  two independent branches (`Get-Clipboard` cmdlet OR user32/
+  `GetClipboardData` P/Invoke), each with its own fixture and a dedicated
+  "branch fires independently" test.
+- `proc_creation_win_local_data_staging.yml` (T1074.001, medium,
+  windows/process_creation) — robocopy/xcopy + doc-extension + staging-
+  path (`%TEMP%`/`C:\Users\Public\`/`C:\ProgramData\`), same disclosed
+  destination-scoping COVERAGE GAP class as `posh_data_compression_staging.yml`.
+- `proc_creation_win_archive_staging_non_rar.yml` (T1560.001, medium,
+  windows/process_creation) — extends the RAR rule's password-flag
+  pattern to `7z.exe` (which has a real password flag) and separately
+  scopes `makecab.exe`/`tar.exe` by staging path (neither has a
+  password/encryption concept at all — "with password/encryption flags"
+  from the issue's own wording is not literally satisfiable for those
+  two). Deliberately does NOT also duplicate `Compress-Archive` here —
+  already covered by `posh_data_compression_staging.yml` via a genuinely
+  different telemetry path (ScriptBlock logging vs. process_creation);
+  documented as a scoping decision, not an oversight.
+
+All 5: TP+TN fixtures in `tests/detections/fixtures.json`, a benign-
+baseline check, `build_attack_coverage.py` regenerated (82 techniques, up
+from 78 — `docs/detections/attack-coverage.{json,md}`),
+`build_kql_docs.py` regenerated (113 rules —
+`docs/detections/SIEM_KQL_Documentation.md`), 4 of 5 have real
+`tests/anomaly_simulation/` emulation scripts (3 new `.ps1`, 1 new `.sh`)
+wired into `configs/detections/emulation_telemetry.map` +
+`coverage_checklist.md` (28/28 clean per `validate_emulation_map.py`,
+`--strict` included). `README.md`'s live rule-count/technique-count
+summary updated to match (108→113 rules, 75→82 techniques — the
+technique count was already stale by 3 before this session, from drift
+since #440; corrected to the real current number while touching this
+line rather than perpetuating a partial fix).
+
+Toolchain note: this session installed the pinned Sigma toolchain
+(`sigma-cli==3.1.0 pysigma==1.5.0 pysigma-backend-elasticsearch==2.1.1`,
+Python 3.11 matching `.python-version`) into a local `.venv-detections`
+to actually run `sigma convert` and regenerate the docs above — the first
+time this session's environment had it available. Caught and fixed a
+real bug this way: the threshold ndjson's hand-authored Lucene query
+first used the wrong numeric-range syntax (`>=`/`<=` vs. pySigma's actual
+`field:[N TO *]` bracket-range compiled form on a first, mistaken
+transcription — then corrected by reading the exact compiled string
+back out of the regenerated KQL doc rather than trusting memory a second
+time), which `tests/detections/test_threshold_rules.py`'s and
+`test_live_fire.py`'s containment/drift guards caught immediately. One
+piece remains genuinely environment-blocked, not fixed: `sigma convert
+-f siem_rule_ndjson` (used by `test_live_fire.py`'s
+`ZeekEventDatasetScopingTests`, and by `deploy_detections.sh` for the
+real Kibana import payload) needs an online MITRE ATT&CK data fetch from
+`github.com` that this sandbox's egress policy blocks (403) — confirmed
+this is pre-existing and unrelated to this session's rules (it errors
+identically on `net_zeek_conn_external_rdp_inbound.yml`, an existing
+rule) and will run fine in the real CI environment, which has full
+internet access — same "report the blocked host, don't route around an
+org policy denial" posture the sandbox's own proxy docs require.
+
+**#441 Part A (5 `proc_creation_lnx_*` rules) picked up 2026-08-30, its own
+follow-up session** — all 5 rules named in the issue's Part A table, all on
+`configs/logstash.conf`'s new Component 4 auditd branch (#442, on this same
+branch/PR — not yet merged to main at the time this was written, PR #505
+still open) via the existing `field-mapping-auditd-process-creation`
+pySigma transformation:
+
+- `proc_creation_lnx_reverse_shell_interpreter.yml` (T1059.004, critical)
+  — bash `/dev/tcp/`, `nc`/`ncat`/`netcat` with `-e`, Python `pty.spawn`,
+  `socat ... EXEC:`. `nc`/`socat` branches require the companion flag/token,
+  not the bare binary alone (a listener-only `nc -l` must not fire).
+- `proc_creation_lnx_ingress_tool_transfer.yml` (T1105, medium) — curl/wget
+  piped to a shell or writing into a temp path.
+- `proc_creation_lnx_cron_at_persistence.yml` (T1053.003, medium) —
+  `crontab` (excluding the read-only `-l`/`-r` forms), a write-verb-scoped
+  reference to a system cron directory (a bare path substring alone would
+  also match a harmless `ls`/`cat`, so a `>`/`tee` companion is required —
+  itself only a coarse text approximation, disclosed, since #442's auditd
+  telemetry covers execve only, not real file-write syscalls), or `at`
+  (deliberately broad, matching this corpus's own established "visibility
+  layer, not standalone high-confidence" precedent for a comparably common
+  admin binary).
+- `proc_creation_lnx_shell_history_tamper.yml` (T1070.003, high) —
+  `history -c`, `unset HISTFILE`, a `.bash_history`/`.zsh_history`
+  truncate, or a symlink-to-`/dev/null` combined with a history-file path
+  in the same command line. Documented gap: `export HISTFILE=/dev/null`
+  (functionally equivalent to `unset`) is not covered — only the `unset`
+  form the issue named.
+- `proc_creation_lnx_systemd_service_persistence.yml` (T1543.002, high) —
+  two INDEPENDENT branches (a write-verb-scoped reference to a systemd
+  unit search path, OR `systemctl enable`/`daemon-reload`), not the
+  issue's literal two-step "written THEN enabled" sequence — Sigma's
+  single-event model has no mechanism for a cross-event temporal
+  sequence (the same limitation the threshold-companion pattern works
+  around for volume/rate signals, but that pattern doesn't fit a
+  two-DIFFERENT-events sequence either); documented as an honest scoping
+  decision matching this corpus's own established disclosure convention,
+  not a silent narrowing.
+
+All 5: TP+TN fixtures, a benign-baseline check, 5 new branch-independence
+tests (`tests/detections/test_sigma_detections.py`, mirroring this
+session's Part B additions), `sigma convert -t lucene` verified against
+the real pipeline for all 5, ATT&CK coverage regenerated (86 techniques,
+up from 82), KQL docs regenerated (118 rules). All 5 get real
+`tests/anomaly_simulation/sim_lnx_*.sh` emulation scripts (new "Linux
+endpoint lane (auditd execve, #442)" section in `emulation_telemetry.map`/
+`coverage_checklist.md`, 33/33 clean including `--strict`) — each reversible
+and self-contained (a loopback-only reverse-shell listener, the same
+`eicar.org` pull `sim_malware_download.sh` already uses, a throwaway
+crontab/cron.d/at entry, a disposable-subshell history clear, a throwaway
+inert systemd unit), consistent with this repo's "LAB USE ONLY,
+benign/reversible" convention for every existing sim. **None of the 5 have
+been live-verified against a real auditd stream** — same disclosed,
+unresolved caveat #442 itself carries, explicitly called out again in both
+the rule descriptions and the new coverage-checklist section rather than
+silently inherited. `README.md`'s live rule/technique counts updated to
+match (113→118, 82→86).
 
 **M19 progress:**
 

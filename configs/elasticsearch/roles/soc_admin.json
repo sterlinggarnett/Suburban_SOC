@@ -1,7 +1,7 @@
 {
   "cluster": ["monitor","manage_index_templates","manage_ilm","manage_slm","read_slm"],
   "indices": [
-    {"names": ["logstash-*","soar-actions-*","asset-inventory-*","threat-intel-*","soc-*","-soc-slo-metrics","-soc-agent-health-*"],
+    {"names": ["logstash-*","soar-actions-*","asset-inventory-*","threat-intel-*","soc-*","-soc-slo-metrics","-soc-agent-health-*","-soc-audit-*"],
      "privileges": ["all"]}
   ],
   "applications": [

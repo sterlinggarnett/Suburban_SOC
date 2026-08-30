@@ -1,0 +1,47 @@
+title: Linux Ingress Tool Transfer via curl/wget to a Temp Path or Piped to a Shell
+id: 7c9e2b41-6a83-4f05-b719-3e6d8c1a4f27
+status: experimental
+description: |
+    Detects `curl`/`wget` either writing its output into a world-writable
+    temp path (`/tmp/`, `/dev/shm/`, `/var/tmp/`) or piped directly into a
+    shell interpreter (`| sh`, `| bash`) — the two dominant shapes of
+    "download and run" ingress tool transfer on Linux, matching this
+    corpus's Windows-side certutil/bitsadmin/mshta download rules.
+    #442 prerequisite — see proc_creation_lnx_reverse_shell_interpreter.yml's
+    own note; this logsource has no telemetry without it.
+    Scoped to curl/wget specifically (not every possible fetch tool —
+    python -m http.client, perl LWP, etc.) matching the issue's own named
+    signal; a determined attacker using an unlisted fetch mechanism evades
+    this rule entirely, same class of coverage gap this repo's other
+    binary-allowlist rules (e.g. the Windows LOLBin-focused ones) already
+    accept.
+references:
+    - https://attack.mitre.org/techniques/T1105/
+author: Suburban-SOC
+date: 2026-08-30
+tags:
+    - attack.command_and_control
+    - attack.t1105
+logsource:
+    product: linux
+    category: process_creation
+detection:
+    selection_img:
+        Image|endswith:
+            - '/curl'
+            - '/wget'
+    selection_pipe_shell:
+        CommandLine|contains:
+            - '| sh'
+            - '|sh'
+            - '| bash'
+            - '|bash'
+    selection_temp_dest:
+        CommandLine|contains:
+            - '/tmp/'
+            - '/dev/shm/'
+            - '/var/tmp/'
+    condition: selection_img and (selection_pipe_shell or selection_temp_dest)
+falsepositives:
+    - Legitimate install scripts (many upstream projects' own documented "curl | bash" install one-liners) and CI/CD or configuration-management tooling downloading artifacts into a temp path as a normal build step — baseline and allowlist known package/deployment sources.
+level: medium

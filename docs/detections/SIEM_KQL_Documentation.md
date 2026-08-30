@@ -5,7 +5,7 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**108 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**118 rules.** Each query is the exact Lucene the Sigma rule compiles to.
 
 ## SSH Login Attempt for a Nonexistent User
 
@@ -191,6 +191,14 @@ event.dataset:zeek.conn AND ((destination.port:3389 AND network.transport:tcp) A
 event.dataset:zeek.conn AND (network.transport:icmp AND source.bytes:>1000000)
 ```
 
+## Asymmetric Outbound Connection Volume (Possible Exfiltration)
+
+- **Rule:** `net_zeek_conn_outbound_volume_asymmetry.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1048
+
+```
+event.dataset:zeek.conn AND (source.bytes:>=5000000 AND destination.bytes:<=200000)
+```
+
 ## SMB Connection Crossing Private/Public Address Boundary
 
 - **Rule:** `net_zeek_conn_smb_lateral_admin.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1021.002
@@ -327,6 +335,14 @@ event.dataset:zeek.ssh AND client:SSH\-*
 event.dataset:zeek.ssh AND client:SSH\-*
 ```
 
+## TLS Connection SNI Matching a Cloud-Storage or Paste Provider
+
+- **Rule:** `net_zeek_ssl_cloud_storage_exfil.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1567.002
+
+```
+event.dataset:zeek.ssl AND ((tls.client.server_name:(transfer.sh OR mega.nz OR pastebin.com OR anonfiles.com OR gofile.io OR mediafire.com OR wetransfer.com OR dropboxusercontent.com OR send.vis.ee)) OR (tls.client.server_name:(*.transfer.sh OR *.mega.nz OR *.pastebin.com OR *.anonfiles.com OR *.gofile.io OR *.mediafire.com OR *.wetransfer.com OR *.dropboxusercontent.com OR *.send.vis.ee)))
+```
+
 ## TLS Connection with Expired Certificate
 
 - **Rule:** `net_zeek_ssl_expired_cert_connection.yml` · **level:** low · **status:** experimental · **ATT&CK:** T1071.001
@@ -383,6 +399,14 @@ winlog.event_id:4104 AND (winlog.event_data.ScriptBlockText:(*Get\-NetDomain* OR
 winlog.event_id:4104 AND (winlog.event_data.ScriptBlockText:(*AmsiUtils* OR *amsiInitFailed* OR *AmsiScanBuffer* OR *AMSI_RESULT_NOT_DETECTED*))
 ```
 
+## PowerShell Clipboard Access or Polling
+
+- **Rule:** `posh_ps_clipboard_capture.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1115
+
+```
+winlog.event_id:4104 AND (winlog.event_data.ScriptBlockText:*Get\-Clipboard* OR (winlog.event_data.ScriptBlockText:(*user32* OR *GetClipboardData*)))
+```
+
 ## Obfuscated or Encoded PowerShell Script Block
 
 - **Rule:** `posh_ps_obfuscated_scriptblock.yml` · **level:** high · **status:** stable · **ATT&CK:** T1059.001, T1027
@@ -399,12 +423,60 @@ winlog.event_id:4104 AND (((winlog.event_data.ScriptBlockText:(*IEX\(* OR *IEX\ 
 winlog.event_id:4104 AND winlog.event_data.ScriptBlockText:*Net.Sockets.TCPClient* AND (winlog.event_data.ScriptBlockText:(*GetStream\(\)* OR *NetworkStream* OR *.Read\(* OR *.Write\(*))
 ```
 
+## Linux Cron/At Job Persistence
+
+- **Rule:** `proc_creation_lnx_cron_at_persistence.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1053.003
+
+```
+(process.executable:*\/crontab AND (NOT (process.args:(*\ \-l* OR *\ \-r*)))) OR ((process.args:(*\/etc\/cron.d\/* OR *\/etc\/cron.daily\/* OR *\/etc\/cron.hourly\/* OR *\/etc\/cron.weekly\/* OR *\/etc\/cron.monthly\/*)) AND (process.args:(*\>* OR *tee\ *))) OR process.executable:*\/at
+```
+
+## Linux Ingress Tool Transfer via curl/wget to a Temp Path or Piped to a Shell
+
+- **Rule:** `proc_creation_lnx_ingress_tool_transfer.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1105
+
+```
+(process.executable:(*\/curl OR *\/wget)) AND ((process.args:(*\|\ sh* OR *\|sh* OR *\|\ bash* OR *\|bash*)) OR (process.args:(*\/tmp\/* OR *\/dev\/shm\/* OR *\/var\/tmp\/*)))
+```
+
+## Linux Reverse Shell via Interpreter Redirect or Exec Flag
+
+- **Rule:** `proc_creation_lnx_reverse_shell_interpreter.yml` · **level:** critical · **status:** experimental · **ATT&CK:** T1059.004
+
+```
+process.args:*\/dev\/tcp\/* OR ((process.executable:(*\/nc OR *\/ncat OR *\/netcat)) AND process.args:*\ \-e\ *) OR process.args:*pty.spawn* OR (process.executable:*\/socat AND process.args:*EXEC\:*)
+```
+
+## Linux Shell History Tampering
+
+- **Rule:** `proc_creation_lnx_shell_history_tamper.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1070.003
+
+```
+process.args:*history\ \-c* OR process.args:*unset\ HISTFILE* OR (process.args:(*cat\ \/dev\/null\ \>* OR *\>\ \~\/.bash_history* OR *\>\~\/.bash_history* OR *\>\ \~\/.zsh_history* OR *\>\~\/.zsh_history*)) OR (process.args:*ln\ \-sf\ \/dev\/null* AND (process.args:(*.bash_history* OR *.zsh_history*)))
+```
+
+## Linux systemd Service Persistence
+
+- **Rule:** `proc_creation_lnx_systemd_service_persistence.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1543.002
+
+```
+((process.args:(*\/etc\/systemd\/system\/* OR *\/usr\/lib\/systemd\/system\/* OR *.config\/systemd\/user\/*)) AND (process.args:(*\>* OR *tee\ *))) OR (process.executable:*\/systemctl AND (process.args:(*enable\ * OR *daemon\-reload*)))
+```
+
 ## Accessibility Feature Backdoor via Image/OriginalFileName Mismatch
 
 - **Rule:** `proc_creation_win_accessibility_binary_debugger_swap.yml` · **level:** critical · **status:** experimental · **ATT&CK:** T1546.008
 
 ```
 (process.executable:*\\sethc.exe AND (NOT process.pe.original_file_name:sethc.exe)) OR (process.executable:*\\utilman.exe AND (NOT process.pe.original_file_name:utilman.exe)) OR (process.executable:*\\osk.exe AND (NOT process.pe.original_file_name:osk.exe)) OR (process.executable:*\\magnify.exe AND (NOT process.pe.original_file_name:Magnify.exe)) OR (process.executable:*\\narrator.exe AND (NOT process.pe.original_file_name:Narrator.exe)) OR (process.executable:*\\displayswitch.exe AND (NOT process.pe.original_file_name:DisplaySwitch.exe)) OR (process.parent.name:*\\winlogon.exe AND (process.executable:(*\\cmd.exe OR *\\powershell.exe)) AND (process.args:(*sethc.exe* OR *utilman.exe* OR *osk.exe* OR *magnify.exe* OR *narrator.exe* OR *displayswitch.exe*)))
+```
+
+## Password-Protected or Staged Archive Creation via 7-Zip, MakeCab, or Tar
+
+- **Rule:** `proc_creation_win_archive_staging_non_rar.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1560.001
+
+```
+((process.executable:*\\7z.exe OR process.executable:*\\7za.exe OR process.pe.original_file_name:7z.exe OR process.pe.original_file_name:7za.exe) AND process.args:*.exe\ a\ * AND process.args:*\ \-p*) OR ((process.executable:(*\\makecab.exe OR *\\tar.exe)) AND (process.args:(*\\Temp\\* OR *\\AppData\\Local\\Temp\\* OR *\\Users\\Public\\* OR *\\ProgramData\\*)))
 ```
 
 ## ARP Cache Enumeration via arp.exe
@@ -565,6 +637,14 @@ process.executable:*\\installutil.exe AND (process.args:(*\/u* OR *\-u* OR *\/lo
 
 ```
 (process.executable:(*\\net.exe OR *\\net1.exe)) AND (process.args:*user* AND process.args:*\/add*)
+```
+
+## Recursive Document Copy Into a Temp or Public Staging Path
+
+- **Rule:** `proc_creation_win_local_data_staging.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1074.001
+
+```
+(process.executable:(*\\robocopy.exe OR *\\xcopy.exe)) AND (process.args:(*\ \/E* OR *\ \/S*)) AND (process.args:(*.doc* OR *.docx* OR *.xls* OR *.xlsx* OR *.pdf* OR *.pst* OR *.csv*)) AND (process.args:(*\\Temp\\* OR *\\AppData\\Local\\Temp\\* OR *\\Users\\Public\\* OR *\\ProgramData\\*))
 ```
 
 ## LSASS Memory Dump via Comsvcs.dll

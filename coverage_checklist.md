@@ -1,6 +1,6 @@
 # Suburban-SOC :: Emulation -> Detection Coverage Checklist
 
-Two lanes, 24 emulation->detection pairs. `[x]` = wiring validated by `validate_emulation_map.py`; operational/live-fire steps are unchecked.
+Three lanes, 33 emulation->detection pairs. `[x]` = wiring validated by `validate_emulation_map.py`; operational/live-fire steps are unchecked.
 
 ## Network / Linux lane (Zeek)
 
@@ -31,6 +31,17 @@ Two lanes, 24 emulation->detection pairs. `[x]` = wiring validated by `validate_
       `configs/detections/emulation_telemetry.map`'s
       CREDENTIAL_ACCESS_SSH_CADENCE_SUSTAINED section for the exact
       command.
+- [x] ⚠️ **EXFILTRATION_OUTBOUND_VOLUME_ASYMMETRY** (T1048) — `sim_outbound_volume_asymmetry.sh` -> `net_zeek_conn_outbound_volume_asymmetry.yml`
+      ⚠️ Requires a listener already running on `TARGET_HOST` (the sim does
+      not stand one up itself — same convention as `sim_brute_ssh.sh`
+      needing real SSH on the target) and a real capture-path host (not
+      loopback). A single run produces one asymmetric flow, which is
+      expected and not itself alerted on — the paired threshold rule
+      (`rules/elastic/threshold/net-zeek-conn-outbound-volume-asymmetry.ndjson`)
+      is the deployed enforcement and needs 3+ runs within a 30-minute
+      window from the same source. See
+      `configs/detections/emulation_telemetry.map`'s
+      EXFILTRATION_OUTBOUND_VOLUME_ASYMMETRY section for the exact command.
 
 Operational to-dos (Linux lane):
 - [ ] `chmod +x tests/anomaly_simulation/sim_portscan.sh`
@@ -43,6 +54,34 @@ Operational to-dos (Linux lane):
       in the same two real capture entry points (#261)
 - [ ] Confirm Filebeat ships Zeek `files.log`
 - [ ] Live-fire: run each sim, confirm the Zeek notice fires and the rule matches
+
+## Linux endpoint lane (auditd execve, #442)
+
+⚠️ None of these 5 have been live-verified against a real auditd stream in
+the environment they were written in — see #442's own disclosed caveats
+(not exercised against live auditd; the Logstash `aggregate` filter's
+pipeline-worker-affinity requirement). `[x]` below means
+`validate_emulation_map.py`'s wiring check passes, same as every other lane
+— it does not mean this has live-fired.
+
+- [x] **EXECUTION_LNX_REVERSE_SHELL** (T1059.004) — `sim_lnx_reverse_shell.sh` -> `proc_creation_lnx_reverse_shell_interpreter.yml`
+- [x] **COMMAND_AND_CONTROL_LNX_INGRESS_TRANSFER** (T1105) — `sim_lnx_ingress_tool_transfer.sh` -> `proc_creation_lnx_ingress_tool_transfer.yml`
+- [x] ⚠️ **PERSISTENCE_LNX_CRON_AT** (T1053.003) — `sim_lnx_cron_at_persistence.sh` -> `proc_creation_lnx_cron_at_persistence.yml`
+      ⚠️ The cron.d-write branch needs passwordless sudo and the at branch
+      needs `at` installed — both skipped (not failed) if unavailable; the
+      crontab branch (no root needed) always runs regardless.
+- [x] **DEFENSE_EVASION_LNX_HISTORY_TAMPER** (T1070.003) — `sim_lnx_shell_history_tamper.sh` -> `proc_creation_lnx_shell_history_tamper.yml`
+- [x] ⚠️ **PERSISTENCE_LNX_SYSTEMD** (T1543.002) — `sim_lnx_systemd_service_persistence.sh` -> `proc_creation_lnx_systemd_service_persistence.yml`
+      ⚠️ Needs passwordless sudo (systemd unit persistence requires root) —
+      the whole sim is skipped, not failed, if unavailable.
+
+Operational to-dos (Linux endpoint lane):
+- [ ] Deploy `configs/endpoint/audit.rules` + `filebeat_endpoint.yml`'s
+      `audit-logs` input to a real Linux test host (#442)
+- [ ] Confirm `auditd.conf`'s `log_format = ENRICHED` is set (needed for
+      `user.name` resolution — see `audit.rules`' own header)
+- [ ] Live-fire: run each sim, confirm auditd + Filebeat + Logstash produce
+      a correlated `event.dataset:auditd.execve` document and the rule matches
 
 ## Windows endpoint lane (Sysmon / 4688)
 
@@ -65,6 +104,13 @@ Operational to-dos (Linux lane):
 - [x] **DISCOVERY_USER** (T1033) — `sim_win_user_discovery.ps1` -> `proc_creation_win_user_discovery.yml`
 - [x] **IMPACT_DELETE_SHADOWS** (T1490) — `sim_win_vss_delete_shadows.ps1` -> `proc_creation_win_vss_delete_shadows.yml`  ⚠ destructive in armed mode
 - [x] **EXECUTION_WMI** (T1047) — `sim_win_wmi_process_create.ps1` -> `proc_creation_win_wmi_process_create.yml`
+- [x] **COLLECTION_CLIPBOARD** (T1115) — `sim_win_clipboard_capture.ps1` -> `posh_ps_clipboard_capture.yml`
+- [x] **COLLECTION_LOCAL_DATA_STAGING** (T1074.001) — `sim_win_local_data_staging.ps1` -> `proc_creation_win_local_data_staging.yml`
+- [x] ⚠️ **COLLECTION_ARCHIVE_STAGING_NON_RAR** (T1560.001) — `sim_win_archive_staging_non_rar.ps1` -> `proc_creation_win_archive_staging_non_rar.yml`
+      ⚠️ The sim's 7z branch is skipped (not failed) when `7z.exe` isn't
+      installed on the test host — the makecab branch (bundled on every
+      Windows host) always runs regardless, so the sim still exercises the
+      rule either way.
 
 Operational to-dos (Windows lane):
 - [ ] Deploy the `.ps1` sims to a Windows test host (`chmod +x` so the validator's exec-bit check passes on Linux)

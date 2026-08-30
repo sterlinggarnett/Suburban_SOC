@@ -1,0 +1,46 @@
+# =============================================================================
+# audit.rules — #442: Linux process-execution (execve) telemetry, the
+# prerequisite for #441's 5 proc_creation_lnx_* Sigma rules.
+#
+# Install:
+#   sudo cp audit.rules /etc/audit/rules.d/soc-execve.rules
+#   sudo augenrules --load
+#   sudo systemctl restart auditd   # only if augenrules --load didn't apply live
+#
+# REQUIRED companion setting in /etc/audit/auditd.conf:
+#   log_format = ENRICHED
+# Enriched format resolves auid/uid/gid inline as e.g. `auid=1000(alice)`
+# instead of a bare `auid=1000` — configs/logstash.conf's auditd branch reads
+# the parenthesized name when present, but degrades gracefully (falls back to
+# the numeric id alone) if it isn't set, so this is a soft dependency: exec
+# telemetry still flows without it, just without a resolved user.name. This
+# repo has no separate UID->username lookup table (unlike
+# configs/lookups/abac-attributes.csv, which is keyed on Windows account
+# names already present in the source event), so ENRICHED is the only source
+# for that field.
+#
+# Scope: only execve — this is process-execution telemetry, not a general
+# file-integrity or syscall audit trail. Watches BOTH real users (auid>=1000,
+# excluding the "unset" sentinel 4294967295 auid gets before a session has
+# one — e.g. early boot/kernel-thread activity) and root-privileged execution
+# (euid=0) regardless of auid, so a real-user session that escalates via sudo
+# is still captured under its own auid, and the root branch also catches
+# execution from system/service accounts (auid unset) running as root.
+# arch=b64 and arch=b32 are both watched — a 32-bit binary on a 64-bit host
+# enters the kernel through the b32 syscall table, and is invisible to a
+# b64-only rule.
+#
+# NOT live-verified against a real auditd/kernel combination in this
+# environment (no reachable Linux audit host) — confirm the exact field
+# order/shape auditd emits on your kernel version before relying on
+# configs/logstash.conf's grok patterns in production, same caveat this
+# repo's other environment-blocked static-only changes carry (#454,
+# tests/pipeline/test_mac_correlation.py's own docstring).
+
+-D
+-b 8192
+
+-a always,exit -F arch=b64 -S execve -F auid>=1000 -F auid!=4294967295 -k soc_execve
+-a always,exit -F arch=b32 -S execve -F auid>=1000 -F auid!=4294967295 -k soc_execve
+-a always,exit -F arch=b64 -S execve -F euid=0 -k soc_execve_root
+-a always,exit -F arch=b32 -S execve -F euid=0 -k soc_execve_root

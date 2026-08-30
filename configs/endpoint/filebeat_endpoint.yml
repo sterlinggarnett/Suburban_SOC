@@ -35,6 +35,23 @@ filebeat.inputs:
       - /var/log/syslog
       - /var/log/messages
 
+  - type: filestream
+    id: audit-logs
+    enabled: true
+    paths:
+      - /var/log/audit/audit.log
+    # #442: Linux process-execution (execve) telemetry — the prerequisite for
+    # #441's 5 proc_creation_lnx_* rules. Requires configs/endpoint/audit.rules
+    # installed and loaded (auditd watching execve for auid>=1000 and euid=0)
+    # and auditd.conf's `log_format = ENRICHED` set — see that file's own
+    # header. Ships the RAW auditd log, not the Filebeat auditd module: parsed
+    # centrally in configs/logstash.conf's Category 2, same as every other
+    # source here, so it goes through the same tenant-stamping/geoip/byte-clamp
+    # filters instead of a second, ingest-pipeline-based parsing path.
+    # auditd writes root-only 0600 by default — this input needs read access
+    # (run Filebeat as root, or add the filebeat user to the audit group /
+    # grant a facl, per your distro's auditd packaging).
+
 # Tag so Logstash routes these through the endpoint_logs branch.
 tags: ["endpoint_logs", "filebeat"]
 

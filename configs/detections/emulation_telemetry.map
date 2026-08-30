@@ -114,6 +114,61 @@ ECS_Mapping       : threat.technique.id = "T1110" | threat.tactic.name = "Creden
 Target_Sigma_Rule : rules/sigma/net_zeek_ssh_session_cadence_sustained.yml
 NIST_CSF_Control  : DE.AE-02 (Detection and Anomaly Validation)
 
+# #441 Part B. Local-network-only traffic (no third-party contact) — see the
+# sim's own header for the required TARGET_HOST listener setup, and
+# rules/elastic/threshold/net-zeek-conn-outbound-volume-asymmetry.ndjson's
+# own description for why a SINGLE run of this sim (one asymmetric flow)
+# does not itself trigger the deployed threshold enforcement — run it 3+
+# times within a 30-minute window from the same source to exercise that.
+[EMULATION: EXFILTRATION_OUTBOUND_VOLUME_ASYMMETRY]
+Execution_Vector  : tests/anomaly_simulation/sim_outbound_volume_asymmetry.sh
+Log_Source        : configs/systemd/zeek-host-capture.service -> conn.log
+ECS_Mapping       : threat.technique.id = "T1048" | threat.tactic.name = "Exfiltration"
+Target_Sigma_Rule : rules/sigma/net_zeek_conn_outbound_volume_asymmetry.yml
+NIST_CSF_Control  : DE.CM-01 (Security Continuous Monitoring)
+
+# --------------------------- LINUX ENDPOINT LANE (auditd, #442) ---------------------------
+# #441 Part A. Requires #442's auditd execve telemetry actually deployed and
+# working on the target host (audit.rules loaded, Filebeat shipping
+# /var/log/audit/audit.log) — none of these have been live-verified against
+# a real auditd stream in the environment this was written in (#442's own
+# disclosed caveat), unlike the Windows/Sysmon entries above.
+
+[EMULATION: EXECUTION_LNX_REVERSE_SHELL]
+Execution_Vector  : tests/anomaly_simulation/sim_lnx_reverse_shell.sh
+Log_Source        : configs/endpoint/audit.rules -> auditd (execve)
+ECS_Mapping       : threat.technique.id = "T1059.004" | threat.tactic.name = "Execution"
+Target_Sigma_Rule : rules/sigma/proc_creation_lnx_reverse_shell_interpreter.yml
+NIST_CSF_Control  : DE.CM-01
+
+[EMULATION: COMMAND_AND_CONTROL_LNX_INGRESS_TRANSFER]
+Execution_Vector  : tests/anomaly_simulation/sim_lnx_ingress_tool_transfer.sh
+Log_Source        : configs/endpoint/audit.rules -> auditd (execve)
+ECS_Mapping       : threat.technique.id = "T1105" | threat.tactic.name = "Command and Control"
+Target_Sigma_Rule : rules/sigma/proc_creation_lnx_ingress_tool_transfer.yml
+NIST_CSF_Control  : DE.CM-01
+
+[EMULATION: PERSISTENCE_LNX_CRON_AT]
+Execution_Vector  : tests/anomaly_simulation/sim_lnx_cron_at_persistence.sh
+Log_Source        : configs/endpoint/audit.rules -> auditd (execve)
+ECS_Mapping       : threat.technique.id = "T1053.003" | threat.tactic.name = "Persistence"
+Target_Sigma_Rule : rules/sigma/proc_creation_lnx_cron_at_persistence.yml
+NIST_CSF_Control  : DE.CM-01
+
+[EMULATION: DEFENSE_EVASION_LNX_HISTORY_TAMPER]
+Execution_Vector  : tests/anomaly_simulation/sim_lnx_shell_history_tamper.sh
+Log_Source        : configs/endpoint/audit.rules -> auditd (execve)
+ECS_Mapping       : threat.technique.id = "T1070.003" | threat.tactic.name = "Defense Evasion"
+Target_Sigma_Rule : rules/sigma/proc_creation_lnx_shell_history_tamper.yml
+NIST_CSF_Control  : DE.CM-09
+
+[EMULATION: PERSISTENCE_LNX_SYSTEMD]
+Execution_Vector  : tests/anomaly_simulation/sim_lnx_systemd_service_persistence.sh
+Log_Source        : configs/endpoint/audit.rules -> auditd (execve)
+ECS_Mapping       : threat.technique.id = "T1543.002" | threat.tactic.name = "Persistence"
+Target_Sigma_Rule : rules/sigma/proc_creation_lnx_systemd_service_persistence.yml
+NIST_CSF_Control  : DE.CM-01
+
 # --------------------------- WINDOWS ENDPOINT LANE (Sysmon) ---------------------------
 
 [EMULATION: DELIVERY_BITSADMIN]
@@ -248,3 +303,29 @@ Log_Source        : configs/endpoint/winlogbeat.yml -> sysmon
 ECS_Mapping       : threat.technique.id = "T1047" | threat.tactic.name = "Execution"
 Target_Sigma_Rule : rules/sigma/proc_creation_win_wmi_process_create.yml
 NIST_CSF_Control  : DE.AE-02
+
+# #441 Part B.
+[EMULATION: COLLECTION_CLIPBOARD]
+Execution_Vector  : tests/anomaly_simulation/sim_win_clipboard_capture.ps1
+Log_Source        : configs/endpoint/winlogbeat.yml -> powershell
+ECS_Mapping       : threat.technique.id = "T1115" | threat.tactic.name = "Collection"
+Target_Sigma_Rule : rules/sigma/posh_ps_clipboard_capture.yml
+NIST_CSF_Control  : DE.CM-01
+
+# #441 Part B.
+[EMULATION: COLLECTION_LOCAL_DATA_STAGING]
+Execution_Vector  : tests/anomaly_simulation/sim_win_local_data_staging.ps1
+Log_Source        : configs/endpoint/winlogbeat.yml -> sysmon
+ECS_Mapping       : threat.technique.id = "T1074.001" | threat.tactic.name = "Collection"
+Target_Sigma_Rule : rules/sigma/proc_creation_win_local_data_staging.yml
+NIST_CSF_Control  : DE.CM-01
+
+# #441 Part B. The sim's 7z branch is skipped (not failed) when 7z.exe isn't
+# installed on the test host — see the sim's own header. Both branches map
+# to the same rule/technique either way.
+[EMULATION: COLLECTION_ARCHIVE_STAGING_NON_RAR]
+Execution_Vector  : tests/anomaly_simulation/sim_win_archive_staging_non_rar.ps1
+Log_Source        : configs/endpoint/winlogbeat.yml -> sysmon
+ECS_Mapping       : threat.technique.id = "T1560.001" | threat.tactic.name = "Collection"
+Target_Sigma_Rule : rules/sigma/proc_creation_win_archive_staging_non_rar.yml
+NIST_CSF_Control  : DE.CM-01

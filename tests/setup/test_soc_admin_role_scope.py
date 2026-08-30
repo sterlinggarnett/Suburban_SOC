@@ -20,6 +20,20 @@ Deliberately scoped to exactly what #374 named (`soc-slo-metrics`,
 which the issue did not raise and which may be a legitimate admin
 capability (e.g. retention/ILM management on the audit trail).
 
+#453 extended the same carve-out to `soc-audit-*` -- the append-only,
+tamper-evident audit trail (`soc_audit_appender.json` grants only
+`create_index`/`create` for exactly this reason) is the single most
+sensitive index in this set, and `soc_admin` retaining `all` (including
+delete) on it left the platform-admin role able to silently rewrite or
+erase the SOC's own record of what an admin identity did -- the identical
+exposure class #374 fixed for the other two indices. Confirmed this does
+not regress any automated erasure workflow: `scripts/setup/erase_tenant.sh`
+(the only code path that legitimately deletes `soc-audit-<tenant>`, for
+GDPR/CCPA right-to-erasure) authenticates as the `elastic` superuser via
+`ES_USER`/`ES_PASS`, not as `soc_admin` -- no service account is bound to
+`soc_admin` in `docker-compose.yml`'s inline role bootstrap; it is a
+human-operator role per `docs/SOP-009-rbac.md`.
+
 Pure stdlib, static JSON-structure assertions against the real role file --
 no live Elasticsearch, matching this directory's existing convention (see
 test_role_compose_sync.py, test_docker_compose_ports.py). Whether
@@ -83,12 +97,25 @@ class SocAdminWildcardCarveOutTests(unittest.TestCase):
             "write-failure marker index #275/#361 depend on (#374)",
         )
 
-    def test_does_not_exclude_anything_beyond_what_374_named(self):
-        # Deliberately scoped: soc-audit-* and any other soc-* index are
-        # untouched -- expanding this carve-out is a separate decision,
-        # not a side effect of this fix.
+    def test_excludes_soc_audit(self):
+        self.assertIn(
+            "-soc-audit-*",
+            self.entry["names"],
+            "soc_admin must not hold 'all' on soc-audit-* -- it would let "
+            "the admin role silently rewrite/erase the SOC's own "
+            "tamper-evident audit trail, including the record of what an "
+            "admin identity did (#453)",
+        )
+
+    def test_does_not_exclude_anything_beyond_374_and_453(self):
+        # Deliberately scoped: every other soc-* index is untouched --
+        # expanding this carve-out further is a separate decision, not a
+        # side effect of this fix.
         excluded = {name for name in self.entry["names"] if name.startswith("-")}
-        self.assertEqual(excluded, {"-soc-slo-metrics", "-soc-agent-health-*"})
+        self.assertEqual(
+            excluded,
+            {"-soc-slo-metrics", "-soc-agent-health-*", "-soc-audit-*"},
+        )
 
 
 if __name__ == "__main__":

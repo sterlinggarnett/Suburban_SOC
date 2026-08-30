@@ -1,0 +1,66 @@
+title: Linux Cron/At Job Persistence
+id: 5d4a7c92-8e16-4b3a-a05f-2c9e6d1b8a54
+status: experimental
+description: |
+    Detects three Linux scheduled-task persistence shapes: `crontab -e`/
+    `crontab -`/`crontab <file>` (installing or replacing a user crontab —
+    excludes the read-only `-l`/`-r` forms, which are not persistence
+    actions), a shell command writing (`>`/`tee`) into one of the system
+    cron directories (`/etc/cron.d/`, `/etc/cron.daily/`,
+    `/etc/cron.hourly/`, `/etc/cron.weekly/`, `/etc/cron.monthly/`), or
+    the `at` command (one-shot scheduled execution, the same persistence
+    class at a shorter horizon).
+    #442 prerequisite — see proc_creation_lnx_reverse_shell_interpreter.yml's
+    own note; this logsource has no telemetry without it.
+    The cron-directory branch requires a write-shaped verb (`>`/`tee`)
+    alongside the path, not the bare path alone — a plain `ls
+    /etc/cron.d/` or `cat /etc/cron.d/existing-job` contains the same
+    path substring without writing anything; requiring the write verb
+    avoids flagging routine inspection. This is still a coarse TEXT
+    signal, not a real write-syscall observation (#442's auditd telemetry
+    only covers execve, not file writes) — a `>` appearing anywhere else
+    in an unrelated argument on the same command line would also satisfy
+    it; accepted as an approximation, same class of tradeoff this file's
+    sibling `proc_creation_lnx_systemd_service_persistence.yml` makes for
+    the identical reason.
+    `at` alone is deliberately broad (no companion flag/argument
+    requirement) — same "visibility layer, not a high-confidence
+    standalone signal" judgment call this corpus's own
+    auth_linux_sudo_privilege_escalation.yml makes for a comparably common
+    admin binary; tune with an allowlist of expected accounts/hosts
+    running `at` rather than treating every hit as an incident.
+references:
+    - https://attack.mitre.org/techniques/T1053/003/
+author: Suburban-SOC
+date: 2026-08-30
+tags:
+    - attack.persistence
+    - attack.t1053.003
+logsource:
+    product: linux
+    category: process_creation
+detection:
+    selection_crontab_img:
+        Image|endswith: '/crontab'
+    filter_crontab_readonly:
+        CommandLine|contains:
+            - ' -l'
+            - ' -r'
+    selection_cron_dir_path:
+        CommandLine|contains:
+            - '/etc/cron.d/'
+            - '/etc/cron.daily/'
+            - '/etc/cron.hourly/'
+            - '/etc/cron.weekly/'
+            - '/etc/cron.monthly/'
+    selection_write_verb:
+        CommandLine|contains:
+            - '>'
+            - 'tee '
+    selection_at_img:
+        Image|endswith: '/at'
+    condition: (selection_crontab_img and not filter_crontab_readonly) or (selection_cron_dir_path and selection_write_verb) or selection_at_img
+falsepositives:
+    - Routine, expected administrative crontab/at/system-cron-directory usage — this rule is deliberately broad on the `at` branch (see description); tune with an allowlist of expected accounts/hosts rather than treating every hit as an incident.
+    - Package installers and configuration-management tooling (apt/dpkg postinst scripts, Ansible, Puppet) legitimately dropping files into /etc/cron.d/ as part of normal software installation.
+level: medium

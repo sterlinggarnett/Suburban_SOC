@@ -8,6 +8,13 @@ Harvests detection coverage from the SINGLE SOURCES OF TRUTH:
   * configs/logstash.conf     -> Zeek network detections (Category 5 framework
                                  enrichment, e.g. T1046 / T1110)
 
+Suricata (rules/suricata/*.rules, #445's CI lane) is deliberately NOT
+harvested here yet — #445 offered "extend coverage accounting or
+explicitly scope it out"; scoped out for M23 Stage 2 since there is no
+real rule content to harvest against until #446 lands. See
+findings/20260830-445-suricata-attack-coverage-scope.md for the full
+reasoning and what "revisit" looks like.
+
 and emits:
   * docs/detections/attack-coverage.json  — a MITRE ATT&CK Navigator layer
     (import at https://mitre-attack.github.io/attack-navigator/)

@@ -2,6 +2,10 @@
 #
 # Standard Suricata idiom for site-authored rules, kept separate from the
 # categorized starter set #446 (M23 Stage 3) lands alongside it. Empty for
-# now (Stage 1, #443/#444 — sensor deployment + eve.json ingest only, no
-# rule content yet). Local SIDs, if any land here later, use a range
-# distinct from the 9000001-9000100 reserved for #446's starter set.
+# now (Stage 1, #443/#444 — sensor deployment + eve.json ingest only; Stage
+# 2, #445 — CI syntax gate/SID registry/pcap-replay promotion gate; no rule
+# content yet). Local SIDs, if any land here later, use the
+# 9500001-9599999 range reserved for this file (distinct from the
+# 9000001-9000100 range #446's starter set owns) — see
+# tests/detections/suricata_rules_eval.py's SID_RANGES, which enforces
+# this in CI: any SID outside a registered range fails the build.

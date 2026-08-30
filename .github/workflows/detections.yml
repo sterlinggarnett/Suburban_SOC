@@ -54,6 +54,17 @@ jobs:
         # together.
         run: pip install --quiet sigma-cli==3.1.0 pysigma==1.5.0 pysigma-backend-elasticsearch==2.1.1 pytest pyyaml requests
 
+      - name: Install suricata + scapy (#445 — SID registry/pcap-replay promotion gate)
+        # Real host package (same choice #443 made for the sensor itself —
+        # see configs/suricata/suricata.yaml's header), not a Docker image
+        # pull, so this isn't the class of infra flakiness the live-fire
+        # job below exists to isolate. scapy builds the small synthetic
+        # pcap fixtures the replay harness runs suricata against.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends suricata
+          pip install --quiet scapy==2.7.0
+
       - name: Pipeline consistency tests
         # #286 security-auditor MEDIUM: this used to invoke
         # test_framework_enrichment.py by exact filename, so
@@ -74,6 +85,9 @@ jobs:
 
       - name: Threshold-rule companions are well-formed and paired (issue #192)
         run: python tests/detections/test_threshold_rules.py
+
+      - name: Suricata SID registry + pcap-replay promotion gate (issue #445)
+        run: python -m pytest tests/detections/test_suricata_rules.py -v
 
       - name: Zeek rules carry the event.dataset scoping condition (#291)
         # Compile-only (no live Elasticsearch needed) — security-auditor

@@ -65,7 +65,15 @@ if [[ -z "$SIGMA" ]]; then
   SIGMA="$VENV/bin/sigma"; [[ -x "$SIGMA" ]] || SIGMA="$VENV/Scripts/sigma.exe"
   if [[ ! -x "$SIGMA" ]]; then
     blue "==> Setting up Sigma toolchain venv ($VENV)"
-    python3 -m venv "$VENV"
+    # #463: use the same Python version CI does (.python-version, read the way
+    # actions/setup-python's python-version-file does) rather than whatever
+    # python3 is first on PATH — #330 found that identical package versions
+    # render Lucene multi-word-term escaping differently under 3.11 vs 3.12.
+    PYVER="$(cat "$REPO_ROOT/.python-version" 2>/dev/null || true)"
+    PYVER_MM="$(cut -d. -f1,2 <<< "$PYVER")"
+    VENV_PY="python${PYVER_MM}"
+    command -v "$VENV_PY" >/dev/null 2>&1 || { red "WARNING: $VENV_PY not on PATH, falling back to python3 (may not match CI's ${PYVER:-unset})"; VENV_PY="python3"; }
+    "$VENV_PY" -m venv "$VENV"
     PY="$VENV/bin/python"; [[ -x "$PY" ]] || PY="$VENV/Scripts/python.exe"
     # #330: pinned to match .github/workflows/detections.yml and
     # docs/detections/SIEM_KQL_Documentation.md's generating toolchain — an

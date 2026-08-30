@@ -100,7 +100,9 @@ services:
       - xpack.license.self_generated.type=${LICENSE:-basic}
       - discovery.seed_hosts=es01,es02,es03
       - cluster.initial_master_nodes=es01,es02,es03
-    ports: ["${ES_PORT:-9200}:9200"]
+    # #359/#449: bind loopback-only, not 0.0.0.0 — matches docker-compose.yml's
+    # single-node elasticsearch service (and hive_mind_broker/the AI agent).
+    ports: ["127.0.0.1:${ES_PORT:-9200}:9200"]
     volumes: [ha-certs:/usr/share/elasticsearch/config/certs, ha-es01:/usr/share/elasticsearch/data]
 
   es02:

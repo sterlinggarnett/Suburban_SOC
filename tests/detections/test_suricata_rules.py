@@ -45,6 +45,7 @@ from pathlib import Path
 
 from suricata_rules_eval import (
     RuleRecord,
+    check_syntax_including_disabled,
     find_duplicate_sids,
     find_out_of_range,
     fixture_paths,
@@ -126,30 +127,46 @@ class PromotionGateRealRepoTests(unittest.TestCase):
 
 class SyntaxGateRealRepoTests(unittest.TestCase):
     """The full aggregate ruleset, not just local.rules, loads cleanly
-    under a real `suricata -T`. Extends test_suricata_config.py's own
-    single-file ConfigSyntaxTests check to every file under rules/suricata/
-    via `-S` per file, discovered by glob rather than hardcoded — the same
-    directory-glob discipline #286 established for tests/pipeline/*.py, so
-    a new category file Stage 3 adds is covered with no workflow edit."""
+    under a real `suricata -T`. Runs the exact production `-c
+    configs/suricata/suricata.yaml` path with no `-S` override — Suricata
+    7.0.3 rejects multiple `-S` flags (confirmed by hand), so this
+    deliberately does NOT glob rule_files itself; it validates that
+    whatever `rule-files:` lists in the real config loads clean, which is
+    the true production path. RuleFilesWiredIntoConfigTests (above)
+    separately catches a landed `.rules` file that was never added to
+    that list — together the two checks cover both halves of "a new
+    category file is both present and wired in.\""""
 
     def test_suricata_dash_t_loads_every_rules_file(self):
         if not SURICATA_BIN:
             self.skipTest("suricata binary not installed in this environment")
         import subprocess
         import tempfile
-        rule_files = _real_rule_files()
-        if not rule_files:
+        if not _real_rule_files():
             self.skipTest("no .rules files under rules/suricata/ yet")
         with tempfile.TemporaryDirectory() as log_dir:
             cmd = [SURICATA_BIN, "-T", "-c", str(SURICATA_YAML), "-l", log_dir, "--af-packet=lo"]
-            for f in rule_files:
-                cmd += ["-S", str(f)]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             self.assertEqual(
                 result.returncode, 0,
                 f"suricata -T failed on the aggregate ruleset:\n"
                 f"stdout: {result.stdout}\nstderr: {result.stderr}",
             )
+
+    def test_suricata_dash_t_validates_every_rule_even_disabled(self):
+        # #-commented lines are invisible to Suricata's rule loader (see
+        # check_syntax_including_disabled's own docstring) — the test
+        # above only proves the ENABLED subset parses, which for #446's
+        # "land all 100, disabled until tuned" set is zero rules today.
+        # This validates the real Suricata syntax of every landed rule,
+        # disabled or not, by stripping the leading '#' before parsing.
+        if not SURICATA_BIN:
+            self.skipTest("suricata binary not installed in this environment")
+        records = load_records(_real_rule_files())
+        if not records:
+            self.skipTest("no rules under rules/suricata/ yet")
+        ok, stdout, stderr = check_syntax_including_disabled(records, SURICATA_BIN)
+        self.assertTrue(ok, f"suricata -T failed on the uncommented ruleset:\nstdout: {stdout}\nstderr: {stderr}")
 
 
 # --- Harness meta-tests: prove the checker itself works, independent of
@@ -284,6 +301,34 @@ class ReplayHarnessRealSuricataTests(unittest.TestCase):
             tp_pcap = self._build_pcap(Path(tmp), "tp.pcap", b"another-canary")
             fired = replay_pcap(rec.uncommented, tp_pcap, SURICATA_BIN)
             self.assertEqual({9999998}, fired)
+
+
+class SyntaxIncludingDisabledMetaTests(unittest.TestCase):
+    def setUp(self):
+        if not SURICATA_BIN:
+            self.skipTest("suricata binary not installed in this environment")
+
+    def test_valid_disabled_rule_passes(self):
+        rec = RuleRecord(
+            file=Path("synthetic.rules"), line_no=1,
+            raw="#" + RULE_TEMPLATE.format(msg="m", needle="x", sid=9500020),
+            sid=9500020, enabled=False,
+        )
+        ok, stdout, stderr = check_syntax_including_disabled([rec], SURICATA_BIN)
+        self.assertTrue(ok, f"stdout: {stdout}\nstderr: {stderr}")
+
+    def test_broken_disabled_rule_is_caught(self):
+        # Same shape confirmed by hand: a plain -S/-T pass over the
+        # AS-SHIPPED (still '#'-prefixed) file silently ignores this —
+        # Suricata's loader never even looks at a commented line. Only
+        # the uncommented form here catches it.
+        rec = RuleRecord(
+            file=Path("synthetic.rules"), line_no=1,
+            raw='# alert udp any any -> any any (msg:"broken"; sid:9500021)',  # missing content/rev, unbalanced
+            sid=9500021, enabled=False,
+        )
+        ok, _stdout, _stderr = check_syntax_including_disabled([rec], SURICATA_BIN)
+        self.assertFalse(ok)
 
 
 class FixturePathConventionTests(unittest.TestCase):

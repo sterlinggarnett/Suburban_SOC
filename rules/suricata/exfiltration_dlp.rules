@@ -1,0 +1,63 @@
+# University SOC starter set — Category 7: Data exfiltration & DLP (#446, M23 Stage 3)
+# SIDs 9000061-9000070.
+#
+# Source: university_soc_starter_ruleset.rules, supplied by the repo owner.
+# Rule text below is VERBATIM from that source. ALL RULES DISABLED — see
+# rules/suricata/auth_sso_abuse.rules' header for the full disable/
+# provenance note (applies identically to every category file in this set).
+#
+# RECONCILIATION (docs/detections/suricata-starter-set.md has the full
+# record): 9000061 (long DNS query, 60+ chars) overlaps
+# rules/sigma/net_zeek_dns_tunneling_high_entropy.yml (50+ chars) —
+# same signal, different threshold. 9000063/9000064 (large POST to
+# mega.nz/dropboxusercontent.com) overlap
+# rules/sigma/net_zeek_ssl_cloud_storage_exfil.yml's SNI-based provider
+# list, confirmed for both exact hostnames. 9000069 (pastebin.com paste
+# site) overlaps the SAME Sigma rule too — `pastebin.com` is on that
+# rule's provider list as well — not called out by the source ruleset's
+# own claimed-overlap list, found independently while verifying it.
+# 9000062 (DNS query-volume threshold) has no existing Sigma equivalent —
+# a genuine new gap this set closes. All kept as independent confirmation
+# — see ransomware_c2.rules' header for why.
+#
+# *** DLP RULES REQUIRE EXPLICIT OWNER SIGN-OFF BEFORE ENABLING ***
+# 9000065 (student-ID pattern) and 9000066 (payment-card PAN pattern)
+# match regulated data (FERPA / PCI) in outbound traffic. Per #446's own
+# instruction, these are NOT to be bulk-enabled with the rest of this
+# set even after pcap fixtures exist — they need a deliberate,
+# documented sign-off from whoever owns data-handling policy for this
+# deployment. Not obtained in this session; do not enable.
+#
+# UNRESOLVED PLACEHOLDER (9000065): `STU\d{7}` is the source's own
+# illustrative student-ID format ("Adjust to Real Format" per its own
+# msg), not a verified real ID format for any specific institution —
+# left exactly as supplied, not invented or guessed here.
+
+#alert dns $HOME_NET any -> any 53 (msg:"UNIV Abnormally Long DNS Query - Possible DNS Tunneling"; dns.query; pcre:"/^.{60,}$/"; classtype:trojan-activity; sid:9000061; rev:1;)
+# SYNTAX FIX: source's bare `dns.query;` selector had no content/pcre
+# match attached to it — Suricata 7.0.3 rejects a sticky buffer
+# designation with nothing matching against it ("setup buffer dns_query
+# but didn't add matches to it"). The rule's actual intent (count EVERY
+# DNS query per source, threshold on volume) needs no query-content
+# match at all — the protocol/port header already scopes it to DNS —
+# so the dangling buffer selector is removed, not replaced.
+#alert dns $HOME_NET any -> any 53 (msg:"UNIV High Volume of DNS Queries from Single Host - Possible DNS Exfiltration"; detection_filter:track by_src, count 100, seconds 60; classtype:trojan-activity; sid:9000062; rev:1;)
+# SYNTAX FIX (see auth_sso_abuse.rules' 9000003 note for `dsize`->`bsize`,
+# and residential_policy_violations.rules' 9000058 note for
+# `http.hostname`->`http.host`; both apply here together).
+#alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Large Outbound POST to Unapproved Cloud Storage Domain - mega.nz"; flow:established,to_server; http.method; content:"POST"; http.host; content:"mega.nz"; http.request_body; bsize:>1000000; classtype:policy-violation; sid:9000063; rev:1;)
+#alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Large Outbound POST to Unapproved Cloud Storage Domain - Dropbox Personal"; flow:established,to_server; http.method; content:"POST"; http.host; content:"dropboxusercontent.com"; http.request_body; bsize:>1000000; classtype:policy-violation; sid:9000064; rev:1;)
+#alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Possible Exfiltration of FERPA-Regulated Data - Student ID Pattern in Outbound Traffic, Adjust to Real Format"; flow:established,to_server; pcre:"/\bSTU\d{7}\b/"; classtype:policy-violation; sid:9000065; rev:1;)
+#alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Possible Payment Card Data in Outbound Traffic - PAN Pattern Match"; flow:established,to_server; pcre:"/\b4[0-9]{12}(?:[0-9]{3})?\b/"; classtype:policy-violation; sid:9000066; rev:1;)
+# SYNTAX FIX: `ftp.command` is not a real Suricata 7.0.3 keyword. The
+# actual keyword for "which command opened this FTP data channel" is
+# `ftpdata_command:<command>` (a single self-contained match, not a
+# sticky buffer + content pair), and it requires the rule's protocol to
+# be `ftp-data` (the data-channel flow), not `ftp` (the control channel)
+# — STOR is issued on the control channel but only actually opens a
+# data-channel flow, which is what this keyword inspects.
+#alert ftp-data $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Outbound FTP Upload (STOR) to External Host"; flow:established,to_server; ftpdata_command:stor; classtype:policy-violation; sid:9000067; rev:1;)
+#alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Outbound File with Double Extension - Possible Exfil Staging"; flow:established,to_server; http.uri; content:".pdf.zip"; nocase; classtype:policy-violation; sid:9000068; rev:1;)
+# SYNTAX FIX (see residential_policy_violations.rules' 9000058 note).
+#alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Outbound Connection to Paste Site - Possible Data Leak"; flow:established,to_server; http.host; content:"pastebin.com"; classtype:policy-violation; sid:9000069; rev:1;)
+#alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV TLS Connection to Unapproved Cloud Backup Domain - backblaze.com"; flow:established; tls.sni; content:"backblaze.com"; nocase; classtype:policy-violation; sid:9000070; rev:1;)

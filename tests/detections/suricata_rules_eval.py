@@ -180,6 +180,42 @@ def replay_pcap(rule_text: str, pcap_path: Path, suricata_bin: str, timeout: int
         return fired
 
 
+def check_syntax_including_disabled(
+    records: list[RuleRecord], suricata_bin: str, timeout: int = 60
+) -> tuple[bool, str, str]:
+    """`suricata -T` against every record's `.uncommented` text — i.e. the
+    real Suricata syntax of every rule this repo carries, INCLUDING the
+    ones currently shipped disabled with a leading '#'.
+
+    This exists because Suricata's rule loader treats a `#`-prefixed line
+    as a pure comment and never attempts to parse it at all (confirmed by
+    hand: a deliberately broken commented-out rule loads silently with no
+    error) — so `-T`/`-S` against the real, as-shipped `.rules` files (as
+    SyntaxGateRealRepoTests does) validates only the ENABLED subset, which
+    for #446's "land all 100, disabled until tuned" set is currently zero
+    rules. Without this check, 100 rules could ship with genuinely broken
+    Suricata syntax and every existing syntax gate would report success.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        rule_file = tmp_path / "all_uncommented.rules"
+        rule_file.write_text("\n".join(rec.uncommented for rec in records) + "\n", encoding="utf-8")
+        log_dir = tmp_path / "log"
+        log_dir.mkdir()
+        config_path = Path(__file__).resolve().parents[2] / "configs" / "suricata" / "suricata.yaml"
+        result = subprocess.run(
+            [
+                suricata_bin, "-T",
+                "-c", str(config_path),
+                "-l", str(log_dir),
+                "--af-packet=lo",
+                "-S", str(rule_file),
+            ],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return result.returncode == 0, result.stdout, result.stderr
+
+
 def promotion_gate_violations(
     records: list[RuleRecord], fixtures_dir: Path, suricata_bin: str | None
 ) -> list[str]:

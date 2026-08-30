@@ -1,0 +1,36 @@
+# University SOC starter set — Category 10: IoT / lab & research network abuse (#446, M23 Stage 3)
+# SIDs 9000091-9000100.
+#
+# Source: university_soc_starter_ruleset.rules, supplied by the repo owner.
+# Rule text below is VERBATIM from that source. ALL RULES DISABLED — see
+# rules/suricata/auth_sso_abuse.rules' header for the full disable/
+# provenance note (applies identically to every category file in this set).
+#
+# GAPS THIS SET CLOSES (docs/detections/suricata-starter-set.md has the
+# full record): none of 9000091-9000100 overlap any existing Sigma rule
+# in this repo — raw-IP TLS SNI (net covered separately by 9000049, not
+# in this file), BitTorrent, and IoT/ICS port exposure (MQTT/CoAP/
+# Modbus/S7comm) plus Mirai telnet defaults have no Zeek/Sigma
+# equivalent today. Genuinely new coverage once tuned and enabled.
+#
+# UNRESOLVED PLACEHOLDER (9000099): "iotbotnet" is the source's own
+# illustrative placeholder C2 domain fragment ("Replace with Real Threat
+# Intel" per its own msg) — not a real, sourced indicator. Left exactly
+# as supplied; per this repo's own conventions (never invent an IOC),
+# this session has no real threat-intel domain to substitute and does
+# not invent one. Do not enable until a real, cited indicator replaces
+# it.
+#
+# detection_filter (9000100, count 50/10s) is the source's own
+# illustrative default — tune before enabling.
+
+#alert tcp $EXTERNAL_NET any -> $HOME_NET 23 (msg:"UNIV Mirai-Style Telnet Default Credential Attempt - root/xc3511"; flow:established,to_server; content:"root|0d 0a|xc3511"; classtype:trojan-activity; sid:9000091; rev:1;)
+#alert tcp $EXTERNAL_NET any -> $HOME_NET 23 (msg:"UNIV Mirai-Style Telnet Default Credential Attempt - admin/admin"; flow:established,to_server; content:"admin|0d 0a|admin"; classtype:trojan-activity; sid:9000092; rev:1;)
+#alert tcp $HOME_NET any -> $EXTERNAL_NET 23 (msg:"UNIV Lab IoT Device Making Outbound Telnet Connection - Possible Botnet Propagation"; flow:established,to_server; classtype:trojan-activity; sid:9000093; rev:1;)
+#alert udp $EXTERNAL_NET any -> $HOME_NET 5683 (msg:"UNIV External Connection Attempt to CoAP Port on Research IoT Segment"; classtype:attempted-recon; sid:9000094; rev:1;)
+#alert tcp $EXTERNAL_NET any -> $HOME_NET 1883 (msg:"UNIV External Connection Attempt to MQTT Broker Port on Lab Segment"; flow:established,to_server; classtype:attempted-recon; sid:9000095; rev:1;)
+#alert tcp $EXTERNAL_NET any -> $HOME_NET 502 (msg:"UNIV External Connection Attempt to Modbus Port - Research/Lab ICS Equipment Should Not Be Internet Facing"; flow:established,to_server; classtype:attempted-recon; sid:9000096; rev:1;)
+#alert tcp $EXTERNAL_NET any -> $HOME_NET 102 (msg:"UNIV External Connection Attempt to S7comm Port - Research/Lab PLC Equipment Should Not Be Internet Facing"; flow:established,to_server; classtype:attempted-recon; sid:9000097; rev:1;)
+#alert tcp $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Lab IoT Device Using Default admin:admin Basic Auth Credentials"; flow:established,to_server; content:"Authorization: Basic YWRtaW46YWRtaW4="; classtype:policy-violation; sid:9000098; rev:1;)
+#alert dns $HOME_NET any -> any 53 (msg:"UNIV Research Lab Device Resolving Placeholder IoT Botnet C2 Domain - Replace with Real Threat Intel"; dns.query; content:"iotbotnet"; nocase; classtype:trojan-activity; sid:9000099; rev:1;)
+#alert tcp $HOME_NET any -> $HOME_NET any (msg:"UNIV Research Lab Segment Host Scanning Other Internal Hosts - Possible Compromised IoT Pivoting"; flow:to_server; flags:S; detection_filter:track by_src, count 50, seconds 10; classtype:attempted-recon; sid:9000100; rev:1;)

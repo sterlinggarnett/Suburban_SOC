@@ -88,13 +88,19 @@ jobs:
       - name: Install suricata
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends suricata
 
-      - name: suricata -T against the real config and every rules/suricata/*.rules file
+      - name: suricata -T against the real config (loads every file in rule-files:)
+        # Suricata 7.0.3 rejects multiple -S flags (confirmed by hand), so
+        # this runs the exact production `-c` path rather than looping
+        # `-S` per file — whatever configs/suricata/suricata.yaml's own
+        # rule-files: list references gets loaded and validated here,
+        # which is also the real "did anyone forget to wire a new file
+        # in" check (tests/detections/test_suricata_rules.py's
+        # RuleFilesWiredIntoConfigTests covers the inverse: every file on
+        # disk is referenced).
         run: |
           set -euo pipefail
-          args=(-T -c configs/suricata/suricata.yaml -l /tmp/suricata-lint --af-packet=lo)
           mkdir -p /tmp/suricata-lint
-          for f in rules/suricata/*.rules; do args+=(-S "$f"); done
-          suricata "${args[@]}"
+          suricata -T -c configs/suricata/suricata.yaml -l /tmp/suricata-lint --af-packet=lo
 
   compose-config:
     name: docker compose config (interpolation/syntax)

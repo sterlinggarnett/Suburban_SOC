@@ -1,0 +1,27 @@
+# University SOC starter set — Category 2: Phishing & malicious email indicators (#446, M23 Stage 3)
+# SIDs 9000011-9000020.
+#
+# Source: university_soc_starter_ruleset.rules, supplied by the repo owner.
+# Rule text below is VERBATIM from that source. ALL RULES DISABLED — see
+# rules/suricata/auth_sso_abuse.rules' header for the full disable/
+# provenance note (applies identically to every category file in this set).
+#
+# UNRESOLVED PLACEHOLDER (9000013): "univv-edu" is the source's own
+# illustrative look-alike-domain string, not this institution's real
+# domain — Suburban-SOC is a residential mesh network, not a university,
+# so there is no real institutional domain to substitute. Left exactly as
+# supplied; must not be enabled without a real look-alike pattern for
+# whatever domain this deployment is actually protecting, decided by the
+# repo owner, not invented here. See
+# docs/detections/suricata-starter-set.md.
+
+#alert smtp $EXTERNAL_NET any -> $HOME_NET 25 (msg:"UNIV Suspected Gift Card Scam Email - Are You Available Pretext"; flow:established,to_server; content:"Are you available"; nocase; classtype:policy-violation; sid:9000011; rev:1;)
+#alert smtp $EXTERNAL_NET any -> $HOME_NET 25 (msg:"UNIV Suspected Wire Transfer Fraud Email - Urgent Payment Pretext"; flow:established,to_server; content:"wire transfer"; nocase; content:"urgent"; nocase; classtype:policy-violation; sid:9000012; rev:1;)
+#alert smtp $EXTERNAL_NET any -> $HOME_NET 25 (msg:"UNIV Email From Look-Alike Domain Impersonating University - Adjust Pattern to Real Domain"; flow:established,to_server; content:"From: "; content:"univv-edu"; nocase; distance:0; classtype:policy-violation; sid:9000013; rev:1;)
+#alert smtp $EXTERNAL_NET any -> $HOME_NET 25 (msg:"UNIV Email Contains Password-Protected Zip Attachment - Common Malware Delivery Technique"; flow:established,to_server; content:"Content-Type: application/x-zip"; nocase; content:"password"; nocase; distance:0; classtype:trojan-activity; sid:9000014; rev:1;)
+#alert smtp $EXTERNAL_NET any -> $HOME_NET 25 (msg:"UNIV Email With Macro-Enabled Office Attachment - .docm"; flow:established,to_server; content:".docm"; nocase; classtype:trojan-activity; sid:9000015; rev:1;)
+#alert smtp $EXTERNAL_NET any -> $HOME_NET 25 (msg:"UNIV Email With Macro-Enabled Office Attachment - .xlsm"; flow:established,to_server; content:".xlsm"; nocase; classtype:trojan-activity; sid:9000016; rev:1;)
+#alert smtp $EXTERNAL_NET any -> $HOME_NET 25 (msg:"UNIV Suspected Job/Scholarship Scam Email Targeting Students"; flow:established,to_server; content:"work from home"; nocase; content:"per week"; nocase; classtype:policy-violation; sid:9000017; rev:1;)
+#alert smtp $EXTERNAL_NET any -> $HOME_NET 25 (msg:"UNIV Email Requesting Direct Deposit Change - BEC Indicator"; flow:established,to_server; content:"direct deposit"; nocase; content:"update"; nocase; classtype:policy-violation; sid:9000018; rev:1;)
+#alert smtp $EXTERNAL_NET any -> $HOME_NET 25 (msg:"UNIV Email With Embedded Link to Known URL Shortener Domain"; flow:established,to_server; content:"bit.ly"; nocase; classtype:policy-violation; sid:9000019; rev:1;)
+#alert dns $HOME_NET any -> any 53 (msg:"UNIV DNS Query for Lookalike Domain Pattern - secure-*-portal"; dns.query; content:"secure-"; nocase; content:"-portal"; nocase; distance:0; classtype:policy-violation; sid:9000020; rev:1;)

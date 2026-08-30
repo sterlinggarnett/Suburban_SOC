@@ -134,19 +134,36 @@ same disclose-what's-real-vs-not reasons.
       — see `docs/detections/suricata-ci-lane.md`. ATT&CK coverage
       accounting explicitly scoped out for now
       (`findings/20260830-445-suricata-attack-coverage-scope.md`).
-- [ ] **#446** — land the 100-rule university starter set as
-      `rules/suricata/`, disabled until tuned. Blocked: the source file
-      (`university_soc_starter_ruleset.rules`) was supplied mid-session
-      and saved only to that session's ephemeral scratchpad, not this
-      repo — it needs to be re-supplied before Stage 3 can start.
+- [x] **#446** — landed the 100-rule university starter set as
+      `rules/suricata/` (10 category files), all disabled until tuned.
+      Re-supplied by the repo owner after the first attempt's source file
+      was lost to a prior session's ephemeral scratchpad. 8 rules needed
+      a Suricata-7.0.3 syntax compatibility fix (verified by hand, see
+      `docs/detections/suricata-starter-set.md`) before they'd even
+      parse — caught by extending the CI lane's syntax gate to validate
+      disabled rules too (Suricata's loader otherwise silently skips
+      `#`-commented lines, so it would never have caught this). 3
+      placeholders (9000013 look-alike domain, 9000065 student-ID format,
+      9000099 C2 domain fragment) left exactly as supplied per this
+      repo's own never-invent-an-IOC convention. Full reconciliation
+      against existing Sigma coverage, genuine-gap inventory, and DLP
+      sign-off flag in `docs/detections/suricata-starter-set.md`.
 
 Operational to-dos (Suricata lane):
 - [ ] Deploy `suricata-host-capture.service` to a real capture host
       alongside Zeek; measure CPU headroom
 - [ ] Confirm Filebeat ships `eve.json` and Logstash's Category 0b branch
       populates `rule.*`/`threat.technique.id` as designed
-- [ ] Once #446 lands: per-rule pcap fixtures, placeholder resolution,
-      DLP rule (9000065/66) owner sign-off before enabling
+- [ ] Per-rule pcap fixtures — nothing enters the enabled set without one
+      (#445's promotion gate)
+- [ ] Resolve the 3 remaining placeholders (9000013/9000065/9000099) with
+      real institutional/threat-intel values before those specific rules
+      are ever enabled
+- [ ] Obtain explicit data-handling-policy owner sign-off before enabling
+      the DLP rules (9000065/9000066)
+- [ ] Tune every `detection_filter` count/seconds value against measured
+      traffic — the shipped values are the source's own illustrative
+      defaults, not a baseline for this deployment
 
 ## Global
 - [ ] `python3 tests/validate_emulation_map.py` returns 0 fail

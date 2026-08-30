@@ -1,0 +1,36 @@
+# University SOC starter set — Category 6: Residential network / policy violations (#446, M23 Stage 3)
+# SIDs 9000051-9000060.
+#
+# Source: university_soc_starter_ruleset.rules, supplied by the repo owner.
+# Rule text below is VERBATIM from that source. ALL RULES DISABLED — see
+# rules/suricata/auth_sso_abuse.rules' header for the full disable/
+# provenance note (applies identically to every category file in this set).
+#
+# RECONCILIATION (docs/detections/suricata-starter-set.md has the full
+# record): 9000053 (Tor OR/directory port) overlaps
+# rules/sigma/net_zeek_conn_tor_exit_node.yml (same ports, 9001/9030);
+# 9000057 (cryptomining pool DNS) overlaps
+# rules/sigma/net_zeek_dns_crypto_mining_pool.yml. Both kept as
+# independent confirmation — see ransomware_c2.rules' header for why.
+#
+# 9000060's detection_filter (count 200, seconds 10) is the source's own
+# illustrative default for "excessive internal connection volume" — the
+# source's own top-of-file note explicitly calls this exact shape out as
+# "a guess, not a baseline" and it applies here unchanged; tune before
+# enabling.
+
+#alert tcp $HOME_NET any -> any any (msg:"UNIV BitTorrent Handshake Detected on Residential Network"; flow:established,to_server; content:"|13|BitTorrent protocol"; classtype:policy-violation; sid:9000051; rev:1;)
+#alert udp $HOME_NET any -> any any (msg:"UNIV BitTorrent DHT Traffic Detected on Residential Network"; content:"d1:ad2:id20:"; classtype:policy-violation; sid:9000052; rev:1;)
+#alert tcp $HOME_NET any -> $EXTERNAL_NET [9001,9030] (msg:"UNIV Connection to Common Tor OR/Directory Port"; flow:established; classtype:policy-violation; sid:9000053; rev:1;)
+#alert dns $HOME_NET any -> any 53 (msg:"UNIV DNS Query for .onion Domain via Public Resolver"; dns.query; content:".onion"; nocase; classtype:policy-violation; sid:9000054; rev:1;)
+#alert tcp $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Cryptocurrency Mining Stratum Protocol Detected"; flow:established,to_server; content:"mining.subscribe"; classtype:policy-violation; sid:9000055; rev:1;)
+#alert tcp $HOME_NET any -> $EXTERNAL_NET [3333,4444,5555,7777,8888,9999] (msg:"UNIV Connection to Common Cryptomining Pool Port Range"; flow:established,to_server; classtype:policy-violation; sid:9000056; rev:1;)
+#alert dns $HOME_NET any -> any 53 (msg:"UNIV DNS Query to Known Cryptomining Pool Domain"; dns.query; content:"pool.minexmr"; nocase; classtype:policy-violation; sid:9000057; rev:1;)
+# SYNTAX FIX (docs/detections/suricata-starter-set.md has the full
+# record): `http.hostname` is not a real Suricata 7.0.3 keyword (the
+# actual sticky buffer is `http.host`, already lowercase-normalized —
+# `nocase` dropped as redundant, not a semantic change). Same for every
+# other `http.hostname` occurrence in this ruleset (9000063/64/69).
+#alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Outbound Connection to Known Unauthorized Streaming/Piracy Site Category"; flow:established,to_server; http.host; content:"1337x"; classtype:policy-violation; sid:9000058; rev:1;)
+#alert udp any 67 -> any 68 (msg:"UNIV DHCP Offer Observed on Residential Segment - Review for Rogue DHCP Server"; classtype:policy-violation; sid:9000059; rev:1;)
+#alert tcp $HOME_NET any -> $HOME_NET any (msg:"UNIV Excessive Internal Connection Volume from Single Host - Possible Broadcast Storm or Rogue Device"; flow:established; detection_filter:track by_src, count 200, seconds 10; classtype:policy-violation; sid:9000060; rev:1;)

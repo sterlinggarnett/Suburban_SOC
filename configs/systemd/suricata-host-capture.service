@@ -1,0 +1,89 @@
+# Suburban-SOC — Suricata boundary-tap IDS/EVE sensor (#443, M23).
+# Runs Suricata natively (host package, not a container — see
+# configs/suricata/suricata.yaml's own header for why) on the same
+# interface Zeek captures from, writing eve.json alerts under
+# /storage/PCAP/suricata (tailed by Filebeat — see configs/network/
+# filebeat.yml's suricata-eve input, #444). Mirrors zeek-host-capture.
+# service's structure (env-var interface override, Restart=always,
+# capability-narrowing instead of a full unprivileged-user drop) so the
+# two sensors are operated the same way side by side.
+#
+# Install:
+#   sudo apt-get install suricata=1:7.0.3-1build3
+#   sudo cp configs/systemd/suricata-host-capture.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now suricata-host-capture
+# Change interface (same convention as zeek-host-capture):
+#   echo 'CAPTURE_IFACE=ethX' | sudo tee /etc/default/suricata-host-capture && sudo systemctl restart suricata-host-capture
+#
+# Version pin: exact apt package string (1:7.0.3-1build3, Ubuntu 24.04's
+# suricata package as of this writing), not a Docker tag+digest — there is
+# no Docker image here to pin. apt's own package integrity/signing is the
+# equivalent guarantee #293 uses a content-addressed digest for with Zeek's
+# mutable Docker Hub tag. To bump deliberately: `apt-cache policy suricata`
+# to see what's available, `suricata -T -c configs/suricata/suricata.yaml`
+# against the new version before rolling out (same "prove it loads before
+# deploying" discipline as #364's Zeek bump — no golden-output-diff
+# equivalent exists yet for Suricata since there is no real alert output to
+# diff against in this environment; disclosed, not a decided-safe skip),
+# and update this comment's version string.
+#
+# NOT live-verified in the environment this unit was authored in — no real
+# capture host to deploy it to. `suricata -T` (this repo's CI syntax gate,
+# #445) proves the config and any loaded rules parse; it does not prove
+# this unit starts cleanly under systemd, survives a reboot, or measures
+# CPU headroom running alongside zeek-host-capture.service on one box
+# (#443's own flagged, unmeasured resource risk). See coverage_checklist.md.
+#
+# Capability posture: runs as root (no dedicated system user is created by
+# the Ubuntu suricata package — confirmed empirically, `getent passwd`
+# shows none), same posture zeek-host-capture.service uses — root process,
+# CapabilityBoundingSet= narrows what that root process can actually do,
+# rather than a full privilege drop this repo has not live-tested for
+# Suricata specifically. CAP_NET_RAW + CAP_NET_ADMIN only: af-packet
+# capture needs both (raw socket creation, and promiscuous-mode/socket
+# option calls); no CAP_CHOWN/SETUID/SETGID/others — unlike zeek-host-
+# capture.service, this unit does no intel-file sync or tcpdump privilege
+# drop, so none of the capabilities those steps needed apply here.
+#
+# Deliberately NOT copying ProtectSystem=/ProtectHome=/other sandboxing
+# directives from the stock Debian/Ubuntu suricata.service (present at
+# /usr/lib/systemd/system/suricata.service) — zeek-host-capture.service's
+# own footer records a sandboxing attempt that was added and then REVERTED
+# (2026-07-09) after it broke live capture on this repo's actual Docker
+# Desktop/WSL2 deployment target (issue #182). Adding untested sandboxing
+# directives here risks repeating that exact failure for a second sensor;
+# left out until someone can live-test them one at a time, same as #182
+# asks for Zeek's own unit.
+[Unit]
+Description=Suburban-SOC Suricata host live capture (IDS/EVE mode; iface from CAPTURE_IFACE, default eth0)
+Documentation=https://github.com/voltron-1/Suburban-SOC
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+# Default interface; override via /etc/default/suricata-host-capture (optional).
+Environment=CAPTURE_IFACE=eth0
+# Same portability convention as zeek-host-capture.service (#320) — override
+# for a deployment whose checkout isn't at this default path.
+Environment=SOC_REPO=/home/tjlam/projects/Suburban-SOC
+EnvironmentFile=-/etc/default/suricata-host-capture
+ExecStartPre=/bin/mkdir -p /storage/PCAP/suricata
+# Type=simple: Suricata runs in the foreground (no -D daemonize, no
+# --pidfile/PIDFile= bookkeeping) so systemd supervises the process
+# directly — matches zeek-host-capture.service's own Type=simple choice,
+# and avoids the stock package unit's Type=forking + PIDFile complexity.
+# --af-packet=${CAPTURE_IFACE} overrides configs/suricata/suricata.yaml's
+# af-packet.interface entry (verified: `suricata -T --af-packet=lo`
+# accepts this exact form). default-rule-path is re-set to an absolute
+# path here since systemd units don't inherit the repo checkout as a
+# working directory the way a locally-invoked `suricata -c ...` would.
+ExecStart=/usr/bin/suricata -c ${SOC_REPO}/configs/suricata/suricata.yaml --af-packet=${CAPTURE_IFACE} --set default-rule-path=${SOC_REPO}/rules/suricata/
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

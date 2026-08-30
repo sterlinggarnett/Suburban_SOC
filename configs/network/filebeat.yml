@@ -63,6 +63,39 @@ filebeat.inputs:
             - {from: "host", to: "zeek.http.host"}
           ignore_missing: true
 
+  # #443/#444 (M23): Suricata's eve.json, written by suricata-host-capture.
+  # service (configs/systemd/) under the same /storage/PCAP tree Zeek uses,
+  # per docs/detections/suricata-evaluation.md's own recommended path — no
+  # new transport, same Filebeat -> Logstash :5044 pipe as the Zeek input
+  # above. `event.module`/`event.dataset` stamping and the alert.* -> ECS
+  # rule.*/threat.technique.* mapping happen downstream in Logstash
+  # (configs/logstash.conf's eve.json branch, #444), not here.
+  - type: filestream
+    id: suricata-eve
+    enabled: true
+    paths:
+      - /storage/PCAP/suricata/eve.json
+      # rotate-interval: day (configs/suricata/suricata.yaml) renames the
+      # active file and starts a fresh eve.json daily — this second glob
+      # picks up the dated rotated files the same way the Zeek input's
+      # second glob covers zeek_run_pcap.sh's own per-run subdirectories.
+      - /storage/PCAP/suricata/eve.json.*
+    parsers:
+      - ndjson:
+          target: ""
+          overwrite_keys: true
+          add_error_key: true
+    # Same fingerprint-identity reasoning as the Zeek input above: eve.json
+    # is a single actively-rewritten file, and a content-blind native
+    # (inode/offset) identity risks the same same-size-rewrite blind spot
+    # documented there. No Suricata-specific record has been measured small
+    # enough to need the same 64 B floor override, but there's no reason to
+    # expect eve.json's alert/flow records behave differently from Zeek's
+    # own small notice.log records, so the same floor is used defensively.
+    prospector.scanner.fingerprint.enabled: true
+    prospector.scanner.fingerprint.length: 64
+    file_identity.fingerprint: ~
+
 # ============================== Tenant attribution ===========================
 # Edge-stamping (WS0.3): each deployment sets TENANT_ID so every shipped event
 # carries [tenant][id]. Storage routing, ES role isolation, and tenant-scoped

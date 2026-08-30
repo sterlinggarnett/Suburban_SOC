@@ -249,10 +249,19 @@ def extract_pipeline_renames(conf_text: Optional[str] = None, filebeat_text: Opt
     # with a lone brace would silently reshape cat0_close. This tripwire
     # doesn't fix that root cause but converts a silent reshape into a loud
     # failure: the real Category 0 span is immediately followed by a
-    # "Category 1" comment, so if the span landed short/long that landmark
-    # won't be where expected right after it.
+    # recognizable landmark comment, so if the span landed short/long that
+    # landmark won't be where expected right after it.
+    #
+    # #443/#444 (M23): the landmark shifted from "Category 1" to
+    # "Category 0b" — a new Suricata eve.json branch was inserted directly
+    # after Category 0's Zeek block (same top-level [log][file][path]-gated
+    # pattern, same reasoning: NOT nested inside the "endpoint_logs" in
+    # [tags] Category 2 branch). "Category 1" still follows eventually,
+    # just no longer within 500 chars, so the landmark check was updated
+    # to the new immediate neighbor rather than widening the window and
+    # weakening the tripwire.
     if conf_text is CONF:
-        assert "Category 1" in conf_text[cat0_close:cat0_close + 500], (
+        assert "Category 0b" in conf_text[cat0_close:cat0_close + 500], (
             "Category 0 span extraction landed somewhere unexpected — "
             "configs/logstash.conf structure may have drifted, or an "
             "unbalanced brace inside a comment/string reshaped the span")

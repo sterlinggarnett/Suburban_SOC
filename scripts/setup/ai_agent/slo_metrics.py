@@ -138,6 +138,10 @@ TARGETS = {
     # (no separately-calibrated Zeek-specific SLA exists yet) — this metric's
     # value is in WHICH source it isolates, not a different threshold.
     "zeek_ingest_lag_seconds": float(os.environ.get("SLO_ZEEK_INGEST_LAG_MAX_S", "300")),
+    # #443: same 300s default, same "value is in WHICH source it isolates"
+    # reasoning as zeek_ingest_lag_seconds above — no separately-calibrated
+    # Suricata-specific SLA exists yet either.
+    "suricata_ingest_lag_seconds": float(os.environ.get("SLO_SURICATA_INGEST_LAG_MAX_S", "300")),
     "parse_error_pct":     float(os.environ.get("SLO_PARSE_ERR_MAX_PCT", "1")),
     "audit_write_failures": float(os.environ.get("SLO_AUDIT_WRITE_FAIL_MAX", "2")),
     # #247: any claim still open past SLO_STUCK_CLAIM_MAX_MIN (the AGE window,
@@ -197,7 +201,7 @@ LOWER_BETTER = {
     "orphaned_claims": True, "vanished_claims": True, "capture_loss_max_pct": True,
     "intel_feed_stale_heartbeats": False, "intel_indicator_count_drop_pct": True,
     "zeek_path_nomatch_count": True, "broker_response_tampering_count": True,
-    "zeek_ingest_lag_seconds": True,
+    "zeek_ingest_lag_seconds": True, "suricata_ingest_lag_seconds": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
 # not a benign "n/a". A dead/unreachable pipeline produces no fresh docs, so
@@ -208,7 +212,10 @@ LOWER_BETTER = {
 # fully-dead zeek-host-capture.service produces zero zeek.* documents, so
 # metric_zeek_ingest_lag_seconds() returns None the same way a total pipeline
 # outage does for the metric above, and needs the same fail-loud treatment.
-BREACH_IF_NA = {"ingest_lag_seconds", "zeek_ingest_lag_seconds"}
+# #443: suricata_ingest_lag_seconds joins for the identical reason — a
+# fully-dead suricata-host-capture.service produces zero event.module:
+# suricata documents.
+BREACH_IF_NA = {"ingest_lag_seconds", "zeek_ingest_lag_seconds", "suricata_ingest_lag_seconds"}
 # #216: measured but not target-checked. There's no "correct" alert volume to set
 # a threshold against yet — that's what this metric exists to establish a baseline
 # for (the before/after signal detection tuning needs to prove it reduced noise
@@ -518,6 +525,44 @@ def metric_zeek_ingest_lag_seconds():
         return round((datetime.now(timezone.utc) - newest).total_seconds(), 1)
     except Exception as e:
         raise MetricUnavailable(f"zeek ingest-lag search failed: {e}") from e
+
+
+def metric_suricata_ingest_lag_seconds():
+    """Per-SOURCE liveness for the Suricata sensor (#443, M23).
+
+    Direct port of metric_zeek_ingest_lag_seconds() above — same rationale:
+    metric_ingest_lag_seconds() alone can't distinguish "Suricata is silent"
+    from "everything else is still writing," and suricata-host-capture.
+    service's own Restart=always/StartLimitIntervalSec=0 (configs/systemd/
+    suricata-host-capture.service) means a crash loop never reaches
+    systemd's `failed` state either — only an ingest-freshness check on
+    this specific source catches a silent outage.
+
+    Filters on `event.module: "suricata"` (configs/logstash.conf's eve.json
+    branch, #444, stamps this on every real Suricata document) rather than
+    a `event.dataset` wildcard the way the Zeek metric does — #444 stamps
+    `event.dataset` on a Suricata document only once the `alert.*` fields
+    it implies are actually present (the #217-shape gate the auditd branch
+    established), so a non-alert EVE record (flow/http/dns/tls) would have
+    no `event.dataset` to wildcard-match against and would invisibly widen
+    this metric's blind spot to exactly those record types. `event.module`
+    is stamped unconditionally on every Suricata-sourced document instead,
+    so it's the correct freshness anchor here regardless of record type.
+
+    NOT live-verified against a real Suricata/Logstash stream in the
+    environment this was authored in — same disclosed gap as #442's
+    equivalent auditd metric before it, and #443/#444 themselves.
+    """
+    body = {"size": 1, "sort": [{"@timestamp": "desc"}], "_source": ["@timestamp"],
+            "query": {"term": {"event.module": "suricata"}}}
+    try:
+        hits = es("POST", "/logstash-security-*/_search", body).json().get("hits", {}).get("hits", [])
+        if not hits:
+            return None
+        newest = datetime.fromisoformat(hits[0]["_source"]["@timestamp"].replace("Z", "+00:00"))
+        return round((datetime.now(timezone.utc) - newest).total_seconds(), 1)
+    except Exception as e:
+        raise MetricUnavailable(f"suricata ingest-lag search failed: {e}") from e
 
 
 def metric_parse_error_pct():
@@ -1608,6 +1653,7 @@ def main():
         "false_positive_pct": metric_false_positive_pct,
         "ingest_lag_seconds": metric_ingest_lag_seconds,
         "zeek_ingest_lag_seconds": metric_zeek_ingest_lag_seconds,
+        "suricata_ingest_lag_seconds": metric_suricata_ingest_lag_seconds,
         "parse_error_pct": metric_parse_error_pct,
         "audit_write_failures": metric_audit_write_failures,
         "broker_response_tampering_count": metric_broker_response_tampering,

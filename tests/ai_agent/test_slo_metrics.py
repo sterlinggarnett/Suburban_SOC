@@ -217,6 +217,40 @@ class MetricFunctionTests(unittest.TestCase):
         query = mock_es.call_args[0][2]["query"]
         self.assertEqual(query, {"wildcard": {"event.dataset": "zeek.*"}})
 
+    # --- #443: per-source Suricata liveness ------------------------------------
+    def test_suricata_ingest_lag_raises_on_request_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_suricata_ingest_lag_seconds()
+
+    def test_suricata_ingest_lag_returns_none_when_no_suricata_docs(self):
+        # Same blind spot #320 fixed for Zeek: zero Suricata-sourced documents
+        # (a dead suricata-host-capture.service) must read as None here, not
+        # register as healthy because some other source is still writing.
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})):
+            self.assertIsNone(slo_metrics.metric_suricata_ingest_lag_seconds())
+
+    def test_suricata_ingest_lag_computes_age_of_newest_suricata_doc(self):
+        import datetime as _dt
+        stale = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=17)).isoformat().replace("+00:00", "Z")
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": [
+                                   {"_source": {"@timestamp": stale}}]}})):
+            lag = slo_metrics.metric_suricata_ingest_lag_seconds()
+        self.assertAlmostEqual(lag, 17.0, delta=2.0)
+
+    def test_suricata_ingest_lag_queries_event_module_suricata(self):
+        # Term query on event.module, not an event.dataset wildcard like the
+        # Zeek metric — see metric_suricata_ingest_lag_seconds()'s own
+        # docstring for why (event.dataset is gated on alert.* presence,
+        # event.module is stamped on every Suricata-sourced document).
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})) as mock_es:
+            slo_metrics.metric_suricata_ingest_lag_seconds()
+        query = mock_es.call_args[0][2]["query"]
+        self.assertEqual(query, {"term": {"event.module": "suricata"}})
+
     def test_parse_error_pct_propagates_count_failure(self):
         with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
             with self.assertRaises(slo_metrics.MetricUnavailable):
@@ -1393,7 +1427,7 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                        capture_loss_max_pct=0.0, intel_feed_stale_heartbeats=1.0,
                        intel_indicator_count_drop_pct=0.0,
                        broker_response_tampering_count=0.0,
-                       zeek_ingest_lag=10.0):
+                       zeek_ingest_lag=10.0, suricata_ingest_lag=10.0):
     # Module-level, not a TestCase method: shared verbatim by MainExitCodeTests
     # and PrivilegeSelfCheckMainIntegrationTests below. A TestCase-method
     # version can't be shared across sibling classes without either
@@ -1435,6 +1469,8 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                            return_value=broker_response_tampering_count),
         mock.patch.object(slo_metrics, "metric_zeek_ingest_lag_seconds",
                            return_value=zeek_ingest_lag),
+        mock.patch.object(slo_metrics, "metric_suricata_ingest_lag_seconds",
+                           return_value=suricata_ingest_lag),
         mock.patch.object(slo_metrics, "es", side_effect=_fake_es_healthy_default),
     ]
 
@@ -1601,6 +1637,21 @@ class MainExitCodeTests(unittest.TestCase):
             code = _run_main_capturing_exit()
         self.assertEqual(code, 2)
         self.assertIn("zeek_ingest_lag_seconds",
+                       ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_suricata_ingest_lag_none_breaches_via_breach_if_na(self):
+        # Same regression guard as test_zeek_ingest_lag_none_breaches_via_
+        # breach_if_na above, for #443's Suricata metric: must actually be
+        # wired into main()'s metric_fns dict AND BREACH_IF_NA, not just
+        # defined.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in _mock_all_metrics(suricata_ingest_lag=None):
+                stack.enter_context(p)
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        self.assertIn("suricata_ingest_lag_seconds",
                        ntfy_post.call_args.kwargs["data"].decode())
 
     def test_capture_loss_below_threshold_does_not_breach(self):

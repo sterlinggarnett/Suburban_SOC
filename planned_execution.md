@@ -31,8 +31,8 @@ since — see the last two rows):
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
-| [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | 📋 4 open (added after the restructure) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
-| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | 📋 5 open (created 2026-08-29) | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
+| [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 4 open, all not actionable here (needs a live capture host) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
+| [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ⏳ 3/5 in PR (#505), 2 queued next | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -100,6 +100,53 @@ closed** — #283, #333, #415, #421 are the only issues remaining, all four
 permanently not actionable (externally blocked / speculative / needs a
 live Docker+Zeek+ES stack this environment doesn't have) — no further M17
 work is queued.
+
+**M23 assessed 2026-08-30, not picked up.** All 4 issues (#443-446) form a
+strict chain (#443 → #444 → #445 → #446) whose first step is deploying
+Suricata onto the real capture host next to Zeek — measuring CPU headroom,
+wiring a systemd unit into `stream_capture.sh`/`zeek-host-capture.service`,
+confirming survival across a reboot. Same class of blocker as M17's
+#415/#421 above: no live Docker/capture-host access in this sandbox
+(`docker version` succeeds for the client, fails to connect to
+`/var/run/docker.sock`). Left open, milestoned M23, for a session with real
+capture-host access — not attempted partially, since #444-#446 are each
+explicitly blocked on #443 landing for real (its own issue text: "the
+syntax gate needs a real suricata.yaml to validate against", "the rules
+land into the CI lane, not ahead of it").
+
+**M24 progress 2026-08-30:** picked up all 5 open issues. #449 (HA
+compose file's `es01` had the same 0.0.0.0 port exposure #359 fixed for
+the single-node stack), #453 (extended #374's `soc_admin` RBAC carve-out
+to `soc-audit-*` — the audit trail itself), and #463 (`deploy_detections.sh`'s
+venv now resolves the same Python version CI pins via `.python-version`,
+closing the #330 root cause CI only half-fixed) are in
+[PR #505](https://github.com/voltron-1/Suburban_SOC/pull/505), each with a
+static regression test (`tests/setup/test_docker_compose_ports.py`'s new
+`ElasticsearchHaPortBindingTests`, `tests/setup/test_soc_admin_role_scope.py`'s
+new `test_excludes_soc_audit`) — not yet merged, CI pending.
+
+**#441/#442 deliberately NOT picked up this session** — assessed and
+scoped, not attempted partially. #442 (ship Linux execve telemetry: a new
+Filebeat input, multi-record auditd-log correlation in
+`configs/logstash.conf`, ES template mapping, WS1.4 heartbeat coverage, a
+`tests/pipeline` case) is itself a full new telemetry lane with no way to
+live-verify the hardest part — the SYSCALL+EXECVE correlation — against a
+real auditd stream in this sandbox. #441 then needs 10 new Sigma rules on
+top of it (5 `proc_creation_lnx_*`, blocked on #442; 5
+Collection/Exfiltration), each carrying this repo's full per-rule DoD: TP+TN
+fixtures, a benign-baseline FP guard, `build_attack_coverage.py --check`,
+`build_kql_docs.py --check`, `validate_emulation_map.py` (which requires a
+real emulation script per rule, not just the Sigma file), and a
+`coverage_checklist.md` row. Every individual rule change closed under M17
+this session (#407/#420, #413, #414, #417/#418, #434, #411 — see above) was
+its own full implement → test → PR → CI → merge cycle; #441 asks for 10 at
+once plus the telemetry prerequisite. Attempting that in one unverified
+pass risks shipping exactly the silent-mapping-drift class of bug this
+doc's own M17/M18 history exists to catch (the #217 shape: a field mapping
+that reads correctly but the pipeline never actually produces) — starting
+with #442 alone, one session, matches this doc's own established cadence
+better than a rushed 10-rule dump. Queued as a follow-up task (not just
+noted here) — see the M24 milestone issue list for current state.
 
 **M19 progress:**
 

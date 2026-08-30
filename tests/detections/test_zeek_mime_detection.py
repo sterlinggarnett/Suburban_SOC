@@ -149,13 +149,18 @@ class _EchoSMTPServer(smtpd.SMTPServer):
         return None
 
 
-def _run_zeek_over_pcap(tmpdir: Path, pcap_name: str, out_subdir: str) -> list:
+def _run_zeek_over_pcap(tmpdir: Path, pcap_name: str, out_subdir: str,
+                         extra_zeek_args: tuple = ()) -> list:
     """Replays a captured pcap through the pinned image exactly like
     scripts/setup/zeek_run_pcap.sh's real invocation (-C, LogAscii::use_json=T,
     docker -w for the output dir) minus the intel/config.zeek loading that
     script also does — irrelevant here, since files.log/mime_type is part of
     Zeek's base (not policy/) file-analysis framework, loaded by default with
-    no extra scripts. Returns the parsed files.log records (possibly empty)."""
+    no extra scripts. Returns the parsed files.log records (possibly empty).
+
+    extra_zeek_args: appended verbatim after the pcap path — used by the SMTP
+    scenario to register its ephemeral port with Zeek's SMTP analyzer (see
+    that test's own comment for why DPD alone isn't enough here)."""
     out_dir = tmpdir / out_subdir
     out_dir.mkdir(parents=True, exist_ok=True)
     r = subprocess.run(
@@ -163,7 +168,8 @@ def _run_zeek_over_pcap(tmpdir: Path, pcap_name: str, out_subdir: str) -> list:
          "-v", f"{tmpdir}:/data",
          "-w", f"/data/{out_subdir}",
          ZEEK_IMAGE,
-         "zeek", "-C", "-r", f"/data/{pcap_name}", "LogAscii::use_json=T"],
+         "zeek", "-C", "-r", f"/data/{pcap_name}", "LogAscii::use_json=T",
+         *extra_zeek_args],
         capture_output=True, timeout=120)
     assert r.returncode == 0, (
         f"zeek replay of {pcap_name} failed (exit {r.returncode}): "
@@ -327,7 +333,24 @@ class ZeekMimeDetectionLiveFireTests(unittest.TestCase):
                 smtpd.asyncore.close_all()
                 loop_thread.join(timeout=10)
 
-            records = _run_zeek_over_pcap(tmpdir, "capture_smtp.pcap", "out_smtp")
+            # #411 live-fire finding: Zeek's SMTP DPD signature matches on the
+            # SERVER's initial "220 ..." banner, but only confirms the session
+            # as SMTP once it also sees the CLIENT's own EHLO/HELO as the
+            # connection's very first bytes — the normal case on the
+            # well-known ports (25/587/465) Zeek's default SMTP::ports
+            # registers. On an OS-assigned ephemeral port with no DPD
+            # confirmation, Zeek analyzed the connection (conn.log exists)
+            # but never attached the SMTP analyzer at all (no smtp.log, so
+            # files.log's MIME extraction never had a chance to run either)
+            # — caught live via _run_zeek_over_pcap's own diagnostic printing
+            # the produced-log list. Explicitly registering this run's port
+            # with SMTP::ports (the same mechanism a real deployment uses for
+            # SMTP on a nonstandard port) sidesteps the DPD-ordering
+            # dependency entirely, matching how a real client would need to
+            # be configured for a nonstandard mail port too.
+            records = _run_zeek_over_pcap(
+                tmpdir, "capture_smtp.pcap", "out_smtp",
+                extra_zeek_args=("-e", f"redef SMTP::ports += {{ {port}/tcp }};"))
             matches = [rec for rec in records
                        if rec.get("mime_type") == EXPECTED_MIME and rec.get("source") == "SMTP"]
             self.assertTrue(

@@ -207,9 +207,11 @@ outputs:
             # payload-buffer-size: 4kb # max size of payload buffer to output in eve-log
             # payload-printable: yes   # enable dumping payload in printable (lossy) format
             # packet: yes              # enable dumping of packet (without stream segments)
-            # metadata: no             # enable inclusion of app layer metadata with alert. Default yes
+            # metadata: no             # enable inclusion of app layer metadata
+            #                         # with alert. Default yes
             # http-body: yes           # Requires metadata; enable dumping of HTTP body in Base64
-            # http-body-printable: yes # Requires metadata; enable dumping of HTTP body in printable format
+            # http-body-printable: yes # Requires metadata; enable dumping of
+            #                         # HTTP body in printable format
 
             # Enable the logging of tagged packets for rules using the
             # "tag" keyword.
@@ -298,7 +300,8 @@ outputs:
             # session id
             #session-resumption: no
             # custom controls which TLS fields that are included in eve-log
-            #custom: [subject, issuer, session_resumed, serial, fingerprint, sni, version, not_before, not_after, certificate, chain, ja3, ja3s]
+            #custom: [subject, issuer, session_resumed, serial, fingerprint, sni,
+            #         version, not_before, not_after, certificate, chain, ja3, ja3s]
         - files:
             force-magic: no   # force logging magic on all logged files
             # force logging of checksums, available hash functions are md5,
@@ -463,9 +466,12 @@ outputs:
       # directory will be used. Required for "sguil" mode.
       #dir: /nsm_data/
 
-      #ts-format: usec # sec or usec second format (default) is filename.sec usec is filename.sec.usec
-      use-stream-depth: no #If set to "yes" packets seen after reaching stream inspection depth are ignored. "no" logs all packets
-      honor-pass-rules: no # If set to "yes", flows in which a pass rule matched will stop being logged.
+      #ts-format: usec # sec or usec second format (default) is filename.sec
+      #                # usec is filename.sec.usec
+      use-stream-depth: no #If set to "yes" packets seen after reaching stream
+                           #inspection depth are ignored. "no" logs all packets
+      honor-pass-rules: no # If set to "yes", flows in which a pass rule
+                           # matched will stop being logged.
       # Use "all" to log all packets or use "alerts" to log only alerted packets and flows or "tag"
       # to log only flow tagged via the "tag" keyword
       #conditional: all
@@ -633,20 +639,20 @@ logging:
   # Define your logging outputs.  If none are defined, or they are all
   # disabled you will get the default: console output.
   outputs:
-  - console:
-      enabled: yes
-      # type: json
-  - file:
-      enabled: yes
-      level: info
-      filename: suricata.log
-      # format: "[%i - %m] %z %d: %S: %M"
-      # type: json
-  - syslog:
-      enabled: no
-      facility: local5
-      format: "[%i] <%d> -- "
-      # type: json
+    - console:
+        enabled: yes
+        # type: json
+    - file:
+        enabled: yes
+        level: info
+        filename: suricata.log
+        # format: "[%i - %m] %z %d: %S: %M"
+        # type: json
+    - syslog:
+        enabled: no
+        facility: local5
+        format: "[%i] <%d> -- "
+        # type: json
 
 
 ##
@@ -803,20 +809,27 @@ dpdk:
     - interface: 0000:3b:00.0 # PCIe address of the NIC port
       # Threading: possible values are either "auto" or number of threads
       # - auto takes all cores
-      # in IPS mode it is required to specify the number of cores and the numbers on both interfaces must match
+      # in IPS mode it is required to specify the number of cores and the
+      # numbers on both interfaces must match
       threads: auto
       promisc: true # promiscuous mode - capture all packets
       multicast: true # enables also detection on multicast packets
       checksum-checks: true # if Suricata should validate checksums
-      checksum-checks-offload: true # if possible offload checksum validation to the NIC (saves Suricata resources)
+      checksum-checks-offload: true # if possible offload checksum validation
+                                    # to the NIC (saves Suricata resources)
       mtu: 1500 # Set MTU of the device in bytes
-      # rss-hash-functions: 0x0 # advanced configuration option, use only if you use untested NIC card and experience RSS warnings,
-      # For `rss-hash-functions` use hexadecimal 0x01ab format to specify RSS hash function flags - DumpRssFlags can help (you can see output if you use -vvv option during Suri startup)
+      # rss-hash-functions: 0x0 # advanced configuration option, use only if
+      #                         # you use untested NIC card and experience RSS warnings,
+      # For `rss-hash-functions` use hexadecimal 0x01ab format to specify RSS
+      # hash function flags - DumpRssFlags can help (you can see output if
+      # you use -vvv option during Suri startup)
       # setting auto to rss_hf sets the default RSS hash functions (based on IP addresses)
 
-      # To approximately calculate required amount of space (in bytes) for interface's mempool: mempool-size * mtu
+      # To approximately calculate required amount of space (in bytes) for
+      # interface's mempool: mempool-size * mtu
       # Make sure you have enough allocated hugepages.
-      # The optimum size for the packet memory pool (in terms of memory usage) is power of two minus one: n = (2^q - 1)
+      # The optimum size for the packet memory pool (in terms of memory
+      # usage) is power of two minus one: n = (2^q - 1)
       mempool-size: 65535 # The number of elements in the mbuf pool
 
       # Mempool cache size must be lower or equal to:
@@ -824,8 +837,10 @@ dpdk:
       #     - "mempool-size / 1.5"
       # It is advised to choose cache_size to have "mempool-size modulo cache_size == 0".
       # If this is not the case, some elements will always stay in the pool and will never be used.
-      # The cache can be disabled if the cache_size argument is set to 0, can be useful to avoid losing objects in cache
-      # If the value is empty or set to "auto", Suricata will attempt to set cache size of the mempool to a value
+      # The cache can be disabled if the cache_size argument is set to 0, can
+      # be useful to avoid losing objects in cache
+      # If the value is empty or set to "auto", Suricata will attempt to set
+      # cache size of the mempool to a value
       # that matches the previously mentioned recommendations
       mempool-cache-size: 257
       rx-descriptors: 1024
@@ -834,7 +849,8 @@ dpdk:
       # IPS mode for Suricata works in 3 modes - none, tap, ips
       # - none: IDS mode only - disables IPS functionality (does not further forward packets)
       # - tap: forwards all packets and generates alerts (omits DROP action) This is not DPDK TAP
-      # - ips: the same as tap mode but it also drops packets that are flagged by rules to be dropped
+      # - ips: the same as tap mode but it also drops packets that are
+      #   flagged by rules to be dropped
       copy-mode: none
       copy-iface: none # or PCIe address of the second interface
 
@@ -1082,90 +1098,90 @@ app-layer:
       #   Minimal, Generic, IDS (default), IIS_4_0, IIS_5_0, IIS_5_1, IIS_6_0,
       #   IIS_7_0, IIS_7_5, Apache_2
       libhtp:
-         default-config:
-           personality: IDS
+        default-config:
+          personality: IDS
 
-           # Can be specified in kb, mb, gb.  Just a number indicates
-           # it's in bytes.
-           request-body-limit: 100kb
-           response-body-limit: 100kb
+          # Can be specified in kb, mb, gb.  Just a number indicates
+          # it's in bytes.
+          request-body-limit: 100kb
+          response-body-limit: 100kb
 
-           # inspection limits
-           request-body-minimal-inspect-size: 32kb
-           request-body-inspect-window: 4kb
-           response-body-minimal-inspect-size: 40kb
-           response-body-inspect-window: 16kb
+          # inspection limits
+          request-body-minimal-inspect-size: 32kb
+          request-body-inspect-window: 4kb
+          response-body-minimal-inspect-size: 40kb
+          response-body-inspect-window: 16kb
 
-           # response body decompression (0 disables)
-           response-body-decompress-layer-limit: 2
+          # response body decompression (0 disables)
+          response-body-decompress-layer-limit: 2
 
-           # auto will use http-body-inline mode in IPS mode, yes or no set it statically
-           http-body-inline: auto
+          # auto will use http-body-inline mode in IPS mode, yes or no set it statically
+          http-body-inline: auto
 
-           # Decompress SWF files. Disabled by default.
-           # Two types: 'deflate', 'lzma', 'both' will decompress deflate and lzma
-           # compress-depth:
-           # Specifies the maximum amount of data to decompress,
-           # set 0 for unlimited.
-           # decompress-depth:
-           # Specifies the maximum amount of decompressed data to obtain,
-           # set 0 for unlimited.
-           swf-decompression:
-             enabled: no
-             type: both
-             compress-depth: 100kb
-             decompress-depth: 100kb
+          # Decompress SWF files. Disabled by default.
+          # Two types: 'deflate', 'lzma', 'both' will decompress deflate and lzma
+          # compress-depth:
+          # Specifies the maximum amount of data to decompress,
+          # set 0 for unlimited.
+          # decompress-depth:
+          # Specifies the maximum amount of decompressed data to obtain,
+          # set 0 for unlimited.
+          swf-decompression:
+            enabled: no
+            type: both
+            compress-depth: 100kb
+            decompress-depth: 100kb
 
-           # Use a random value for inspection sizes around the specified value.
-           # This lowers the risk of some evasion techniques but could lead
-           # to detection change between runs. It is set to 'yes' by default.
-           #randomize-inspection-sizes: yes
-           # If "randomize-inspection-sizes" is active, the value of various
-           # inspection size will be chosen from the [1 - range%, 1 + range%]
-           # range
-           # Default value of "randomize-inspection-range" is 10.
-           #randomize-inspection-range: 10
+          # Use a random value for inspection sizes around the specified value.
+          # This lowers the risk of some evasion techniques but could lead
+          # to detection change between runs. It is set to 'yes' by default.
+          #randomize-inspection-sizes: yes
+          # If "randomize-inspection-sizes" is active, the value of various
+          # inspection size will be chosen from the [1 - range%, 1 + range%]
+          # range
+          # Default value of "randomize-inspection-range" is 10.
+          #randomize-inspection-range: 10
 
-           # decoding
-           double-decode-path: no
-           double-decode-query: no
+          # decoding
+          double-decode-path: no
+          double-decode-query: no
 
-           # Can enable LZMA decompression
-           #lzma-enabled: false
-           # Memory limit usage for LZMA decompression dictionary
-           # Data is decompressed until dictionary reaches this size
-           #lzma-memlimit: 1mb
-           # Maximum decompressed size with a compression ratio
-           # above 2048 (only LZMA can reach this ratio, deflate cannot)
-           #compression-bomb-limit: 1mb
-           # Maximum time spent decompressing a single transaction in usec
-           #decompression-time-limit: 100000
-           # Maximum number of live transactions per flow
-           #max-tx: 512
+          # Can enable LZMA decompression
+          #lzma-enabled: false
+          # Memory limit usage for LZMA decompression dictionary
+          # Data is decompressed until dictionary reaches this size
+          #lzma-memlimit: 1mb
+          # Maximum decompressed size with a compression ratio
+          # above 2048 (only LZMA can reach this ratio, deflate cannot)
+          #compression-bomb-limit: 1mb
+          # Maximum time spent decompressing a single transaction in usec
+          #decompression-time-limit: 100000
+          # Maximum number of live transactions per flow
+          #max-tx: 512
 
-         server-config:
+        server-config:
 
-           #- apache:
-           #    address: [192.168.1.0/24, 127.0.0.0/8, "::1"]
-           #    personality: Apache_2
-           #    # Can be specified in kb, mb, gb.  Just a number indicates
-           #    # it's in bytes.
-           #    request-body-limit: 4096
-           #    response-body-limit: 4096
-           #    double-decode-path: no
-           #    double-decode-query: no
+          #- apache:
+          #    address: [192.168.1.0/24, 127.0.0.0/8, "::1"]
+          #    personality: Apache_2
+          #    # Can be specified in kb, mb, gb.  Just a number indicates
+          #    # it's in bytes.
+          #    request-body-limit: 4096
+          #    response-body-limit: 4096
+          #    double-decode-path: no
+          #    double-decode-query: no
 
-           #- iis7:
-           #    address:
-           #      - 192.168.0.0/24
-           #      - 192.168.10.0/24
-           #    personality: IIS_7_0
-           #    # Can be specified in kb, mb, gb.  Just a number indicates
-           #    # it's in bytes.
-           #    request-body-limit: 4096
-           #    response-body-limit: 4096
-           #    double-decode-path: no
-           #    double-decode-query: no
+          #- iis7:
+          #    address:
+          #      - 192.168.0.0/24
+          #      - 192.168.10.0/24
+          #    personality: IIS_7_0
+          #    # Can be specified in kb, mb, gb.  Just a number indicates
+          #    # it's in bytes.
+          #    request-body-limit: 4096
+          #    response-body-limit: 4096
+          #    double-decode-path: no
+          #    double-decode-query: no
 
     # Note: Modbus probe parser is minimalist due to the limited usage in the field.
     # Only Modbus message length (greater than Modbus header length)
@@ -1310,8 +1326,8 @@ coredump:
 # This feature is currently only used by the reject* keywords.
 host-mode: auto
 
-# Number of packets preallocated per thread. The default is 1024. A higher number 
-# will make sure each CPU will be more easily kept busy, but may negatively 
+# Number of packets preallocated per thread. The default is 1024. A higher number
+# will make sure each CPU will be more easily kept busy, but may negatively
 # impact caching.
 #max-pending-packets: 1024
 
@@ -1348,7 +1364,7 @@ unix-command:
 
 # Magic file. The extension .mgc is added to the value here.
 #magic-file: /usr/share/file/magic
-#magic-file: 
+#magic-file:
 
 # GeoIP2 database file. Specify path and filename of GeoIP2 database
 # if using rules with "geoip" rule option.
@@ -1579,7 +1595,8 @@ flow-timeouts:
 #                               # "ignore" default is "ignore"
 #   async-oneside: false        # don't enable async stream handling
 #   inline: no                  # stream inline mode
-#   drop-invalid: yes           # in inline mode, drop packets that are invalid with regards to streaming engine
+#   drop-invalid: yes           # in inline mode, drop packets that are
+#                               # invalid with regards to streaming engine
 #   max-syn-queued: 10          # Max different SYNs to queue
 #   max-synack-queued: 5        # Max different SYN/ACKs to queue
 #   bypass: no                  # Bypass packets when stream.reassembly.depth is reached.
@@ -1606,9 +1623,10 @@ flow-timeouts:
 #                               # This lowers the risk of some evasion techniques but could lead
 #                               # to detection change between runs. It is set to 'yes' by default.
 #     randomize-chunk-range: 10 # If randomize-chunk-size is active, the value of chunk-size is
-#                               # a random value between (1 - randomize-chunk-range/100)*toserver-chunk-size
-#                               # and (1 + randomize-chunk-range/100)*toserver-chunk-size and the same
-#                               # calculation for toclient-chunk-size.
+#                               # a random value between
+#                               # (1 - randomize-chunk-range/100)*toserver-chunk-size
+#                               # and (1 + randomize-chunk-range/100)*toserver-chunk-size
+#                               # and the same calculation for toclient-chunk-size.
 #                               # Default value of randomize-chunk-range is 10.
 #
 #     raw: yes                  # 'Raw' reassembly enabled or disabled.
@@ -1793,19 +1811,19 @@ threading:
   #
   cpu-affinity:
     - management-cpu-set:
-        cpu: [ 0 ]  # include only these CPUs in affinity settings
+        cpu: [0]  # include only these CPUs in affinity settings
     - receive-cpu-set:
-        cpu: [ 0 ]  # include only these CPUs in affinity settings
+        cpu: [0]  # include only these CPUs in affinity settings
     - worker-cpu-set:
-        cpu: [ "all" ]
+        cpu: ["all"]
         mode: "exclusive"
         # Use explicitly 3 threads and don't compute number by using
         # detect-thread-ratio variable:
         # threads: 3
         prio:
-          low: [ 0 ]
-          medium: [ "1-2" ]
-          high: [ 3 ]
+          low: [0]
+          medium: ["1-2"]
+          high: [3]
           default: "medium"
     #- verdict-cpu-set:
     #    cpu: [ 0 ]
@@ -1987,7 +2005,7 @@ capture:
 #
 netmap:
    # To specify OS endpoint add plus sign at the end (e.g. "eth0+")
- - interface: eth2
+  - interface: eth2
    # Number of capture threads. "auto" uses number of RSS queues on interface.
    # Warning: unless the RSS hashing is symmetrical, this will lead to
    # accuracy issues.
@@ -2024,7 +2042,7 @@ netmap:
    #copy-mode: tap
    #copy-iface: eth2
    # Put default values here
- - interface: default
+  - interface: default
 
 # PF_RING configuration: for use with native PF_RING support
 # for more info see http://www.ntop.org/products/pf_ring/
@@ -2119,12 +2137,12 @@ napatech:
     # or
     #   a range of streams (e.g. streams: ["0-3"])
     #
-    streams: ["0-3"]
+  streams: ["0-3"]
 
     # Stream stats can be enabled to provide fine grain packet and byte counters
     # for each thread/stream that is configured.
     #
-    enable-stream-stats: no
+  enable-stream-stats: no
 
     # When auto-config is enabled the streams will be created and assigned
     # automatically to the NUMA node where the thread resides.  If cpu-affinity
@@ -2137,16 +2155,16 @@ napatech:
     # This option cannot be used simultaneously with either "use-all-streams"
     # or "hardware-bypass".
     #
-    auto-config: yes
+  auto-config: yes
 
     # Enable hardware level flow bypass.
     #
-    hardware-bypass: yes
+  hardware-bypass: yes
 
     # Enable inline operation.  When enabled traffic arriving on a given port is
     # automatically forwarded out its peer port after analysis by Suricata.
     #
-    inline: no
+  inline: no
 
     # Ports indicates which Napatech ports are to be used in auto-config mode.
     # these are the port IDs of the ports that will be merged prior to the
@@ -2180,7 +2198,7 @@ napatech:
     #
     # This parameter has no effect if auto-config is disabled.
     #
-    ports: [0-1,2-3]
+  ports: [0-1, 2-3]
 
     # When auto-config is enabled the hashmode specifies the algorithm for
     # determining to which stream a given packet is to be delivered.
@@ -2193,7 +2211,7 @@ napatech:
     #
     # This parameter has no effect if auto-config is disabled.
     #
-    hashmode: hash5tuplesorted
+  hashmode: hash5tuplesorted
 
 ##
 ## Configure Suricata to load Suricata-Update managed rules.

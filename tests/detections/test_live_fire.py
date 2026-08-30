@@ -866,6 +866,19 @@ THRESHOLD_TEST_CONFIGS = {
         "cardinality_value_for": lambda i: f"seq-{i}.nanopool.org",
         "entity_for": _ip_entity_for(4),
     },
+    "net-zeek-conn-outbound-volume-asymmetry.ndjson": {
+        # #441 Part B: reuses the rule's own true_positive fixture (already
+        # a real asymmetric orig_bytes/resp_bytes shape), translated through
+        # the real field mapping via _sigma_fixture_base_doc — same pattern
+        # as the 3 Windows discovery-repeat entries above, rather than a
+        # bespoke base-doc builder duplicating what the fixture already
+        # says. source.ip is the threshold.field[0] here, same `ip`-typed
+        # field class the security-auditor finding above (#393) covers —
+        # _ip_entity_for, not the generic string entity, is required.
+        "base_doc": lambda: _sigma_fixture_base_doc("net_zeek_conn_outbound_volume_asymmetry.yml"),
+        "cardinality": None,
+        "entity_for": _ip_entity_for(5),
+    },
 }
 
 

@@ -2223,12 +2223,22 @@ napatech:
 default-rule-path: rules/suricata/
 
 rule-files:
-  # #446 (M23 Stage 3, not yet landed) adds the 100-rule starter set here,
-  # one file per category, every rule shipped disabled until it has a
-  # passing pcap fixture (#445's promotion gate) — this list gets extended
-  # with each category file as that lands. local.rules is the standard
-  # Suricata idiom for genuinely local (non-vendor-derived) signatures and
-  # is kept even after #446 lands.
+  # #446 (M23 Stage 3): the 100-rule university starter set, one file per
+  # category, SIDs 9000001-9000100. Every rule in every file below ships
+  # disabled (leading '#') — none has a pcap fixture yet, so none may
+  # enter the enabled set per #445's promotion gate. local.rules is the
+  # standard Suricata idiom for genuinely local (non-vendor-derived)
+  # signatures and is kept alongside the starter set.
+  - auth_sso_abuse.rules
+  - phishing_email.rules
+  - web_lms_attacks.rules
+  - web_shell_compromise.rules
+  - ransomware_c2.rules
+  - residential_policy_violations.rules
+  - exfiltration_dlp.rules
+  - remote_access_abuse.rules
+  - recon_scanning.rules
+  - iot_lab_research.rules
   - local.rules
 
 ##

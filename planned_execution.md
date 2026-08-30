@@ -31,7 +31,7 @@ since — see the last two rows):
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
-| [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏳ Stage 1 (#443 sensor config + #444 eve.json ingest) implemented 2026-08-30, in progress; Stage 2 (#445 CI lane) and Stage 3 (#446 100-rule set, source file in hand, reconciled against existing Sigma coverage) not yet started | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
+| [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏳ All 3 stages implemented 2026-08-30: Stage 1 (#443/#444, PR #506) and Stage 2 (#445, PR #507) both open/unmerged; Stage 3 (#446, 100-rule set landed disabled, 8 rules needed a Suricata-7.0.3 syntax fix) same session, not yet in a PR. All 3 build on each other — none merged to `main` yet | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
 | [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ✅ 5/5 closed — **CLOSED** (#449/#453/#463/#442/#441 all merged via PR #505, 2026-08-30) | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
@@ -223,6 +223,138 @@ issue's own instruction not to bulk-enable them.
 **Stage 2 (#445 CI syntax gate/SID registry/pcap replay/promotion gate)
 and Stage 3 (#446 rule content) remain not started** — next follow-up
 sessions, same cadence as #441 Part A/Part B.
+
+**M23 Stage 2 (#445) implemented 2026-08-30, same day, follow-up session
+(`resume-stage-2-3`).** Branched from `claude/backlog-issues-iieqq5` (PR
+#506, Stage 1 — still open/unmerged at the time) rather than `main`, since
+Stage 2's syntax/replay gates need Stage 1's real `suricata.yaml` and
+`rules/suricata/` layout to validate against.
+
+- `tests/detections/suricata_rules_eval.py` (new) — pure parsing/checking
+  logic, split from its test module the same way `sigma_eval.py` is: SID
+  parser (one-line rule syntax, handles a leading `#` as "disabled"
+  without false-matching a prose comment that merely mentions `sid:`),
+  duplicate-SID detector, a `SID_RANGES` registry (`9000001`-`9000100` for
+  #446's starter set, `9500001`-`9599999` reserved for `local.rules`
+  going forward — replacing that file's previous vague "a range distinct
+  from..." header text with the exact numbers), and a real-`suricata`-
+  binary pcap-replay function (`suricata -r <pcap> -S <rule> -c
+  configs/suricata/suricata.yaml`, parses `eve.json` for the alerting
+  SID).
+- `tests/detections/test_suricata_rules.py` (new, 17 tests) — real-repo
+  tests (SID uniqueness/range, every `.rules` file wired into
+  `suricata.yaml`'s `rule-files:`, promotion-gate fixture check, aggregate
+  `suricata -T`) plus harness meta-tests proving the checker itself
+  catches a duplicate SID, an out-of-range (real ET vendor-range) SID, and
+  an enabled-rule-without-fixture, using synthetic content — #445's own
+  "done when" (a broken/duplicate-SID rule fails CI) verified without
+  needing #446's still-missing content. `ReplayHarnessRealSuricataTests`
+  builds real pcaps with `scapy` and replays them through the real
+  installed `suricata` 7.0.3 binary — confirmed by hand first (a UDP
+  raw-content rule fires on a matching payload and stays silent on a
+  benign one; an HTTP-keyword rule against a single hand-crafted packet
+  with no real TCP handshake did NOT fire — Suricata's app-layer parser
+  needs real stream state, so the fixture pattern uses raw UDP content
+  matching, not app-layer keywords, to stay handshake-independent).
+  All 17 pass locally against a real `suricata`/`scapy` install; `ruff`/
+  `mypy` clean on both new files.
+- `.github/workflows/lint.yml` — new `suricata-syntax` job: installs the
+  real apt package, runs `suricata -T` against the real config plus every
+  `rules/suricata/*.rules` file (glob-discovered via `-S` per file, #286's
+  directory-glob discipline), always-on/no-path-filter like the other
+  lint jobs.
+- `.github/workflows/detections.yml` (`detections` job) — installs
+  `suricata` + pinned `scapy==2.7.0`, runs the new test module as a
+  required step (not the non-required `live-fire` job — a real package
+  install isn't the Docker/ES-container-pull flakiness class that job
+  isolates against).
+- ATT&CK coverage: explicitly scoped out per #445's own either/or —
+  `findings/20260830-445-suricata-attack-coverage-scope.md` records why
+  (nothing real to harvest yet; revisit once #446 lands) and
+  `build_attack_coverage.py`'s docstring cross-references it.
+- `docs/detections/suricata-ci-lane.md` (new) — the lane's own doc,
+  mirroring the Sigma docs' role; `coverage_checklist.md` gets a new
+  "Suricata signature lane" section tracking #443-#446 status honestly
+  (#445 done, #446 blocked — see below).
+
+**Stage 3 (#446) was initially blocked, then unblocked and completed the
+same session.** The prior session's copy of the source file
+(`university_soc_starter_ruleset.rules`) had been saved only to that
+session's own ephemeral scratchpad, never to this repo, and that
+container no longer existed. Rather than fabricate 100 Suricata rules
+with invented SIDs/domains/patterns to fill the gap, Stage 3 was left
+not-started and flagged for the user to re-supply the file — which they
+did, same session.
+
+**Stage 3 (#446) implemented 2026-08-30 once the source file arrived.**
+Split the 100 rules into 10 category files under `rules/suricata/`
+exactly along the source's own category headers (SIDs 9000001-9000100),
+every rule shipped disabled. Verified byte-for-byte fidelity to the
+source before anything else (a small script diffed every uncommented
+rule line + SID set against the original — 100/100 match, 0 missing, 0
+extra). Wired all 10 files (+ `local.rules`) into
+`configs/suricata/suricata.yaml`'s `rule-files:` list.
+
+Landing it through the real #445 CI lane immediately paid off: the
+aggregate `-T` syntax gate against the as-shipped (disabled) files
+trivially passed — because Suricata's rule loader ignores `#`-commented
+lines entirely and never even attempts to parse them (confirmed by hand:
+a deliberately broken commented-out rule loads silently, no error). That
+meant 100 rules could have shipped with genuinely broken syntax and every
+existing gate would report green. Added
+`suricata_rules_eval.check_syntax_including_disabled()` — strips the
+leading `#` from every record and runs a real `suricata -T` against the
+result — which immediately caught 8 real syntax errors: `dsize` combined
+with app-layer `http.*` keywords (packet-level vs. stream-level match,
+rejected; sid 9000003), `http.hostname` used where Suricata 7.0.3's real
+keyword is `http.host` (sids 9000058/63/64/69), a bare `dns.query;`
+selector with no attached match (sid 9000062), `ftp.command` (not a real
+keyword — the real one, `ftpdata_command:stor`, needs protocol `ftp-data`
+not `ftp`; sid 9000067), and `rdp.cookie` (not a real keyword in this
+build — RDP is a supported app-layer protocol but exposes no
+cookie-matching buffer; replaced with a plain `tcp` rule matching the
+literal `Cookie: mstshash=` field, the actual cleartext RDP negotiation
+string this well-known scanner fingerprint targets). Every fix verified
+by hand with a real `suricata -T` run — individually, then all 8
+together — before landing; each is commented in place in its `.rules`
+file. Also fixed a second real bug the same pass surfaced: the syntax
+gate's own `-S` flag looping (both the pytest aggregate check and
+`lint.yml`'s job) broke because Suricata 7.0.3 rejects multiple `-S`
+flags — simplified both to run the real production `-c
+configs/suricata/suricata.yaml` path directly, which is both simpler and
+more faithful (it validates exactly what `rule-files:` says to load, not
+a synthetic reconstruction of it).
+
+3 placeholders left exactly as supplied, per this repo's own
+never-invent-an-IOC/domain convention: 9000013 (`univv-edu` look-alike
+domain — Suburban-SOC isn't a university, no real domain to substitute),
+9000065 (`STU\d{7}` student-ID format), 9000099 (`iotbotnet` placeholder
+C2 domain). DLP rules 9000065/9000066 flagged for explicit owner sign-off
+before enabling, per #446's own instruction not to bulk-enable them.
+
+Reconciliation against existing Sigma coverage: re-verified all 8 of the
+source's own claimed overlaps directly against the real `rules/sigma/`
+files (all confirmed real) and found one the source's own list missed —
+9000069 (pastebin.com) overlaps `net_zeek_ssl_cloud_storage_exfil.yml`
+too, since `pastebin.com` is on that rule's own provider list. Confirmed
+9000077 (outbound RDP) has no existing Sigma equivalent — a genuine new
+gap, not overlap, despite the source's claimed-overlap list bundling it
+with 9000071's inbound-only overlap. Decision for every overlapping pair:
+keep both as independent confirmation — neither auto-triggers SOAR yet
+(Stage 1's ingest is dashboard-only), so no double-trigger risk exists at
+this stage to force a suppress-vs-keep call now. Full record in
+`docs/detections/suricata-starter-set.md`.
+
+Not done, disclosed: no pcap fixtures for any of the 100 rules (a
+separate body of work, premature before placeholder/threshold/DLP
+decisions land anyway), no `detection_filter` threshold tuning against
+real traffic, ATT&CK coverage accounting still explicitly scoped out.
+`pytest tests/detections/test_suricata_rules.py` — 20/20 pass (up from
+17) against the real landed set; full regression suite (`tests/pipeline
+tests/dashboards tests/detections/test_sigma_detections.py
+tests/detections/test_threshold_rules.py tests/setup
+tests/test_coverage_checklist_sync.py`) — 494 passed, 58 subtests,
+unaffected; `ruff`/`mypy`/`yamllint` clean.
 
 **M24 progress 2026-08-30:** picked up all 5 open issues. #449 (HA
 compose file's `es01` had the same 0.0.0.0 port exposure #359 fixed for

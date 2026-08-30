@@ -1,0 +1,37 @@
+# University SOC starter set — Category 1: Authentication & SSO abuse (#446, M23 Stage 3)
+# SIDs 9000001-9000010.
+#
+# Source: university_soc_starter_ruleset.rules, supplied by the repo owner
+# (session-verified zero pre-existing overlap in this repo's tracked
+# content before landing). Rule text below is VERBATIM from that source —
+# detection logic, messages, thresholds, and detection_filter counts are
+# exactly as supplied, not authored or tuned here.
+#
+# ALL RULES IN THIS FILE ARE DISABLED (leading '#') per #446's own decision:
+# "all 100 land, every rule disabled until tuned. Nothing enters the
+# enabled set without a pcap fixture" (#445's promotion gate enforces
+# this in CI). See docs/detections/suricata-starter-set.md for the full
+# placeholder/reconciliation/DLP-signoff record before enabling any rule.
+#
+# detection_filter count/seconds values (9000001, 9000002, 9000005,
+# 9000008, 9000009, 9000010) are the source's own illustrative defaults,
+# not a measured baseline for this deployment's actual traffic — tune
+# before enabling, same disclosure the source's own header carries.
+
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV SSO Brute Force - Repeated CAS Login POST from Single Source"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/cas/login"; startswith; detection_filter:track by_src, count 10, seconds 60; classtype:attempted-admin; sid:9000001; rev:1;)
+#alert http $HOME_NET 443 -> $EXTERNAL_NET any (msg:"UNIV Possible Password Spray - Repeated 401 Responses to Same External Source"; flow:established,to_client; http.stat_code; content:"401"; detection_filter:track by_dst, count 15, seconds 120; classtype:attempted-recon; sid:9000002; rev:1;)
+# SYNTAX FIX (verified against installed Suricata 7.0.3, docs/detections/
+# suricata-starter-set.md has the full record): source's `dsize:>8000`
+# rejected — "combines packet specific matches ... with stream / state
+# matching by app layer proto" (dsize is a single-packet check; a
+# reassembled HTTP body isn't one packet) — replaced with the app-layer-
+# correct `http.request_body; bsize:>8000` (same ">8000 byte body" intent,
+# msg/sid/classtype unchanged).
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Abnormally Large POST to SAML Endpoint - Possible XML Injection"; flow:established,to_server; http.uri; content:"/idp/profile/SAML2"; http.request_body; bsize:>8000; classtype:web-application-attack; sid:9000003; rev:1;)
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Default Credential Attempt on Login Portal"; flow:established,to_server; http.uri; content:"/cas/login"; http.request_body; content:"username=admin"; nocase; classtype:attempted-admin; sid:9000004; rev:1;)
+#alert tls $EXTERNAL_NET any -> $HOME_NET 8443 (msg:"UNIV VPN Portal Repeated TLS Connections - Possible Credential Brute Force"; flow:established; detection_filter:track by_src, count 20, seconds 60; classtype:attempted-admin; sid:9000005; rev:1;)
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Login Portal Accessed by Known Credential Stuffing Tool - OpenBullet"; flow:established,to_server; http.uri; content:"/cas/login"; http.user_agent; content:"OpenBullet"; nocase; classtype:attempted-admin; sid:9000006; rev:1;)
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Login Portal Accessed by Known Credential Stuffing Tool - SentryMBA"; flow:established,to_server; http.uri; content:"/cas/login"; http.user_agent; content:"SentryMBA"; nocase; classtype:attempted-admin; sid:9000007; rev:1;)
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Password Reset Endpoint Abuse - Repeated Requests from Single Source"; flow:established,to_server; http.uri; content:"/password-reset"; detection_filter:track by_src, count 10, seconds 60; classtype:attempted-recon; sid:9000008; rev:1;)
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Repeated MFA Push Requests - Possible MFA Fatigue Attack"; flow:established,to_server; http.uri; content:"/mfa/push"; detection_filter:track by_dst, count 8, seconds 120; classtype:attempted-admin; sid:9000009; rev:1;)
+#alert tcp $EXTERNAL_NET any -> $HOME_NET [389,636] (msg:"UNIV Repeated External Connections to LDAP/LDAPS - Possible Directory Enumeration"; flow:established; detection_filter:track by_src, count 15, seconds 60; classtype:attempted-recon; sid:9000010; rev:1;)

@@ -70,6 +70,38 @@ jobs:
       - run: pip install --quiet yamllint
       - run: yamllint -c .yamllint configs/
 
+  suricata-syntax:
+    name: suricata -T (rules/suricata/*.rules)
+    # #445 (M23 Stage 2): the always-on lint-gate half of the Suricata
+    # detection-as-code lane — fast syntax-only validation, consistent
+    # with shellcheck/ruff/mypy/yamllint's posture above. The heavier
+    # SID-registry + pcap-replay promotion gate lives in detections.yml
+    # (tests/detections/test_suricata_rules.py), alongside the equivalent
+    # Sigma fixture checks, not here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # Real Ubuntu package, not a Docker image — #443 chose host-package
+      # deployment specifically so this validates with no daemon needed
+      # (see configs/suricata/suricata.yaml's own header).
+      - name: Install suricata
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends suricata
+
+      - name: suricata -T against the real config (loads every file in rule-files:)
+        # Suricata 7.0.3 rejects multiple -S flags (confirmed by hand), so
+        # this runs the exact production `-c` path rather than looping
+        # `-S` per file — whatever configs/suricata/suricata.yaml's own
+        # rule-files: list references gets loaded and validated here,
+        # which is also the real "did anyone forget to wire a new file
+        # in" check (tests/detections/test_suricata_rules.py's
+        # RuleFilesWiredIntoConfigTests covers the inverse: every file on
+        # disk is referenced).
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/suricata-lint
+          suricata -T -c configs/suricata/suricata.yaml -l /tmp/suricata-lint --af-packet=lo
+
   compose-config:
     name: docker compose config (interpolation/syntax)
     # #303: yamllint/bash -n/pytest all validate DIFFERENT layers than Compose's

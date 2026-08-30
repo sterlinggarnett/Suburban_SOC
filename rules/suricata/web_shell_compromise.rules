@@ -1,0 +1,18 @@
+# University SOC starter set — Category 4: Web shell & server compromise (#446, M23 Stage 3)
+# SIDs 9000031-9000040.
+#
+# Source: university_soc_starter_ruleset.rules, supplied by the repo owner.
+# Rule text below is VERBATIM from that source. ALL RULES DISABLED — see
+# rules/suricata/auth_sso_abuse.rules' header for the full disable/
+# provenance note (applies identically to every category file in this set).
+
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Possible PHP Web Shell - eval(base64_decode Pattern"; flow:established,to_server; http.request_body; content:"eval(base64_decode"; nocase; classtype:trojan-activity; sid:9000031; rev:1;)
+#alert http $HOME_NET 443 -> $EXTERNAL_NET any (msg:"UNIV Possible Web Shell Response - System Command Output Indicator"; flow:established,to_client; content:"uid="; content:"gid="; distance:0; classtype:trojan-activity; sid:9000032; rev:1;)
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Known Web Shell Filename Accessed - shell.php"; flow:established,to_server; http.uri; content:"/shell.php"; classtype:trojan-activity; sid:9000033; rev:1;)
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Known Web Shell Filename Accessed - c99.php"; flow:established,to_server; http.uri; content:"c99.php"; nocase; classtype:trojan-activity; sid:9000034; rev:1;)
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV China Chopper Web Shell Request Pattern"; flow:established,to_server; http.request_body; content:"eval(Request.Item"; classtype:trojan-activity; sid:9000035; rev:1;)
+#alert tcp $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Web Server Outbound Traffic Contains Shell Invocation - /bin/sh"; flow:established,to_server; content:"/bin/sh"; classtype:trojan-activity; sid:9000036; rev:1;)
+#alert tcp $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Web Server Outbound Traffic Contains Bash Reverse Shell Pattern"; flow:established,to_server; content:"/bin/bash -i"; classtype:trojan-activity; sid:9000037; rev:1;)
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Suspicious .well-known Path Request - Possible Web Shell Staging"; flow:established,to_server; http.uri; content:"/.well-known/"; content:".php"; distance:0; classtype:trojan-activity; sid:9000038; rev:1;)
+#alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Internal Web Server Downloading Executable from External Host"; flow:established,to_server; http.method; content:"GET"; http.uri; content:".exe"; classtype:trojan-activity; sid:9000039; rev:1;)
+#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV User-Agent Associated With Web Shell Management Tool - AntSword"; flow:established,to_server; http.user_agent; content:"AntSword"; nocase; classtype:trojan-activity; sid:9000040; rev:1;)

@@ -1,0 +1,52 @@
+name: Delete Merged Branch
+
+# Auto-delete a PR's head branch once the PR merges, so merged feature
+# branches don't pile up (native "Automatically delete head branches" repo
+# setting requires repo-admin access this workflow doesn't assume).
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  delete-branch:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete head branch
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const branch = pr.head.ref;
+            const protectedBranches = ['main', 'master', 'develop'];
+
+            if (protectedBranches.includes(branch)) {
+              core.info(`Skipping deletion of protected branch: ${branch}`);
+              return;
+            }
+
+            // A fork's head branch lives in the fork, not this repo.
+            if (pr.head.repo?.full_name !== context.repo.owner + '/' + context.repo.repo) {
+              core.info(`Skipping deletion of fork branch: ${branch}`);
+              return;
+            }
+
+            try {
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${branch}`,
+              });
+              core.info(`Deleted branch: ${branch}`);
+            } catch (error) {
+              // 422/404: already deleted, protected by a branch ruleset, or
+              // still referenced by another open PR — not a failure to alarm on.
+              if (error.status === 422 || error.status === 404) {
+                core.info(`Could not delete branch ${branch} (${error.status}): ${error.message}`);
+              } else {
+                throw error;
+              }
+            }

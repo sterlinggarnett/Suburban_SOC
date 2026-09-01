@@ -19,8 +19,8 @@
 # "a guess, not a baseline" and it applies here unchanged; tune before
 # enabling.
 
-#alert tcp $HOME_NET any -> any any (msg:"UNIV BitTorrent Handshake Detected on Residential Network"; flow:established,to_server; content:"|13|BitTorrent protocol"; classtype:policy-violation; sid:9000051; rev:1;)
-#alert udp $HOME_NET any -> any any (msg:"UNIV BitTorrent DHT Traffic Detected on Residential Network"; content:"d1:ad2:id20:"; classtype:policy-violation; sid:9000052; rev:1;)
+alert tcp $HOME_NET any -> any any (msg:"UNIV BitTorrent Handshake Detected on Residential Network"; flow:established,to_server; content:"|13|BitTorrent protocol"; classtype:policy-violation; sid:9000051; rev:1;)
+alert udp $HOME_NET any -> any any (msg:"UNIV BitTorrent DHT Traffic Detected on Residential Network"; content:"d1:ad2:id20:"; classtype:policy-violation; sid:9000052; rev:1;)
 #alert tcp $HOME_NET any -> $EXTERNAL_NET [9001,9030] (msg:"UNIV Connection to Common Tor OR/Directory Port"; flow:established; classtype:policy-violation; sid:9000053; rev:1;)
 #alert dns $HOME_NET any -> any 53 (msg:"UNIV DNS Query for .onion Domain via Public Resolver"; dns.query; content:".onion"; nocase; classtype:policy-violation; sid:9000054; rev:1;)
 #alert tcp $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Cryptocurrency Mining Stratum Protocol Detected"; flow:established,to_server; content:"mining.subscribe"; classtype:policy-violation; sid:9000055; rev:1;)

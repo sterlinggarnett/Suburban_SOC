@@ -28,10 +28,16 @@ of the source's 100 `alert`-prefixed lines appears in exactly one category
 file (stripped of the disabling `#`), with no line dropped, duplicated, or
 altered in content beyond the syntax fixes below.
 
-**Every rule ships disabled** (leading `#`) per #446's own decision — none
-has a pcap fixture yet, so none may enter the enabled set under #445's
-promotion gate. `configs/suricata/suricata.yaml`'s `rule-files:` list now
+**Every rule shipped disabled** (leading `#`) per #446's own decision —
+none had a pcap fixture, so none could enter the enabled set under #445's
+promotion gate. `configs/suricata/suricata.yaml`'s `rule-files:` list
 references all 10 files (plus `local.rules`).
+
+**Update (2026-09-01, #446 follow-up):** 11 of the 100 rules are now
+enabled — see "First 11 rules promoted" below. The other 89 remain
+disabled for the reasons already documented in this file (unresolved
+placeholders, un-tuned `detection_filter` thresholds, no fixture yet, or
+DLP sign-off not obtained).
 
 ## Syntax fixes (8 rules)
 
@@ -136,16 +142,59 @@ Modbus, S7comm (9000094-9000097). Confirmed by checking each SID's
 signal shape against the full `rules/sigma/` corpus, not assumed from the
 source's own claims.
 
-## What is NOT done
+## First 11 rules promoted (2026-09-01, #446 follow-up)
 
-- **No pcap fixtures.** All 100 rules stay disabled; #445's promotion
-  gate needs a fixture per rule before any of them can be enabled — that
-  is deliberately out of scope for landing the content itself (100
-  fixtures is its own body of work, and premature before placeholder
-  resolution / threshold tuning / DLP sign-off even happen).
-- **No threshold tuning.** Every `detection_filter` count/seconds value
-  is the source's own illustrative default, disclosed as such inline —
-  not validated against this deployment's actual traffic.
+11 of the 100 rules had no placeholder to resolve and no `detection_filter`
+threshold to tune — plain port/protocol or fixed-content matches, safe to
+verify and enable without live traffic or a human sign-off decision. Each
+got a real, verified pcap fixture (`suricata -r` replay against the actual
+rule text, real Suricata 7.0.3 + real `scapy`-built packets — same
+verification posture as #445's own promotion-gate tests, not a hand-authored
+pcap taken on faith) and was flipped from `#alert` to `alert`:
+
+| SID | Rule | Fixture shape |
+|---|---|---|
+| 9000049 | TLS SNI is a raw IP address (`ransomware_c2.rules`) | Real `scapy` TLS 1.2 ClientHello with an SNI extension carrying an IP-literal string (TP) vs. a hostname (TN), over a full TCP 3-way handshake |
+| 9000051 | BitTorrent handshake (`residential_policy_violations.rules`) | TCP payload starting `\x13BitTorrent protocol` (TP) vs. a plain HTTP GET on the same port (TN) |
+| 9000052 | BitTorrent DHT (`residential_policy_violations.rules`) | UDP payload starting `d1:ad2:id20:` (TP) vs. benign UDP payload (TN) |
+| 9000091 | Mirai telnet default root/xc3511 (`iot_lab_research.rules`) | TCP:23 payload `root\r\nxc3511` (TP) vs. a different login pair (TN) |
+| 9000092 | Mirai telnet default admin/admin (`iot_lab_research.rules`) | Same shape, `admin\r\nadmin` |
+| 9000093 | Outbound telnet from HOME_NET (`iot_lab_research.rules`) | Any established TCP flow to EXTERNAL_NET:23 (TP) vs. the same flow to :443 (TN) — no content match in the rule itself |
+| 9000094 | CoAP port exposure (`iot_lab_research.rules`) | UDP to HOME_NET:5683 (TP) vs. :53 (TN) |
+| 9000095 | MQTT port exposure (`iot_lab_research.rules`) | Established TCP to HOME_NET:1883 (TP) vs. :8080 (TN) |
+| 9000096 | Modbus port exposure (`iot_lab_research.rules`) | Established TCP to HOME_NET:502 (TP) vs. :5020 (TN) |
+| 9000097 | S7comm port exposure (`iot_lab_research.rules`) | Established TCP to HOME_NET:102 (TP) vs. :1020 (TN) |
+| 9000098 | Default admin:admin Basic Auth (`iot_lab_research.rules`) | HTTP request carrying `Authorization: Basic YWRtaW46YWRtaW4=` (TP) vs. a Bearer token (TN) |
+
+Fixtures live at `tests/detections/fixtures/suricata/<SID>_tp.pcap` /
+`<SID>_tn.pcap`. `tests/detections/test_suricata_rules.py`'s
+`PromotionGateRealRepoTests` now covers all 11 as part of the real,
+enabled-rule set (not just the synthetic meta-tests #445 originally
+proved the mechanism with).
+
+**Deliberately excluded from this batch even though they're also
+placeholder/threshold-free:** none — every other rule in the 100 has
+either an unresolved placeholder, a `detection_filter` threshold, is one
+of the two DLP rules needing sign-off, or (the large majority) is a
+straightforward content/port match like the 11 above but simply wasn't
+reached this session — building and hand-verifying a fixture per rule is
+real, one-at-a-time work; the remaining ~89 need the same treatment, not
+a different decision.
+
+## What is still NOT done
+
+- **89 rules still have no pcap fixture** and stay disabled; #445's
+  promotion gate needs one per rule before any more can be enabled — the
+  same real, one-at-a-time verification work the 11 above just went
+  through, not yet done for the rest.
+- **3 unresolved placeholders** (9000013, 9000065, 9000099, see above) —
+  still blocked on a human with real institutional/threat-intel context;
+  not attempted.
+- **No threshold tuning.** Every remaining `detection_filter`
+  count/seconds value is the source's own illustrative default, disclosed
+  as such inline — not validated against this deployment's actual
+  traffic (no live traffic exists in this sandbox to tune against).
+- **DLP sign-off** (9000065/9000066) — still not obtained.
 - **ATT&CK coverage** — still explicitly scoped out
   (`findings/20260830-445-suricata-attack-coverage-scope.md`); this
   landing doesn't change that decision, it's the trigger to eventually

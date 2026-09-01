@@ -148,8 +148,8 @@ same disclose-what's-real-vs-not reasons.
       repo's own never-invent-an-IOC convention. Full reconciliation
       against existing Sigma coverage, genuine-gap inventory, and DLP
       sign-off flag in `docs/detections/suricata-starter-set.md`.
-- [x] **#446 follow-up (2026-09-01)** — 65 of the 100 rules promoted to
-      enabled across 4 batches: each got a real, verified pcap fixture
+- [x] **#446 follow-up (2026-09-01)** — 74 of the 100 rules promoted to
+      enabled across 5 batches: each got a real, verified pcap fixture
       (`suricata -r` replay against real Suricata 7.0.3 + real
       `scapy`-built packets, not a hand-authored pcap taken on faith).
       Batch 1 (11): 9000049, 9000051, 9000052, 9000091-9000098. Batch 2
@@ -157,20 +157,26 @@ same disclose-what's-real-vs-not reasons.
       Batch 3 (31): 9000041, 9000042, 9000047, 9000048, 9000050,
       9000053-9000059, 9000061, 9000068-9000072, 9000075-9000079,
       9000081, 9000084-9000090. Batch 4 (3): 9000004, 9000006, 9000007.
-      Full per-rule detail in `docs/detections/suricata-starter-set.md`'s
-      "Rules promoted" section. Also found 9000063/9000064 are
-      dead-as-configured (need >1MB request body inspection but
-      `suricata.yaml`'s `request-body-limit: 100kb` caps it) — flagged,
-      not fixed (raising the limit is a resource/DoS-tuning decision).
-      9000003 attempted and left unresolved — `bsize:>8000` on
-      `http.request_body` didn't fire against a real 8112-byte body in
-      this session's fixture attempts, likely interacting with libhtp's
-      `request-body-minimal-inspect-size`/`request-body-inspect-window`
-      settings; needs more investigation, not disclosed as dead like
-      9000063/9000064. Remaining 35: 3 SMB + 1 FTP-data rules need more
-      complex protocol-session fixtures than attempted this session, 3
-      placeholders and 2 DLP rules stay blocked as before, and the rest
-      carry `detection_filter` thresholds needing real traffic to tune.
+      Batch 5 (9): 9000011, 9000012, 9000014-9000020 (phishing_email.rules
+      — the first SMTP-protocol rules, each fixture a full scapy-built
+      SMTP session: 220 greeting/EHLO/MAIL FROM/RCPT TO/DATA/body/QUIT,
+      not a bare handshake, since Suricata's SMTP probing parser needs
+      the real banner exchange to identify the flow before the rules'
+      content matches even apply). Full per-rule detail in
+      `docs/detections/suricata-starter-set.md`'s "Rules promoted"
+      section. Also found 9000063/9000064 are dead-as-configured (need
+      >1MB request body inspection but `suricata.yaml`'s
+      `request-body-limit: 100kb` caps it) — flagged, not fixed (raising
+      the limit is a resource/DoS-tuning decision). 9000003 attempted and
+      left unresolved — `bsize:>8000` on `http.request_body` didn't fire
+      against a real 8112-byte body in this session's fixture attempts,
+      likely interacting with libhtp's `request-body-minimal-inspect-
+      size`/`request-body-inspect-window` settings; needs more
+      investigation, not disclosed as dead like 9000063/9000064.
+      Remaining 26: 3 SMB + 1 FTP-data rules need more complex protocol-
+      session fixtures than attempted this session, 3 placeholders and 2
+      DLP rules stay blocked as before, and the rest carry
+      `detection_filter` thresholds needing real traffic to tune.
 
 Operational to-dos (Suricata lane):
 - [ ] Deploy `suricata-host-capture.service` to a real capture host
@@ -180,7 +186,7 @@ Operational to-dos (Suricata lane):
 - [ ] Per-rule pcap fixtures for the remaining fixture-eligible rules
       (SMB x3, FTP-data x1, plus whatever's left after re-auditing) —
       nothing enters the enabled set without one (#445's promotion gate);
-      65/100 done
+      74/100 done
 - [ ] Decide whether to raise `request-body-limit` for 9000063/9000064 to
       actually fire, or rewrite/retire them — dead as currently authored
 - [ ] Investigate 9000003's bsize/libhtp-inspect-window interaction —

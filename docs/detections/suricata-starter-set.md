@@ -33,15 +33,14 @@ none had a pcap fixture, so none could enter the enabled set under #445's
 promotion gate. `configs/suricata/suricata.yaml`'s `rule-files:` list
 references all 10 files (plus `local.rules`).
 
-**Update (2026-09-01, #446 follow-up):** 65 of the 100 rules are now
-enabled — see "Rules promoted" below. The other 35 remain disabled for
+**Update (2026-09-01, #446 follow-up):** 74 of the 100 rules are now
+enabled — see "Rules promoted" below. The other 26 remain disabled for
 the reasons already documented in this file (unresolved placeholders,
-un-tuned `detection_filter` thresholds, no fixture yet, DLP sign-off not
-obtained, or the dead-as-configured/finicky-buffering issues on
-9000003/9000063/9000064 below) — plus SMB (9000043-9000045) and FTP-data
-(9000067), deliberately skipped this session as needing more complex
-protocol-session construction than the content/port matches tackled so
-far.
+un-tuned `detection_filter` thresholds, DLP sign-off not obtained, or the
+dead-as-configured/finicky-buffering issues on 9000003/9000063/9000064)
+— plus SMB (9000043-9000045) and FTP-data (9000067), deliberately
+skipped this session as needing more complex protocol-session
+construction than the content/port/SMTP matches tackled so far.
 
 ## Syntax fixes (8 rules)
 
@@ -245,9 +244,28 @@ session had time for. Not disclosed as dead-as-configured like
 9000063/9000064 (unlike those, nothing here rules out a working fixture
 existing) — flagged as unresolved instead.
 
+**Fifth batch (9 more rules, `phishing_email.rules`)** — the first SMTP
+rules attempted this session. Every fixture is a full, realistic SMTP
+session (`scapy`-built): server `220` greeting, `EHLO`, `MAIL FROM`,
+`RCPT TO`, `DATA`/`354`, the actual email headers+body (where the rules'
+plain `content` matches apply — no sticky buffer, so they match the raw
+to_server stream during the DATA phase), the `.` end-of-data, `QUIT`, and
+a clean FIN teardown — not a bare TCP handshake, since Suricata's SMTP
+probing parser needs the real `220 ` banner exchange to identify the
+flow as SMTP at all before any of these rules can even apply. All 9
+verified on the first attempt: gift-card/wire-transfer/BEC social-
+engineering phrase matches (9000011/9000012/9000018), a password-
+protected-zip and two macro-enabled-attachment filename matches
+(9000014/9000015/9000016), a job-scam phrase pair (9000017), a URL-
+shortener domain match (9000019), and one DNS lookalike-domain-pattern
+match (9000020, not actually SMTP — it's a `dns` rule that happened to
+live in this category file). **9000013 stays excluded** — its
+`univv-edu` look-alike domain is an unresolved placeholder, the one rule
+in this file this session did not attempt.
+
 Fixtures live at `tests/detections/fixtures/suricata/<SID>_tp.pcap` /
 `<SID>_tn.pcap`. `tests/detections/test_suricata_rules.py`'s
-`PromotionGateRealRepoTests` now covers all 65 as part of the real,
+`PromotionGateRealRepoTests` now covers all 74 as part of the real,
 enabled-rule set (not just the synthetic meta-tests #445 originally
 proved the mechanism with).
 
@@ -263,11 +281,11 @@ attempted under time pressure and risking an unverified fixture.
 
 ## What is still NOT done
 
-- **35 rules still have no pcap fixture** (or, for 9000063/9000064, can't
+- **26 rules still have no pcap fixture** (or, for 9000063/9000064, can't
   fire under this repo's current config at all; 9000003 unresolved for
   reasons above) and stay disabled; #445's promotion gate needs one per
   rule before any more can be enabled — the same real, one-at-a-time
-  verification work the 65 above just went through, not yet done for the
+  verification work the 74 above just went through, not yet done for the
   rest.
 - **3 unresolved placeholders** (9000013, 9000065, 9000099, see above) —
   still blocked on a human with real institutional/threat-intel context;

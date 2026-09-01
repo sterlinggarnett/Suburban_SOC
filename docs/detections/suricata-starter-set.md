@@ -33,14 +33,15 @@ none had a pcap fixture, so none could enter the enabled set under #445's
 promotion gate. `configs/suricata/suricata.yaml`'s `rule-files:` list
 references all 10 files (plus `local.rules`).
 
-**Update (2026-09-01, #446 follow-up):** 62 of the 100 rules are now
-enabled — see "Rules promoted" below. The other 38 remain disabled for
+**Update (2026-09-01, #446 follow-up):** 65 of the 100 rules are now
+enabled — see "Rules promoted" below. The other 35 remain disabled for
 the reasons already documented in this file (unresolved placeholders,
 un-tuned `detection_filter` thresholds, no fixture yet, DLP sign-off not
-obtained, or the newly-found dead-as-configured issue on 9000063/9000064
-below) — plus SMB (9000043-9000045) and FTP-data (9000067), deliberately
-skipped this session as needing more complex protocol-session
-construction than the content/port matches tackled so far.
+obtained, or the dead-as-configured/finicky-buffering issues on
+9000003/9000063/9000064 below) — plus SMB (9000043-9000045) and FTP-data
+(9000067), deliberately skipped this session as needing more complex
+protocol-session construction than the content/port matches tackled so
+far.
 
 ## Syntax fixes (8 rules)
 
@@ -222,9 +223,31 @@ threshold-tuning scope. Left disabled; flagged here rather than silently
 left in the "no fixture yet" bucket, since a fixture genuinely can't make
 these two fire without a config change first.
 
+**Fourth batch (3 more rules, `auth_sso_abuse.rules`)** — 9000004
+(default `username=admin` credential in a `/cas/login` POST body) and
+9000006/9000007 (OpenBullet/SentryMBA credential-stuffing-tool user
+agents against `/cas/login`).
+
+**9000003 attempted, left disabled — genuinely finicky, not a quick
+fix.** `bsize:>8000` on `http.request_body` (the 8000-byte SAML-POST-size
+rule this repo's own #445 syntax fix rewrote from a broken `dsize`
+check) did not fire against an 8112-byte real POST body in this
+session's fixture attempts, including with an explicit FIN teardown
+(ruling out a flow-timeout truncation as the cause). `eve.json`'s
+`fileinfo` event showed the body buffer as `"state":"TRUNCATED"` at 6826
+bytes — short of both what was sent and the 8000-byte threshold, and not
+obviously explained by `request-body-limit: 100kb` (`configs/suricata/
+suricata.yaml`) alone. `request-body-minimal-inspect-size: 32kb` and
+`request-body-inspect-window: 4kb` in the same libhtp block are the
+likely interacting factors — `bsize`'s exact interaction with those two
+progressive-inspection settings needs more investigation than this
+session had time for. Not disclosed as dead-as-configured like
+9000063/9000064 (unlike those, nothing here rules out a working fixture
+existing) — flagged as unresolved instead.
+
 Fixtures live at `tests/detections/fixtures/suricata/<SID>_tp.pcap` /
 `<SID>_tn.pcap`. `tests/detections/test_suricata_rules.py`'s
-`PromotionGateRealRepoTests` now covers all 62 as part of the real,
+`PromotionGateRealRepoTests` now covers all 65 as part of the real,
 enabled-rule set (not just the synthetic meta-tests #445 originally
 proved the mechanism with).
 
@@ -240,11 +263,12 @@ attempted under time pressure and risking an unverified fixture.
 
 ## What is still NOT done
 
-- **38 rules still have no pcap fixture** (or, for 9000063/9000064, can't
-  fire under this repo's current config at all) and stay disabled; #445's
-  promotion gate needs one per rule before any more can be enabled — the
-  same real, one-at-a-time verification work the 62 above just went
-  through, not yet done for the rest.
+- **35 rules still have no pcap fixture** (or, for 9000063/9000064, can't
+  fire under this repo's current config at all; 9000003 unresolved for
+  reasons above) and stay disabled; #445's promotion gate needs one per
+  rule before any more can be enabled — the same real, one-at-a-time
+  verification work the 65 above just went through, not yet done for the
+  rest.
 - **3 unresolved placeholders** (9000013, 9000065, 9000099, see above) —
   still blocked on a human with real institutional/threat-intel context;
   not attempted.

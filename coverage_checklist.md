@@ -148,37 +148,43 @@ same disclose-what's-real-vs-not reasons.
       repo's own never-invent-an-IOC convention. Full reconciliation
       against existing Sigma coverage, genuine-gap inventory, and DLP
       sign-off flag in `docs/detections/suricata-starter-set.md`.
-- [x] **#446 follow-up (2026-09-01)** — 62 of the 100 rules promoted to
-      enabled across 3 batches: each got a real, verified pcap fixture
+- [x] **#446 follow-up (2026-09-01)** — 65 of the 100 rules promoted to
+      enabled across 4 batches: each got a real, verified pcap fixture
       (`suricata -r` replay against real Suricata 7.0.3 + real
       `scapy`-built packets, not a hand-authored pcap taken on faith).
       Batch 1 (11): 9000049, 9000051, 9000052, 9000091-9000098. Batch 2
       (20): 9000021-9000040 (web_lms_attacks + web_shell_compromise).
       Batch 3 (31): 9000041, 9000042, 9000047, 9000048, 9000050,
       9000053-9000059, 9000061, 9000068-9000072, 9000075-9000079,
-      9000081, 9000084-9000090. Full per-rule detail in
-      `docs/detections/suricata-starter-set.md`'s "Rules promoted"
-      section. Also found 9000063/9000064 are dead-as-configured (need
-      >1MB request body inspection but `suricata.yaml`'s
-      `request-body-limit: 100kb` caps it) — a real finding, not just an
-      unfixtured rule; flagged, not fixed (raising the limit is a
-      resource/DoS-tuning decision, not a quick fix). Remaining 38: 3 SMB
-      + 1 FTP-data rules need more complex protocol-session fixtures than
-      attempted this session, 3 placeholders and 2 DLP rules stay
-      blocked as before, and the rest carry `detection_filter` thresholds
-      needing real traffic to tune.
+      9000081, 9000084-9000090. Batch 4 (3): 9000004, 9000006, 9000007.
+      Full per-rule detail in `docs/detections/suricata-starter-set.md`'s
+      "Rules promoted" section. Also found 9000063/9000064 are
+      dead-as-configured (need >1MB request body inspection but
+      `suricata.yaml`'s `request-body-limit: 100kb` caps it) — flagged,
+      not fixed (raising the limit is a resource/DoS-tuning decision).
+      9000003 attempted and left unresolved — `bsize:>8000` on
+      `http.request_body` didn't fire against a real 8112-byte body in
+      this session's fixture attempts, likely interacting with libhtp's
+      `request-body-minimal-inspect-size`/`request-body-inspect-window`
+      settings; needs more investigation, not disclosed as dead like
+      9000063/9000064. Remaining 35: 3 SMB + 1 FTP-data rules need more
+      complex protocol-session fixtures than attempted this session, 3
+      placeholders and 2 DLP rules stay blocked as before, and the rest
+      carry `detection_filter` thresholds needing real traffic to tune.
 
 Operational to-dos (Suricata lane):
 - [ ] Deploy `suricata-host-capture.service` to a real capture host
       alongside Zeek; measure CPU headroom
 - [ ] Confirm Filebeat ships `eve.json` and Logstash's Category 0b branch
       populates `rule.*`/`threat.technique.id` as designed
-- [ ] Per-rule pcap fixtures for the remaining 34 fixture-eligible rules
+- [ ] Per-rule pcap fixtures for the remaining fixture-eligible rules
       (SMB x3, FTP-data x1, plus whatever's left after re-auditing) —
       nothing enters the enabled set without one (#445's promotion gate);
-      62/100 done
+      65/100 done
 - [ ] Decide whether to raise `request-body-limit` for 9000063/9000064 to
       actually fire, or rewrite/retire them — dead as currently authored
+- [ ] Investigate 9000003's bsize/libhtp-inspect-window interaction —
+      unresolved, not confirmed dead
 - [ ] Resolve the 3 remaining placeholders (9000013/9000065/9000099) with
       real institutional/threat-intel values before those specific rules
       are ever enabled

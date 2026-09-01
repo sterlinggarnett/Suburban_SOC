@@ -13,7 +13,7 @@ This playbook provides a structured, per-rule methodology to respond to alerts t
 IR Sigma Playbook (Endpoint & Network Alerts)
 
 ## Problem Statement
-Suburban-SOC deploys 108 Sigma detection rules across endpoint (Sysmon, Windows event channels, Linux auth) and network (Zeek) telemetry, spanning 78 MITRE ATT&CK techniques across 12 tactics (see [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md)). Every one of those alerts requires a standardized triage and containment response; a generic playbook cannot tell an analyst which fields to extract, which threat-intelligence lookups apply, or when containment may be automated. This playbook gives each deployed rule its own response procedure.
+Suburban-SOC deploys 118 Sigma detection rules across endpoint (Sysmon, Windows event channels, Linux auth/process creation) and network (Zeek) telemetry, spanning 86 MITRE ATT&CK techniques across 12 tactics (see [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md)). Every one of those alerts requires a standardized triage and containment response; a generic playbook cannot tell an analyst which fields to extract, which threat-intelligence lookups apply, or when containment may be automated. This playbook gives each deployed rule its own response procedure.
 
 ## Objectives
 - Rapidly identify and validate suspicious activities flagged by Sigma rules.
@@ -25,7 +25,7 @@ Suburban-SOC deploys 108 Sigma detection rules across endpoint (Sysmon, Windows 
 - CIS Controls: 17 (Incident Response Management)
 
 ## MITRE ATT&CK Framework
-The deployed corpus covers **78 techniques across 12 tactics**. Per-rule technique IDs are in the Master Detection & Response Matrix below and in each rule's section; the authoritative coverage matrix (auto-generated from `rules/sigma/`) is [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md).
+The deployed corpus covers **86 techniques across 12 tactics**. Per-rule technique IDs are in the Master Detection & Response Matrix below and in each rule's section; the authoritative coverage matrix (auto-generated from `rules/sigma/`) is [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md).
 
 ## Assumptions and Limitations
 - Assumes EDR and Logstash pipelines are fully operational.
@@ -43,7 +43,7 @@ Alerts are generated natively in the Elastic Detection Engine and forwarded to t
 ## Playbook Verification
 - An alert corresponding to a managed Sigma rule fires (e.g. `proc_creation_win_lsass_dump.yml`).
 - Endpoint telemetry indicating suspicious child processes is visible in Kibana.
-- The alert's rule maps to exactly one section in this playbook (verified mechanically: 108 rules, 108 sections).
+- The alert's rule maps to exactly one section in this playbook (verified mechanically: 118 rules, 118 sections).
 
 ## Recommended Response Action(s)
 The generic actions below are superseded by the per-rule sections in Rule Response Procedures at the end of this section; they remain as the workflow-phase summary.
@@ -95,19 +95,20 @@ Rule sections inherit their family's baseline and state only deviations.
 
 | Family (rules) | Event source | Artifact classes yielded | TI enrichment | Default tier |
 |---|---|---|---|---|
-| Windows Process Creation (51) | Sysmon EID 1 | binary paths, command lines, parent lineage, SHA-256, URLs/IPs/domains embedded in `CommandLine` | Hash → VT ≥5; embedded URL/domain → OTX; embedded IP → AbuseIPDB ≥50% | B (A for its critical rules) |
+| Windows Process Creation (53) | Sysmon EID 1 | binary paths, command lines, parent lineage, SHA-256, URLs/IPs/domains embedded in `CommandLine` | Hash → VT ≥5; embedded URL/domain → OTX; embedded IP → AbuseIPDB ≥50% | B (A for its critical rules) |
 | Windows Security Log (15) | Security channel | account names/SIDs, source IPs, logon types, SPNs, group/policy objects | external IP → AbuseIPDB ≥50%; pure identity events → Internal-only | B (identity) / D; A for DCSync |
-| PowerShell Script Block (7) | PowerShell/Operational 4104 | script content → decoded URLs, domains, IPs; dropped-payload hashes | OTX for URLs/domains, AbuseIPDB for IPs, VT for decoded payload hashes | B |
+| PowerShell Script Block (8) | PowerShell/Operational 4104 | script content → decoded URLs, domains, IPs; dropped-payload hashes | OTX for URLs/domains, AbuseIPDB for IPs, VT for decoded payload hashes | B |
 | Windows System Log (6) | System channel (SCM / event log service) | service names, service binary paths, driver paths | VT for the service binary hash via the correlated Sysmon EID 1 event | B |
-| Zeek Network (21) | Zeek conn/dns/files/http/notice/smtp/ssh/ssl | external IPs/ports, domains, URIs, certificate attributes, MIME types, byte volumes | destination IP → AbuseIPDB ≥50%; domain/URI → OTX; downloaded-file hash → VT ≥5 | C, promote to B on confirmed internal-host involvement |
+| Zeek Network (23) | Zeek conn/dns/files/http/notice/smtp/ssh/ssl | external IPs/ports, domains, URIs, certificate attributes, MIME types, byte volumes | destination IP → AbuseIPDB ≥50%; domain/URI → OTX; downloaded-file hash → VT ≥5 | C, promote to B on confirmed internal-host involvement |
 | Linux Authentication (5) | auth.log | usernames, SSH source IPs, sudo/su context | SSH source IP → AbuseIPDB ≥50%; local-context events → Internal-only | B (identity) / D |
+| Linux Process Creation (5) | auditd execve (SYSCALL+EXECVE, #442) | binary paths (`process.executable`), full argv text (`process.args`), embedded IPs/domains in argv where present, `user.name` | embedded IP/domain in `process.args` → AbuseIPDB ≥50% / OTX where present; otherwise Internal-only. No SHA-256 and no `process.parent.name` — the auditd pipeline does not populate either (documented gap, `configs/logstash.conf`) | spans C/B/A by rule severity — see individual sections |
 | Sysmon Specialized (2) | Sysmon EID 8 / EID 11 | source/target process images, dropped-file path and hash | Hash → VT ≥5 | B |
 | WMI Activity (1) | WMI-Activity 5861 | filter/consumer names, consumer command line | Internal-first; VT for any extracted payload hash | B |
 
 <a id="master-detection--response-matrix"></a>
 ### Master Detection & Response Matrix
 
-One row per deployed Sigma rule (108 rows), grouped by log-source family in the same
+One row per deployed Sigma rule (118 rows), grouped by log-source family in the same
 order as the Rule Response Procedures sections below, alphabetical by rule file within
 each family. **Extracted Fields** lists the rule's own detection-block field names
 verbatim; the fuller extraction set (standard event-source fields) is in each rule's
@@ -117,6 +118,7 @@ vocabularies defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-work
 | Rule Name | MITRE ATT&CK ID | Extracted Fields | Threat Intel Target | Automated Containment Action |
 |---|---|---|---|---|
 | [Accessibility Feature Backdoor via Image/OriginalFileName Mismatch](#proc_creation_win_accessibility_binary_debugger_swap) | T1546.008 | `Image`, `OriginalFileName`, `ParentImage`, `CommandLine` | Hash → VT ≥5 | Tier A — auto-isolate + identity kill |
+| [Password-Protected or Staged Archive Creation via 7-Zip, MakeCab, or Tar](#proc_creation_win_archive_staging_non_rar) | T1560.001 | `Image`, `OriginalFileName`, `CommandLine` | Hash → VT ≥5 | Tier C — indicator block on TI-confirm |
 | [ARP Cache Enumeration via arp.exe](#proc_creation_win_arp_cache_discovery) | T1016 | `Image`, `OriginalFileName`, `CommandLine` | Hash → VT ≥5 | Tier C — indicator block on TI-confirm |
 | [Windows Recovery Options Disabled via bcdedit](#proc_creation_win_bcdedit_recovery_disabled) | T1490 | `Image`, `OriginalFileName`, `CommandLine` | Hash → VT ≥5 | Tier A — auto-isolate + identity kill |
 | [Malicious File Download via Bitsadmin](#proc_creation_win_bitsadmin_download) | T1105 | `Image`, `CommandLine` | Hash → VT ≥5; Domain/URL → OTX | Tier C — indicator block on TI-confirm |
@@ -137,6 +139,7 @@ vocabularies defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-work
 | [Shell Spawned by PsExec Service or WMI Provider Host](#proc_creation_win_lateral_tool_parent) | T1021, T1569.002 | `Image`, `ParentImage` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
 | [LaZagne Credential Harvester Execution](#proc_creation_win_lazagne_credential_harvest) | T1555 | `Image`, `OriginalFileName`, `CommandLine` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
 | [Local User Account Creation via Net.exe](#proc_creation_win_local_acct_create) | T1136.001 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier C — indicator block on TI-confirm |
+| [Recursive Document Copy Into a Temp or Public Staging Path](#proc_creation_win_local_data_staging) | T1074.001 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier C — indicator block on TI-confirm |
 | [LSASS Memory Dump via Comsvcs.dll](#proc_creation_win_lsass_dump) | T1003.001 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
 | [Mimikatz Module Syntax on the Command Line](#proc_creation_win_mimikatz_module_syntax) | T1003.001 | `CommandLine` | Hash → VT ≥5 | Tier A — auto-isolate + identity kill |
 | [Mshta Remote or Script Payload Execution](#proc_creation_win_mshta_remote) | T1218.005 | `Image`, `CommandLine` | Hash → VT ≥5; Domain/URL → OTX | Tier B — auto-isolate on TI-confirm |
@@ -187,6 +190,7 @@ vocabularies defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-work
 | [Active Directory Query via Official ActiveDirectory Module](#posh_ps_ad_recon_admodule) | T1087.002 | `EventID`, `ScriptBlockText` | Internal-only | Tier D — triage-only |
 | [Active Directory Reconnaissance via PowerView](#posh_ps_ad_recon_powerview) | T1087.002 | `EventID`, `ScriptBlockText` | Internal-only | Tier B — auto-isolate on TI-confirm |
 | [PowerShell AMSI Bypass Attempt](#posh_ps_amsi_bypass_attempt) | T1562.001 | `EventID`, `ScriptBlockText` | Decoded Domain/URL → OTX; Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
+| [PowerShell Clipboard Access or Polling](#posh_ps_clipboard_capture) | T1115 | `EventID`, `ScriptBlockText` | Decoded Domain/URL → OTX; Hash → VT ≥5 | Tier C — indicator block on TI-confirm |
 | [Obfuscated or Encoded PowerShell Script Block](#posh_ps_obfuscated_scriptblock) | T1059.001, T1027 | `EventID`, `ScriptBlockText` | Decoded Domain/URL → OTX; Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
 | [PowerShell Reverse Shell via TCPClient](#posh_ps_reverse_shell) | T1059.001 | `EventID`, `ScriptBlockText` | Decoded Domain/URL → OTX; Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
 | [Kernel or File-System Driver Service Installed](#system_win_driver_service_installed) | T1068 | `EventID`, `ServiceType` | Hash → VT ≥5 | Tier C — indicator block on TI-confirm |
@@ -197,6 +201,7 @@ vocabularies defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-work
 | [New Service Installed With a LOLBin as its Binary](#system_win_suspicious_service_binpath_lolbin) | T1543.003 | `EventID`, `ImagePath` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
 | [RDP Connection Originating From Outside Private Address Space](#net_zeek_conn_external_rdp_inbound) | T1021.001 | `id.resp_p`, `proto`, `id.orig_h` | IP → AbuseIPDB ≥50% | Tier B — auto-isolate on TI-confirm |
 | [Unusually Large ICMP Flow (Possible ICMP Tunnel)](#net_zeek_conn_icmp_tunnel_large) | T1095 | `proto`, `orig_bytes` | IP → AbuseIPDB ≥50% | Tier C — indicator block on TI-confirm |
+| [Asymmetric Outbound Connection Volume (Possible Exfiltration)](#net_zeek_conn_outbound_volume_asymmetry) | T1048 | `orig_bytes`, `resp_bytes` | IP → AbuseIPDB ≥50% | Tier C — indicator block on TI-confirm |
 | [SMB Connection Crossing Private/Public Address Boundary](#net_zeek_conn_smb_lateral_admin) | T1021.002 | `id.resp_p`, `proto`, `id.orig_h`, `id.resp_h` | IP → AbuseIPDB ≥50% | Tier B — auto-isolate on TI-confirm |
 | [Connection to Tor's Default OR or Directory Port](#net_zeek_conn_tor_exit_node) | T1090.003 | `id.resp_p`, `proto` | IP → AbuseIPDB ≥50% | Tier C — indicator block on TI-confirm |
 | [DNS Query for a Known Cryptocurrency Mining Pool](#net_zeek_dns_crypto_mining_pool) | T1496 | `query` | Domain → OTX | Tier C — indicator block on TI-confirm |
@@ -214,6 +219,7 @@ vocabularies defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-work
 | [SSH Password Guessing / Brute Force (Zeek Notice)](#net_zeek_ssh_bruteforce) | T1110 | `note` | IP → AbuseIPDB ≥50% | Tier B — auto-isolate on TI-confirm |
 | [SSH Session Cadence — Complementary Brute-Force Coverage Below detect-bruteforcing's Threshold](#net_zeek_ssh_session_cadence) | T1110 | `client` | IP → AbuseIPDB ≥50% | Tier C — indicator block on TI-confirm |
 | [Sustained Low-and-Slow SSH Session Cadence — Below detect-bruteforcing AND net_zeek_ssh_session_cadence's Own Rate Floor](#net_zeek_ssh_session_cadence_sustained) | T1110 | `client` | IP → AbuseIPDB ≥50% | Tier C — indicator block on TI-confirm |
+| [TLS Connection SNI Matching a Cloud-Storage or Paste Provider](#net_zeek_ssl_cloud_storage_exfil) | T1567.002 | `server_name` | Domain → OTX | Tier D — triage-only |
 | [TLS Connection with Expired Certificate](#net_zeek_ssl_expired_cert_connection) | T1071.001 | `validation_status` | IP → AbuseIPDB ≥50% | Tier D — triage-only |
 | [TLS Connection with Self-Signed Certificate (Possible C2)](#net_zeek_ssl_self_signed_c2) | T1573.002 | `validation_status` | IP → AbuseIPDB ≥50% | Tier D — triage-only |
 | [SSH Login Attempt for a Nonexistent User](#auth_linux_invalid_user_ssh_attempt) | T1110.001 | `event.module`, `message` | IP → AbuseIPDB ≥50% | Tier C — indicator block on TI-confirm |
@@ -221,6 +227,11 @@ vocabularies defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-work
 | [Direct Root Login via SSH](#auth_linux_ssh_root_login) | T1078.003 | `event.module`, `user.name`, `event.outcome` | IP → AbuseIPDB ≥50% | Tier B (identity) — account disable on TI-confirm |
 | [su Session Opened](#auth_linux_su_session_opened) | T1078.003 | `event.module`, `message` | Internal-only | Tier D — triage-only |
 | [Sudo Command Execution Logged](#auth_linux_sudo_privilege_escalation) | T1548.003 | `event.module`, `message` | Internal-only | Tier D — triage-only |
+| [Linux Cron/At Job Persistence](#proc_creation_lnx_cron_at_persistence) | T1053.003 | `Image`, `CommandLine` | Internal-only | Tier D — triage-only |
+| [Linux Ingress Tool Transfer via curl/wget to a Temp Path or Piped to a Shell](#proc_creation_lnx_ingress_tool_transfer) | T1105 | `Image`, `CommandLine` | Domain/URL → OTX; IP → AbuseIPDB ≥50% | Tier C — indicator block on TI-confirm |
+| [Linux Reverse Shell via Interpreter Redirect or Exec Flag](#proc_creation_lnx_reverse_shell_interpreter) | T1059.004 | `Image`, `CommandLine` | IP → AbuseIPDB ≥50% | Tier A — auto-isolate + identity kill |
+| [Linux Shell History Tampering](#proc_creation_lnx_shell_history_tamper) | T1070.003 | `CommandLine` | Internal-only | Tier B — auto-isolate on TI-confirm |
+| [Linux systemd Service Persistence](#proc_creation_lnx_systemd_service_persistence) | T1543.002 | `CommandLine`, `Image` | Internal-only | Tier B — auto-isolate on TI-confirm |
 | [Suspicious CreateRemoteThread Target or Source (Sysmon EventID 8)](#create_remote_thread_win_susp_target) | T1055 | `EventID`, `TargetImage`, `SourceUser` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
 | [File Dropped into the Startup Folder](#proc_creation_win_startup_folder_file_drop) | T1547.001 | `TargetFilename` | Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
 | [Suspicious WMI Event Filter-to-Consumer Binding (WMI-Activity 5861)](#wmi_win_event_subscription_binding) | T1546.003 | `EventID`, `Operation` | Internal-only; Hash → VT ≥5 | Tier B — auto-isolate on TI-confirm |
@@ -228,7 +239,7 @@ vocabularies defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-work
 ### Rule Response Procedures
 One section per deployed Sigma rule, grouped by log-source family (matching the Master Matrix order), alphabetical by rule file within each family. Each section carries the five subsections of the [Standard 4-Phase IR Workflow](#standard-4-phase-ir-workflow): Rule Summary & MITRE Mapping, Automated Extraction Fields, Enrichment Criteria, Containment Decision Flow, and Remediation & Evidence Preservation. Field names in extraction tables are quoted verbatim from the rule's detection block or named as the event source records them.
 
-#### Windows Process Creation (Sysmon EID 1) — 51 rules
+#### Windows Process Creation (Sysmon EID 1) — 53 rules
 
 <a id="proc_creation_win_accessibility_binary_debugger_swap"></a>
 ##### Accessibility Feature Backdoor via Image/OriginalFileName Mismatch
@@ -291,6 +302,61 @@ Detects two forms of the "sticky keys" class of pre-logon backdoor, both launcha
 
 - Acquire host memory and disk-image the six accessibility binaries plus the IFEO registry hive **before** cleanup; collect and hash the swapped binary and export the IFEO key.
 - Cleanup: delete the `Debugger` value(s) under the IFEO key(s); restore the replaced binary from a known-good source (component store / clean media) and verify its hash and signature; reset credentials for accounts with sessions on the host since the earliest planting evidence.
+- Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
+
+<a id="proc_creation_win_archive_staging_non_rar"></a>
+##### Password-Protected or Staged Archive Creation via 7-Zip, MakeCab, or Tar
+
+**Rule file:** `rules/sigma/proc_creation_win_archive_staging_non_rar.yml` · **Status:** experimental · **Severity:** medium
+
+###### 1. Rule Summary & MITRE Mapping
+
+| Attribute | Value |
+|---|---|
+| Tactic(s) | Collection |
+| Technique(s) | T1560.001 — Archive Collected Data: Archive via Utility |
+| Severity (`level`) | medium |
+| Data source | Sysmon/Winlogbeat (process_creation) |
+| Trigger condition | Either `7z.exe`/`7za.exe` (by image path or OriginalFileName) running the add-archive verb (`.exe a `) with a password flag (` -p`), OR `makecab.exe`/`tar.exe` writing to a temp/public staging path (`\Temp\`, `\AppData\Local\Temp\`, `\Users\Public\`, `\ProgramData\`) |
+
+Extends `proc_creation_win_rar_archive_staging.yml`'s password-protected-archive pattern to the non-RAR archivers a host may carry instead. The two branches are deliberately asymmetric because only 7-Zip has a password/encryption flag at all: the 7z branch keeps the RAR rule's password-is-the-signal logic; makecab and tar have no password concept whatsoever, so that branch instead leans on a staging-path destination — the same FP-reduction judgment call `proc_creation_win_local_data_staging.yml`/`posh_data_compression_staging.yml` already make. `Compress-Archive` is deliberately not duplicated here: it is already covered by `posh_data_compression_staging.yml` via 4104 script-block logging, a genuinely different telemetry path from this rule's process_creation logsource.
+
+###### 2. Automated Extraction Fields
+
+| Field | Origin | Use in triage |
+|---|---|---|
+| `Image` | rule detection block | Executing archiver path (7z/7za/makecab/tar); a portable copy in a user-writable directory is itself suspicious |
+| `OriginalFileName` | rule detection block | PE metadata catches a renamed `7z.exe`/`7za.exe` (the makecab/tar branch keys on `Image` only — neither ships with a distinctive OriginalFileName worth requiring) |
+| `CommandLine` | rule detection block | 7z branch: add-verb and password flag; makecab/tar branch: the staging destination path |
+| `ParentImage`, `ParentCommandLine` | event source (Sysmon EID 1) | Delivery vector (interactive shell vs. script or C2 implant) |
+| `User` | event source (Sysmon EID 1) | Account performing the staging; scopes data-access review |
+| `Hashes` | event source (Sysmon EID 1) | SHA-256 of the archiver binary for TI lookup |
+| `Computer`, `UtcTime`, `ProcessGuid` | event source (Sysmon EID 1) | Host, timeline anchor, process-tree pivot key |
+
+###### 3. Enrichment Criteria
+
+- SHA-256 of the executing archiver (`Hashes`) → VirusTotal; escalate at **≥ 5 malicious verdicts** (a dropped portable 7z/makecab/tar build is frequently known; a clean verdict on a legitimate system tool decides nothing by itself).
+- Internal-only: archive/CAB output path (7z branch) or the staging destination path (makecab/tar branch) parsed from `CommandLine` → data-classification and asset-owner lookup; change calendar for any sanctioned bulk transfer or packaging step.
+- The event carries no network artifact — egress confirmation comes from correlated network-family alerts, not from this event.
+- An indicator here is only malicious with the citing VT verdict or an internal case ID; otherwise record it as unconfirmed.
+
+###### 4. Containment Decision Flow
+
+**Auto-containment:** severity medium → Tier C: on archiver-binary VT verdict ≥ 5 malicious, auto-add the hash to the blocklist and open an analyst ticket; no TI confirmation → Tier D triage.
+**Analyst triage path:**
+1. Verify with KQL (index `logstash-*`; ECS-renamed channel):
+   ```
+   process.executable : (*\\7z.exe or *\\7za.exe or *\\makecab.exe or *\\tar.exe) or process.pe.original_file_name : ("7z.exe" or "7za.exe")
+   ```
+   The 7z branch's anchored verb (`.exe a `) and password flag (` -p`) cannot be expressed as KQL wildcards — confirm them by reading `process.args`. For the makecab/tar branch, confirm the staging destination (`\Temp\`, `\AppData\Local\Temp\`, `\Users\Public\`, `\ProgramData\`) the same way.
+2. Process-tree pivot on `process.parent.name` / `process.parent.args`; locate the created archive/CAB on disk (path and size from the command line) and inventory what it contains.
+3. False-positive checks: legitimate IT/backup tooling creating a password-protected 7-Zip archive for authorized transfer — correlate the destination and contents against the change calendar; a legitimate deployment/packaging script using makecab or tar to stage a CAB/tarball in a temp or public path as an intermediate build/install step — baseline and exclude by script hash/path if recurring.
+**Escalation:** archive/CAB written to a network share or removable media, or any egress/exfiltration-family alert from the same host in the surrounding hour → treat as active exfiltration staging; page the IR lead.
+
+###### 5. Remediation & Evidence Preservation
+
+- Collect and hash the archive/CAB file before deletion; inventory the staged source paths to scope the data-exposure assessment (what would have left the estate).
+- Remove the archive and, if the archiver is a dropped portable copy, the binary itself; hunt other hosts for the same archiver hash and command-line pattern.
 - Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
 
 <a id="proc_creation_win_arp_cache_discovery"></a>
@@ -1381,6 +1447,60 @@ Detects the creation of a local user account using the `net user` command — a 
 
 - Export the account's creation and logon events; screenshot/export its group memberships before removal.
 - Disable then delete the unauthorized account; revert any group additions; reset the creating account's credentials if its own compromise is suspected.
+- Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
+
+<a id="proc_creation_win_local_data_staging"></a>
+##### Recursive Document Copy Into a Temp or Public Staging Path
+
+**Rule file:** `rules/sigma/proc_creation_win_local_data_staging.yml` · **Status:** experimental · **Severity:** medium
+
+###### 1. Rule Summary & MITRE Mapping
+
+| Attribute | Value |
+|---|---|
+| Tactic(s) | Collection |
+| Technique(s) | T1074.001 — Data Staged: Local Data Staging |
+| Severity (`level`) | medium |
+| Data source | Sysmon/Winlogbeat (process_creation) |
+| Trigger condition | `robocopy.exe`/`xcopy.exe` running a recursive copy (` /E` or ` /S`) whose command line contains both a document/data extension (`.doc`, `.docx`, `.xls`, `.xlsx`, `.pdf`, `.pst`, `.csv`) AND a staging-shaped destination (`\Temp\`, `\AppData\Local\Temp\`, `\Users\Public\`, `\ProgramData\`) |
+
+Detects bulk-copying documents into a temp or public path an attacker (or a script running under a compromised account) can freely write to and later collect from — the standard precursor to archiving and exfiltrating them, the same staging role `posh_data_compression_staging.yml`/`proc_creation_win_rar_archive_staging.yml` serve for the compression step that typically follows. All four conditions (image, recursive flag, extension, destination) are required together — robocopy/xcopy invocations are extremely common in legitimate backup/deployment tooling, so the rule leans on the destination-path signal to separate staging from routine copying. Coverage gap the rule states plainly: staging to any path outside the three listed — a mapped network share, a OneDrive sync folder, a non-default temp location — evades it entirely, and the extension list is a starting set, not exhaustive.
+
+###### 2. Automated Extraction Fields
+
+| Field | Origin | Use in triage |
+|---|---|---|
+| `Image` | rule detection block | Confirms `robocopy.exe`/`xcopy.exe` |
+| `CommandLine` | rule detection block | Source path, destination path, recursive flag, and the extension(s) matched — defines the collection scope |
+| `ParentImage`, `ParentCommandLine` | event source (Sysmon EID 1) | Delivery vector (interactive shell, script, or scheduled task) |
+| `User` | event source (Sysmon EID 1) | Account performing the copy; scopes data-access review |
+| `Hashes` | event source (Sysmon EID 1) | SHA-256 of robocopy.exe/xcopy.exe — stock system binaries, so a clean VT verdict is expected and decides nothing by itself |
+| `Computer`, `UtcTime`, `ProcessGuid` | event source (Sysmon EID 1) | Host, timeline anchor, process-tree pivot key |
+
+###### 3. Enrichment Criteria
+
+- SHA-256 of `robocopy.exe`/`xcopy.exe` (`Hashes`) → VirusTotal; escalate at **≥ 5 malicious verdicts** — a near-certain miss for these stock binaries, so a match here is itself an anomaly worth an incident on its own.
+- Internal-only (the primary signal for this rule): source path parsed from `CommandLine` → data-classification and asset-owner lookup; is the source a known sensitive share (finance, HR, legal)? Change calendar for any sanctioned bulk migration/backup job.
+- The event carries no network artifact — egress confirmation comes from correlated network-family alerts, not from this event.
+- Do not label the staging malicious without an internal case or a paired egress/archive-staging alert; routine backup tooling produces the same shape.
+
+###### 4. Containment Decision Flow
+
+**Auto-containment:** severity medium → Tier C: on the (unlikely) VT ≥ 5 verdict for the copying binary, auto-add the hash to the blocklist and open an analyst ticket; no TI confirmation → Tier D triage.
+**Analyst triage path:**
+1. Verify with KQL (index `logstash-*`; ECS-renamed channel):
+   ```
+   process.executable : (*\\robocopy.exe or *\\xcopy.exe) and process.args : (*.doc* or *.docx* or *.xls* or *.xlsx* or *.pdf* or *.pst* or *.csv*) and process.args : (*\\Temp\\* or *\\AppData\\Local\\Temp\\* or *\\Users\\Public\\* or *\\ProgramData\\*)
+   ```
+   The recursive flag (` /E`/` /S`) cannot be expressed as a KQL wildcard token — confirm it by reading `process.args`.
+2. Process-tree pivot on `process.parent.name` / `process.parent.args`; identify the source directory's data classification, and check the host's subsequent hours for an archive-staging or egress event (RAR/7-Zip/PowerShell compression, large HTTP POST, SMTP attachment) consuming the same staged path.
+3. False-positive check: a legitimate IT/backup script recursively copying documents into a temp or public staging path as an intermediate deployment/migration step, or application installers/update tooling staging document/template assets under ProgramData — baseline and exclude by script hash/path if recurring.
+**Escalation:** a paired archive-staging or egress alert from the same host consuming the staged path, or the source directory holds sensitive/regulated data → promote to the high-severity flow (Tier B isolate) and page the IR lead.
+
+###### 5. Remediation & Evidence Preservation
+
+- Collect and hash the staged file set at the destination before removal; inventory it against the source directory to scope the data-exposure assessment (what would have left the estate).
+- Remove the staged copies; if a follow-on archive was created, treat it under `proc_creation_win_rar_archive_staging.yml`'s/`proc_creation_win_archive_staging_non_rar.yml`'s remediation.
 - Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
 
 <a id="proc_creation_win_lsass_dump"></a>
@@ -3754,7 +3874,7 @@ Detects new-account creation — a common persistence mechanism: an attacker wit
 - Sweep for sibling creations by the same `SubjectUserName` — persistence accounts are often made in pairs.
 - Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
 
-#### PowerShell Script Block Logging (EID 4104) — 7 rules
+#### PowerShell Script Block Logging (EID 4104) — 8 rules
 
 <a id="posh_credential_harvesting_scriptblock"></a>
 ##### PowerShell Credential-Harvesting Cmdlet Pattern
@@ -4019,6 +4139,59 @@ Detects script content referencing AMSI internals in ways consistent with a bypa
 
 - Acquire host memory before any reboot — a successful patch lives in the PowerShell process's memory — and export the full 4104 set for the session window.
 - Verify AMSI/AV provider health on the host after containment; reset the executing account's credentials; block any TI-confirmed indicator from the decoded payload.
+- Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
+
+<a id="posh_ps_clipboard_capture"></a>
+##### PowerShell Clipboard Access or Polling
+
+**Rule file:** `rules/sigma/posh_ps_clipboard_capture.yml` · **Status:** experimental · **Severity:** medium
+
+###### 1. Rule Summary & MITRE Mapping
+
+| Attribute | Value |
+|---|---|
+| Tactic(s) | Collection |
+| Technique(s) | T1115 — Clipboard Data |
+| Severity (`level`) | medium |
+| Data source | Winlogbeat (PowerShell/Operational) |
+| Trigger condition | A 4104 script block containing `Get-Clipboard`, OR the `user32`/`GetClipboardData` P/Invoke pattern |
+
+Detects PowerShell reading clipboard content — either the native `Get-Clipboard` cmdlet (PowerShell 5.0+) or the older `Add-Type`-against-`user32`/`GetClipboardData` pattern used on older PowerShell versions or to avoid the cmdlet's own audit signature. Clipboard content routinely holds credentials, crypto-wallet addresses, and other sensitive text copied moments earlier. The rule states its own confidence split: the `Get-Clipboard` branch is deliberately broad — a single invocation is common in legitimate admin/automation scripts too, so this is a visibility-layer tripwire, not a high-confidence standalone signal — while the `GetClipboardData`/`user32` branch is the higher-confidence half, since legitimate scripts essentially never reach for the raw Win32 API when the built-in cmdlet does the same job. Known scope limit, same as this corpus's other 4104 rules: substring matching only, not regex.
+
+###### 2. Automated Extraction Fields
+
+| Field | Origin | Use in triage |
+|---|---|---|
+| `EventID` | rule detection block | Channel scoping — script-block logging events (4104) only |
+| `ScriptBlockText` | rule detection block | Recovered script content — which branch fired (cmdlet vs. raw Win32 API), and what the captured value is subsequently sent to, if visible in the same or an adjacent block |
+| `ScriptBlockId` | event source (4104) | Reassembly/dedup key for chunked blocks |
+| `MessageNumber`, `MessageTotal` | event source (4104) | Chunk ordering — export every chunk before analysis |
+| `Path` | event source (4104) | On-disk `.ps1` path when run from a file; empty for the typical pasted one-liner |
+| `Computer`, `UserID` | event source (4104) | Host and executing-account SID — containment and Sysmon-correlation anchors |
+
+###### 3. Enrichment Criteria
+
+- Decoded domain/URL in an adjacent block exfiltrating the captured clipboard content → OTX; escalate on **any pulse match**.
+- Hash of any dropped payload or tool the block references (via the host's Sysmon file-creation events) → VirusTotal; escalate at **≥ 5 malicious verdicts**.
+- Internal-only: is a known clipboard-manager, accessibility, or IT-helpdesk automation script recognized for this host (script hash/path baseline, change calendar)?
+- The clipboard-access call proves capability, not exfiltration — do not label it malicious without the citing TI verdict or an internal case.
+
+###### 4. Containment Decision Flow
+
+**Auto-containment:** severity medium → Tier C: on OTX pulse or VT ≥ 5 for a decoded artifact, auto-add that indicator to the blocklist and open an analyst ticket; no TI confirmation → Tier D triage.
+**Analyst triage path:**
+1. Verify with KQL (index `logstash-*`):
+   ```
+   winlog.event_id : 4104 and winlog.event_data.ScriptBlockText : (*Get-Clipboard* or *GetClipboardData* or *user32*)
+   ```
+2. Correlate the 4104 event to its launching process via the host's Sysmon process-creation events in the same window (then follow the Windows Process Creation family baseline). Pull the same host/user's surrounding 4104 events for a follow-on exfiltration destination — static decode only, never execute recovered script content.
+3. False-positive check: a legitimate admin/automation script reading a value the operator just copied for a scripted paste step, or a clipboard-manager/productivity tool implemented in PowerShell — baseline and exclude by script hash/path if recurring; accessibility tooling or IT helpdesk scripts that legitimately poll or relay clipboard content.
+**Escalation:** the `GetClipboardData`/`user32` branch fired (the higher-confidence half), a follow-on exfil destination is found, or the host shows a paired credential-harvesting alert → promote to the high-severity flow (Tier B isolate) and page the IR lead.
+
+###### 5. Remediation & Evidence Preservation
+
+- Export the full 4104 chunk set for the `ScriptBlockId`; collect the on-disk script (`Path`) if present.
+- Assume any credential or sensitive value the user had recently copied is exposed: force a reset for it if identifiable; remove the capturing script and its persistence.
 - Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
 
 <a id="posh_ps_obfuscated_scriptblock"></a>
@@ -4447,7 +4620,7 @@ Detects a service whose `ImagePath` is itself a living-off-the-land binary rathe
 - Cleanup: stop and delete the service, remove the payload files, and hunt sibling persistence — the same one-liner frequently also exists as a scheduled task or Run key on the host.
 - Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
 
-#### Zeek Network Telemetry — 21 rules
+#### Zeek Network Telemetry — 23 rules
 
 <a id="net_zeek_conn_external_rdp_inbound"></a>
 ##### RDP Connection Originating From Outside Private Address Space
@@ -4558,6 +4731,60 @@ Detects the data volume ICMP tunneling tools (icmpsh, ptunnel, icmptunnel) reach
 - Block or rate-limit ICMP to the remote endpoint at the perimeter; if a tunnel client is found, hash its binary for VT, remove it, and remove whatever launcher persists it.
 - Review what data the sending host could reach — a confirmed tunnel is an exfiltration path, not just a C2 channel.
 - Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash exported logs/screenshots; record the UTC window and both endpoints.
+
+<a id="net_zeek_conn_outbound_volume_asymmetry"></a>
+##### Asymmetric Outbound Connection Volume (Possible Exfiltration)
+
+**Rule file:** `rules/sigma/net_zeek_conn_outbound_volume_asymmetry.yml` · **Status:** experimental · **Severity:** medium
+
+###### 1. Rule Summary & MITRE Mapping
+
+| Attribute | Value |
+|---|---|
+| Tactic(s) | Exfiltration |
+| Technique(s) | T1048 — Exfiltration Over Alternative Protocol |
+| Severity (`level`) | medium |
+| Data source | Zeek conn |
+| Trigger condition | A single flow with `orig_bytes` ≥ 5,000,000 AND `resp_bytes` ≤ 200,000 |
+
+Single-event logic-of-record for the paired Elastic threshold rule (`rules/elastic/threshold/net-zeek-conn-outbound-volume-asymmetry.ndjson`), which is the actual enforced detection: it alerts when one source produces 3+ flows matching this shape within a 30-minute lookback. On a residential uplink, a flow that sends a lot and receives little back is the highest-value available signal for bulk exfiltration. KNOWN LIMITATION the rule states plainly: Sigma/Lucene express per-field numeric comparisons, not a ratio between two fields — this rule approximates asymmetry with two independent absolute thresholds on the same flow, not a true ratio (a 15:1 send:receive flow matches identically to a total one-way transfer). This Sigma file is deliberately `status: experimental` so it does not also deploy as a noisy per-flow Detection Engine query — the threshold companion is the deployed enforcement; a single hit here is not, on its own, an actioned alert.
+
+###### 2. Automated Extraction Fields
+
+| Field | Origin | Use in triage |
+|---|---|---|
+| `orig_bytes` | rule detection block | Originator (upload) byte volume — the ≥ 5 MB threshold |
+| `resp_bytes` | rule detection block | Responder (download) byte volume — the ≤ 200 KB threshold that establishes asymmetry |
+| `id.orig_h` | event source (Zeek conn.log) | Internal uploading host — containment target |
+| `id.resp_h` | event source (Zeek conn.log) | Remote endpoint — primary TI artifact |
+| `duration` | event source (raw Zeek conn.log) | Upload rate context — a dense burst vs. a long trickle |
+| `id.resp_p`, `proto` | event source (Zeek conn.log) | Destination service/port and transport |
+
+###### 3. Enrichment Criteria
+
+- `id.resp_h` (remote endpoint) → AbuseIPDB; escalate at **≥ 50% confidence**.
+- Internal-only: is this the paired threshold rule's 3-in-30-minute repetition, or an isolated single flow? Check the destination against known-legitimate bulk-upload services (cloud backup/sync, video/photo upload, CI/CD artifact push) and the change calendar for a scheduled data move.
+- A single asymmetric flow is expected occasionally (the rule's own description) — only the paired threshold alert's repetition is meant to be actioned; treat one hit here as enrichment context, not a standalone verdict.
+- No exfiltration label without the AbuseIPDB verdict, the threshold-rule's repetition, or an internal case.
+
+###### 4. Containment Decision Flow
+
+**Auto-containment:** severity medium → Tier C: on AbuseIPDB ≥ 50% confirmation of `id.resp_h`, auto-add the IP to the perimeter blocklist and open an analyst ticket; no TI confirmation → Tier D triage.
+**Analyst triage path:**
+1. Verify and scope with KQL (index `logstash-*`; `orig_bytes`/`resp_bytes` are ECS-renamed per `configs/logstash.conf`):
+   ```
+   event.dataset : "zeek.conn" and source.bytes >= 5000000 and destination.bytes <= 200000
+   ```
+   Then bucket by `source.ip` over the last 30 minutes to reproduce the paired threshold rule's 3+-flow trigger condition — that repetition, not a single hit, is the actioned signal.
+2. Endpoint pivot: on `id.orig_h`, find the uploading process via Sysmon process-creation telemetry, and look backward for archive-staging activity (`proc_creation_win_rar_archive_staging.yml`/`proc_creation_win_archive_staging_non_rar.yml`/`posh_data_compression_staging.yml`) preceding the upload.
+3. False-positive checks (from the rule): a large one-way upload that is entirely legitimate — cloud backup/sync, video/photo upload, a large email attachment, a VoIP/video call's outbound leg, a CI/CD artifact push; tune the thresholds or allowlist known-legitimate destinations before relying on this in production.
+**Escalation:** the paired threshold rule's 3+-flow repetition fires, staging evidence is found on `id.orig_h`, or `id.resp_h` is AbuseIPDB-confirmed → promote to Tier B (isolate the uploading host), page the IR lead, and open a data-exposure assessment.
+
+###### 5. Remediation & Evidence Preservation
+
+- Export the conn.log slice for the source→destination pair — the byte/duration series bounds what may have left. On the endpoint, identify what was staged (archive files, recently-read data sets) before any cleanup.
+- Block the destination, remove the uploading tool and its persistence, and reset credentials the uploading process had access to if compromise is confirmed.
+- Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
 
 <a id="net_zeek_conn_smb_lateral_admin"></a>
 ##### SMB Connection Crossing Private/Public Address Boundary
@@ -5480,6 +5707,59 @@ The deployed alert is `rules/elastic/threshold/net-zeek-ssh-session-cadence-sust
 - On confirmation: block the source, reset any credential with a post-campaign success, audit targets for persistence, and consider fail2ban/key-only enforcement on the targeted services; if the source was the compromised broker host, treat it under the SOC-infrastructure compromise path, not as an FP.
 - Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
 
+<a id="net_zeek_ssl_cloud_storage_exfil"></a>
+##### TLS Connection SNI Matching a Cloud-Storage or Paste Provider
+
+**Rule file:** `rules/sigma/net_zeek_ssl_cloud_storage_exfil.yml` · **Status:** experimental · **Severity:** low
+
+###### 1. Rule Summary & MITRE Mapping
+
+| Attribute | Value |
+|---|---|
+| Tactic(s) | Exfiltration |
+| Technique(s) | T1567.002 — Exfiltration Over Web Service: Exfiltration to Cloud Storage |
+| Severity (`level`) | low |
+| Data source | Zeek ssl |
+| Trigger condition | TLS ClientHello SNI (`server_name`) exactly matching one of 9 curated file-sharing/cloud-storage/paste providers (transfer.sh, mega.nz, pastebin.com, anonfiles.com, gofile.io, mediafire.com, wetransfer.com, dropboxusercontent.com, send.vis.ee), or a dot-anchored subdomain of one |
+
+Detects a TLS connection to a curated list of consumer file-sharing, cloud-storage, and paste/dead-drop providers commonly abused as a free, TLS-covered exfiltration or C2-staging channel. KNOWN LIMITATION the rule states plainly: this platform scopes HTTPS payload inspection out without a decryption proxy, so the rule sees WHERE a connection went (the SNI, sent in cleartext during the handshake) but not WHAT was sent — it cannot distinguish a 2 GB exfil upload from loading one page to read a snippet. Pairing the SNI match with byte-volume corroboration (as `net_zeek_conn_outbound_volume_asymmetry.yml` does for the volume side of this same threat) is deliberately NOT implemented: Zeek's ssl.log carries no byte counts (conn.log does), and joining the two by `uid` at query time is separate, out-of-scope work. `level: low` reflects this low-confidence, indicator-only signal, not the severity of a confirmed exfil event. Same anti-lookalike pattern as `net_zeek_dns_crypto_mining_pool.yml`/`net_zeek_dns_doh_non_standard.yml`: bare + dot-anchored-subdomain selection pairs, so an unanchored suffix match (which would also catch a lookalike like `evilmega.nz`) is avoided.
+
+###### 2. Automated Extraction Fields
+
+| Field | Origin | Use in triage |
+|---|---|---|
+| `server_name` | rule detection block | Matched provider SNI — primary TI artifact |
+| `id.orig_h` | event source (Zeek ssl.log) | Internal connecting host — containment target |
+| `id.resp_h` | event source (Zeek ssl.log) | TLS server IP for the matched provider |
+| `version` | event source (Zeek ssl.log) | TLS stack fingerprint context |
+| `validation_status` | event source (Zeek ssl.log) | Certificate validation outcome — corroborates with the cert-hygiene sibling rules if also anomalous |
+
+###### 3. Enrichment Criteria
+
+- `server_name` (matched provider domain) → OTX; escalate on **any pulse match** — a hit on a genuine listed provider's own domain is unusual, so a pulse points at abuse of that specific hostname/path rather than the provider generally.
+- Internal-only: is this a documented, sanctioned use of the provider (file-sharing exception, vendor deliverable exchange)? Check the change calendar and baseline volume per destination — the rule expects meaningful legitimate volume and directs tuning the provider list per deployment.
+- No corroborating byte-volume signal is available from this event (stated rule limitation) — pair with any `net_zeek_conn_outbound_volume_asymmetry.yml` hit on the same `id.orig_h`/`id.resp_h` pair in the same window if one exists.
+- A hit confirms the connection destination only, not that data was uploaded — no exfiltration label without a TI verdict, corroborating volume, or an internal case.
+
+###### 4. Containment Decision Flow
+
+**Auto-containment:** severity low → Tier D: enrich and queue for analyst review; no automated action.
+**Analyst triage path:**
+1. Verify with KQL (index `logstash-*`; `server_name` is ECS-renamed per `configs/logstash.conf`):
+   ```
+   event.dataset : "zeek.ssl" and tls.client.server_name : ("transfer.sh" or "mega.nz" or "pastebin.com" or "anonfiles.com" or "gofile.io" or "mediafire.com" or "wetransfer.com" or "dropboxusercontent.com" or "send.vis.ee" or *.transfer.sh or *.mega.nz or *.pastebin.com or *.anonfiles.com or *.gofile.io or *.mediafire.com or *.wetransfer.com or *.dropboxusercontent.com or *.send.vis.ee)
+   ```
+2. Volume pivot: query `source.ip : "<orig_h>" and destination.ip : "<resp_h>"` against `net_zeek_conn_outbound_volume_asymmetry.yml`'s own conn.log-derived fields (`source.bytes`/`destination.bytes`) in the same window — a large upload alongside the SNI match is the strongest available corroboration this rule cannot provide on its own.
+3. Endpoint pivot: on the internal source host, identify the connecting process via its Sysmon process-creation telemetry — a browser tab and an unattended script uploading to the same provider read very differently. Check for preceding archive-staging activity (`proc_creation_win_rar_archive_staging.yml`/`proc_creation_win_archive_staging_non_rar.yml`/`posh_data_compression_staging.yml`/`proc_creation_win_local_data_staging.yml`).
+4. False-positive checks (from the rule): legitimate, widely-used use of a listed provider — expect meaningful baseline volume; correlate with the account/user context and destination byte volume before escalating, and tune the provider list per deployment.
+**Escalation:** corroborating large-upload volume to the same `id.resp_h`, a non-browser process driving the connection, or a preceding archive-staging event on the same host → promote to Tier B (isolate the connecting host), page the IR lead, and open a data-exposure assessment.
+
+###### 5. Remediation & Evidence Preservation
+
+- Export the ssl.log slice (and any correlated conn.log byte counts) for the source→destination pair before rollover — the SNI plus any corroborating volume is the evidence.
+- If exfiltration is confirmed: block the provider destination at the perimeter, identify and remove the uploading tool and its persistence, and treat whatever data population the source host held as exposed.
+- Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
+
 <a id="net_zeek_ssl_expired_cert_connection"></a>
 ##### TLS Connection with Expired Certificate
 
@@ -5852,6 +6132,274 @@ Detects a sudo command invocation recorded in auth.log. Deliberately broad, not 
 - Tune rather than mute: feed confirmed-benign account/command pairs into the per-host allowlist so the visibility layer stays reviewable.
 - Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
 
+#### Linux Process Creation (auditd execve, #442) — 5 rules
+
+*Telemetry source: `configs/endpoint/audit.rules` + Filebeat's `audit/audit.log` filestream, joined in Logstash by the `aggregate` filter keyed on the auditd `msg=audit(...)` id (`configs/logstash.conf`, Component 4). Maps `Image` → `process.executable`, `CommandLine` → `process.args`, `User` → `user.name` (`configs/detections/suburban-soc-ecs.yml`, `field-mapping-auditd-process-creation`). Two disclosed gaps apply to every rule below, not repeated per-section: no `ParentImage`/`ParentCommandLine` — auditd's SYSCALL record gives only a numeric `ppid`, and this pipeline has no PID→exe-name cache to resolve it (mapping it anyway would be this repo's own #217 anti-pattern); and no file hash — the auditd branch never populates a `Hashes`/`file.hash.sha256` field, so `Hash → VT` enrichment, standard for every other process-creation family in this playbook, is not available for these five rules. All five also share a hard prerequisite: this logsource carries no telemetry at all until #442 lands, and #442 is itself not exercised against a live auditd stream in this environment (no reachable Docker/Linux audit host) — confirm the pipeline against a real host before relying on any of these five in production.*
+
+<a id="proc_creation_lnx_cron_at_persistence"></a>
+##### Linux Cron/At Job Persistence
+
+**Rule file:** `rules/sigma/proc_creation_lnx_cron_at_persistence.yml` · **Status:** experimental · **Severity:** medium
+
+###### 1. Rule Summary & MITRE Mapping
+
+| Attribute | Value |
+|---|---|
+| Tactic(s) | Persistence |
+| Technique(s) | T1053.003 — Scheduled Task/Job: Cron |
+| Severity (`level`) | medium |
+| Data source | auditd execve via Filebeat (Linux process_creation, #442) |
+| Trigger condition | `crontab -e`/`crontab -`/`crontab <file>` (excludes the read-only `-l`/`-r` forms), OR a write-shaped verb (`>`/`tee`) alongside a system cron directory path (`/etc/cron.d/`, `/etc/cron.daily/`, `/etc/cron.hourly/`, `/etc/cron.weekly/`, `/etc/cron.monthly/`), OR the `at` command |
+
+Detects three Linux scheduled-task persistence shapes: installing/replacing a user crontab, writing into a system cron directory, or one-shot scheduling via `at`. The cron-directory branch requires the write verb alongside the path specifically to avoid flagging routine inspection (`ls`/`cat` of an existing job) — the rule states this is still a coarse text signal, not a real write-syscall observation, since #442's auditd telemetry covers execve only, not file writes. `at` alone is deliberately broad, the same "visibility layer, not a high-confidence standalone signal" judgment call `auth_linux_sudo_privilege_escalation.yml` makes for a comparably common admin binary.
+
+###### 2. Automated Extraction Fields
+
+| Field | Origin | Use in triage |
+|---|---|---|
+| `Image` | rule detection block | `crontab` or `at` binary path |
+| `CommandLine` | rule detection block | Which branch fired — crontab subcommand, cron-directory path plus write verb, or the `at` invocation and its scheduled time/command |
+| `process.name` (`comm`) | event source (auditd SYSCALL) | Short process name — cross-check against `process.executable` |
+| `process.pid`, `process.parent.pid` | event source (auditd SYSCALL) | Process/parent PID numbers only — no parent name (see family header) |
+| `user.id`, `user.name` | event source (auditd SYSCALL) | Executing account — scopes the persistence to who installed it |
+| `host.name`, `@timestamp` | event source | Host and install time — timeline anchor |
+
+###### 3. Enrichment Criteria
+
+- Internal-only (this rule's CommandLine carries paths and subcommands, not an external artifact): is the executing account an expected admin/automation identity for this host? Check the change calendar — package installers (apt/dpkg postinst, Ansible, Puppet) legitimately drop files into `/etc/cron.d/` during normal software installation.
+- Internal-only: parse the scheduled command (from the crontab content or the `at` invocation, on-host) and compare against the account's routine pattern.
+- No malicious label without an internal case tying the account/host pairing to unauthorized activity — this rule is deliberately broad by its own admission.
+
+###### 4. Containment Decision Flow
+
+**Auto-containment:** none — Internal-only artifact class, severity medium with no TI-confirmable artifact → Tier D: enrich and queue for analyst review.
+**Analyst triage path:**
+1. Verify with KQL (index `logstash-*`; requires #442's auditd pipeline live):
+   ```
+   event.dataset : "auditd.execve" and (process.executable : *\/crontab or process.executable : *\/at)
+   ```
+   The cron-directory write-verb branch and the `-l`/`-r` read-only exclusion cannot be expressed as clean KQL wildcards — confirm both by reading `process.args` in the returned events.
+2. Context check: pull the actual crontab content or `at` job for the account (on-host, not from this event alone — the alert only proves the installer command ran); compare the scheduled command against the account's baseline.
+3. False-positive check: routine, expected administrative crontab/at/system-cron-directory usage — deliberately broad on the `at` branch; package installers and configuration-management tooling dropping files into `/etc/cron.d/` as part of normal installation.
+**Escalation:** the scheduled command references a network fetch, a reverse shell, or an unfamiliar binary path, or the executing account is outside the host's admin baseline → open a case and move to the endpoint-compromise flow for the host.
+
+###### 5. Remediation & Evidence Preservation
+
+- Export the crontab content (`crontab -l -u <user>`) or the `at` job listing (`atq`/`at -c <job>`) before removal — the scheduled command itself is the evidence.
+- Remove the unauthorized cron entry/at job; sweep the fleet for the same command or file pattern in other hosts' cron directories.
+- Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
+
+<a id="proc_creation_lnx_ingress_tool_transfer"></a>
+##### Linux Ingress Tool Transfer via curl/wget to a Temp Path or Piped to a Shell
+
+**Rule file:** `rules/sigma/proc_creation_lnx_ingress_tool_transfer.yml` · **Status:** experimental · **Severity:** medium
+
+###### 1. Rule Summary & MITRE Mapping
+
+| Attribute | Value |
+|---|---|
+| Tactic(s) | Command and Control |
+| Technique(s) | T1105 — Ingress Tool Transfer |
+| Severity (`level`) | medium |
+| Data source | auditd execve via Filebeat (Linux process_creation, #442) |
+| Trigger condition | `curl`/`wget` with its command line either piped directly into a shell (`\| sh`, `\|sh`, `\| bash`, `\|bash`) or writing into a world-writable temp path (`/tmp/`, `/dev/shm/`, `/var/tmp/`) |
+
+Detects the two dominant "download and run" shapes on Linux — matching this corpus's Windows-side certutil/bitsadmin/mshta download rules. Scoped to curl/wget specifically, matching the originating issue's own named signal; a determined attacker using an unlisted fetch mechanism (`python -m http.client`, `perl LWP`) evades this rule entirely, the same class of coverage gap this repo's other binary-allowlist rules already accept.
+
+###### 2. Automated Extraction Fields
+
+| Field | Origin | Use in triage |
+|---|---|---|
+| `Image` | rule detection block | `curl` or `wget` binary path |
+| `CommandLine` | rule detection block | The full invocation — download URL/IP, and either the pipe-to-shell or the temp-path destination |
+| `process.name` (`comm`) | event source (auditd SYSCALL) | Short process name — cross-check against `process.executable` |
+| `process.pid`, `process.parent.pid` | event source (auditd SYSCALL) | Process/parent PID numbers only — no parent name (see family header) |
+| `user.id`, `user.name` | event source (auditd SYSCALL) | Executing account |
+| `host.name`, `@timestamp` | event source | Host and fetch time |
+
+###### 3. Enrichment Criteria
+
+- Domain/URL parsed from `CommandLine` (the curl/wget fetch target) → OTX; escalate on **any pulse match**.
+- Bare IP parsed from `CommandLine`, if the fetch target is an IP literal rather than a domain → AbuseIPDB; escalate at **≥ 50% confidence**.
+- Internal-only: is the fetch source a sanctioned package/deployment mirror? Legitimate install scripts (many upstream projects' own documented "curl \| bash" one-liners) and CI/CD or configuration-management tooling downloading artifacts into a temp path are common, expected traffic — baseline and allowlist known sources.
+- No malicious label on the fetched URL/IP without the citing OTX/AbuseIPDB verdict or an internal case.
+
+###### 4. Containment Decision Flow
+
+**Auto-containment:** severity medium → Tier C: on OTX pulse or AbuseIPDB ≥ 50% for the fetch target, auto-add it to the perimeter/DNS blocklist and open an analyst ticket; no TI confirmation → Tier D triage.
+**Analyst triage path:**
+1. Verify with KQL (index `logstash-*`; requires #442's auditd pipeline live):
+   ```
+   event.dataset : "auditd.execve" and process.executable : (*\/curl or *\/wget)
+   ```
+   The pipe-to-shell and temp-path branches, and the fetched URL/IP itself, cannot be cleanly isolated as KQL wildcards — confirm both by reading `process.args`.
+2. Endpoint pivot: what did the pipe-to-shell branch actually execute, or what landed at the temp-path destination? Hash and inspect the fetched file/script before running anything derived from it; sweep the host for the process it subsequently spawned.
+3. False-positive check: legitimate install scripts using a documented "curl \| bash" pattern, or CI/CD/configuration-management tooling downloading a build artifact into a temp path — baseline and allowlist known package/deployment sources.
+**Escalation:** the fetch target is TI-confirmed, the piped/downloaded content spawns a reverse shell or persistence mechanism, or the fetching process is itself unexplained → promote to Tier B (isolate the host) and page the IR lead.
+
+###### 5. Remediation & Evidence Preservation
+
+- Collect and hash the fetched file/script before removal; if piped directly to a shell, reconstruct the piped content from the command line for the evidence record.
+- Remove the fetched artifact and whatever it spawned or persisted; block the TI-confirmed source at the perimeter/DNS layer.
+- Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
+
+<a id="proc_creation_lnx_reverse_shell_interpreter"></a>
+##### Linux Reverse Shell via Interpreter Redirect or Exec Flag
+
+**Rule file:** `rules/sigma/proc_creation_lnx_reverse_shell_interpreter.yml` · **Status:** experimental · **Severity:** critical
+
+###### 1. Rule Summary & MITRE Mapping
+
+| Attribute | Value |
+|---|---|
+| Tactic(s) | Execution |
+| Technique(s) | T1059.004 — Command and Scripting Interpreter: Unix Shell |
+| Severity (`level`) | critical |
+| Data source | auditd execve via Filebeat (Linux process_creation, #442) |
+| Trigger condition | bash's `/dev/tcp/` pseudo-device redirect anywhere in the command line, OR `nc`/`ncat`/`netcat` with an ` -e ` exec flag, OR Python's `pty.spawn`, OR `socat` with an `EXEC:` address type |
+
+Detects the handful of one-liner reverse-shell idioms that dominate real-world Linux post-exploitation (revshells.com/PayloadsAllTheThings-class payloads) — the interpreter invocation itself, seen via #442's execve telemetry, is already the signal without needing a process-ancestry chain. `nc`/`socat` branches require BOTH the binary AND the exec-flag/`EXEC:` token — a bare `nc -l -p 4444` listener with no shell attached is routine and must not fire; `bash`'s `/dev/tcp/` and Python's `pty.spawn` need no companion flag since both are already narrow, rarely-legitimate strings on their own.
+
+###### 2. Automated Extraction Fields
+
+| Field | Origin | Use in triage |
+|---|---|---|
+| `CommandLine` | rule detection block | Which idiom fired, and — for the `/dev/tcp/` and `nc`/`ncat`/`netcat`/`socat` branches — the callback IP:port embedded in the argument text |
+| `Image` | rule detection block (nc/socat branches) / event source | The interpreter/binary actually executing the shell |
+| `process.name` (`comm`) | event source (auditd SYSCALL) | Short process name — cross-check against `process.executable` |
+| `process.pid`, `process.parent.pid` | event source (auditd SYSCALL) | Process/parent PID numbers only — no parent name (see family header) |
+| `user.id`, `user.name` | event source (auditd SYSCALL) | Executing account — the privilege level the attacker lands with |
+| `host.name`, `@timestamp` | event source | Host and execution time |
+
+###### 3. Enrichment Criteria
+
+- Callback IP:port parsed from `CommandLine` (the `/dev/tcp/<ip>/<port>` target, or the `nc`/`ncat`/`netcat`/`socat` connect address) → AbuseIPDB; escalate at **≥ 50% confidence** — record the verdict, but containment does not wait for it (critical policy row).
+- Internal-only: check the red-team engagement calendar and detection-validation schedule — the documented false-positive population for this rule (a rare legitimate `/dev/tcp/` health check, or `nc`/`socat` used deliberately for a non-shell file-transfer purpose).
+- Per policy, the 8 critical rules (this one included) are behaviorally conclusive: the rule match plus the verbatim event is the cited evidence. Record the callback IP and its TI verdict in the case; still never assert attribution.
+
+###### 4. Containment Decision Flow
+
+**Auto-containment:** severity critical → Tier A: EDR network isolation + AD/IdP account disable (if the account is domain-joined via SSSD/Kerberos) + session revocation execute automatically on the rule match itself; the IR lead is paged. Analyst steps below run post-containment.
+**Analyst triage path** (verification after auto-containment):
+1. Verify with KQL (index `logstash-*`; requires #442's auditd pipeline live):
+   ```
+   event.dataset : "auditd.execve" and (process.args : *\/dev\/tcp\/* or process.args : *pty.spawn* or (process.executable : (*\/nc or *\/ncat or *\/netcat) and process.args : *-e*) or (process.executable : *\/socat and process.args : *EXEC:*))
+   ```
+2. Extract the callback IP:port from `process.args` (the `/dev/tcp/<ip>/<port>` literal, or the `nc`/`socat` connect argument) and enrich it against AbuseIPDB; sweep the host ±60 min for the interpreter's own arrival (download, copy) and for sibling executions on other hosts.
+3. False-positive checks: an authorized red-team/pentest exercise or CTF on this host (confirm against the engagement calendar); a legitimate, rare `/dev/tcp/` connectivity/health check with no shell attached to the far end; `nc`/`ncat` used as a one-shot file-transfer or health-check tool with `-e` for a non-shell purpose (uncommon — most modern `nc` builds compile `-e` out specifically because of this abuse pattern).
+**Escalation:** already paged by Tier A. Additionally: the callback IP is AbuseIPDB-confirmed, or the shell's subsequent commands show further post-exploitation activity → declare a confirmed-compromise incident, not a contained attempt.
+
+###### 5. Remediation & Evidence Preservation
+
+- Acquire host memory before cleanup — the live shell session and any staged tooling live in process memory; collect and hash whatever the interpreter subsequently executed.
+- Kill the shell's process tree; block the callback IP:port at the perimeter; remove any dropped tooling or persistence the session installed.
+- Reset every credential the landed account (`user.name`) had access to on this host, and audit for lateral movement using it.
+- Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
+
+<a id="proc_creation_lnx_shell_history_tamper"></a>
+##### Linux Shell History Tampering
+
+**Rule file:** `rules/sigma/proc_creation_lnx_shell_history_tamper.yml` · **Status:** experimental · **Severity:** high
+
+###### 1. Rule Summary & MITRE Mapping
+
+| Attribute | Value |
+|---|---|
+| Tactic(s) | Defense Evasion |
+| Technique(s) | T1070.003 — Indicator Removal: Clear Command History |
+| Severity (`level`) | high |
+| Data source | auditd execve via Filebeat (Linux process_creation, #442) |
+| Trigger condition | `history -c`, OR `unset HISTFILE`, OR symlinking a history file path to `/dev/null` (`ln -sf /dev/null` + a `.bash_history`/`.zsh_history` path in the same command line), OR overwriting/truncating `.bash_history`/`.zsh_history` directly |
+
+Detects four common ways an attacker (or a script under a compromised account) erases evidence of its own prior commands. `history -c` and `unset HISTFILE` fire unconditionally — both strings are narrow and rarely legitimate on their own; the symlink and truncate branches additionally require a history-file path in the same command line, since a bare `ln -sf /dev/null <anything>` or a bare `>`/`cat /dev/null >` redirect is far too generic alone. KNOWN GAP the rule states: `export HISTFILE=/dev/null` (functionally equivalent to `unset HISTFILE`) is not covered — only the `unset` form named in the originating issue is matched.
+
+###### 2. Automated Extraction Fields
+
+| Field | Origin | Use in triage |
+|---|---|---|
+| `CommandLine` | rule detection block | Which tampering shape fired, and (for the symlink/truncate branches) which history file was targeted |
+| `Image` | event source (auditd SYSCALL) | The shell/interpreter executing the command — `history -c`/`unset HISTFILE` typically run as shell-builtin-shaped invocations, so this is usually `/bin/bash`/`/bin/sh` itself |
+| `process.name` (`comm`) | event source (auditd SYSCALL) | Short process name — cross-check against `process.executable` |
+| `process.pid`, `process.parent.pid` | event source (auditd SYSCALL) | Process/parent PID numbers only — no parent name (see family header) |
+| `user.id`, `user.name` | event source (auditd SYSCALL) | The account whose history was tampered with — the primary containment/identity signal |
+| `host.name`, `@timestamp` | event source | Host and tamper time — anchors the "what was this session hiding" reconstruction |
+
+###### 3. Enrichment Criteria
+
+- Internal-only artifact class: no external TI artifact on this event — `history -c`/`unset HISTFILE`/a symlink or truncate command has no hash, IP, or domain to enrich.
+- Internal-only: is this a user or script legitimately clearing their own shell history for privacy on a shared/jump host, or a hardened shell-profile configuration that deliberately disables history for compliance/PII reasons on a specific service account? Check the account's baseline and any documented hardening policy.
+- The tamper command proves an attempt to hide activity, not what was hidden — correlate with the account's session activity immediately before the clear.
+
+###### 4. Containment Decision Flow
+
+**Auto-containment:** severity high with no external-TI artifact → routes to analyst triage (15-minute SLA); Tier B on analyst confirmation that no privacy/hardening exception applies — EDR-isolate the host and reset the tampering account's credentials (internal confirmation substitutes for a TI verdict on this artifact-free event).
+**Analyst triage path — 15-minute SLA:**
+1. Verify with KQL (index `logstash-*`; requires #442's auditd pipeline live):
+   ```
+   event.dataset : "auditd.execve" and process.args : (*"history -c"* or *"unset HISTFILE"* or *".bash_history"* or *".zsh_history"* or *"ln -sf \/dev\/null"*)
+   ```
+2. Reconstruct the hidden window: pull the account's other auditd/auth activity on the host in the hour before the clear — that is what the clear was meant to erase. Correlate with any sibling `proc_creation_lnx_reverse_shell_interpreter`/`proc_creation_lnx_ingress_tool_transfer`/`proc_creation_lnx_cron_at_persistence`/`proc_creation_lnx_systemd_service_persistence` hit on the same host/account.
+3. False-positive check: a user or script legitimately clearing their own shell history for privacy reasons on a shared/jump host — not inherently malicious, but worth correlating with what that session did immediately before the clear; hardened shell-profile configurations that deliberately disable history for compliance/PII reasons on specific service accounts.
+**Escalation:** the reconstructed pre-clear window shows reverse-shell, ingress-transfer, or persistence activity, or no privacy/hardening exception accounts for the clear → treat the account/host as compromised and page the IR lead.
+
+###### 5. Remediation & Evidence Preservation
+
+- Immediately export the account's already-indexed auditd/auth history for the surrounding window — the indexed copy survives a local-log clear and is the authoritative record of what the tamper attempted to hide.
+- On confirmed hostile clear: reset the account's credentials, revoke its active sessions, and hunt the activity the clear was covering (per the reconstructed window above).
+- Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
+
+<a id="proc_creation_lnx_systemd_service_persistence"></a>
+##### Linux systemd Service Persistence
+
+**Rule file:** `rules/sigma/proc_creation_lnx_systemd_service_persistence.yml` · **Status:** experimental · **Severity:** high
+
+###### 1. Rule Summary & MITRE Mapping
+
+| Attribute | Value |
+|---|---|
+| Tactic(s) | Persistence |
+| Technique(s) | T1543.002 — Create or Modify System Process: Systemd Service |
+| Severity (`level`) | high |
+| Data source | auditd execve via Filebeat (Linux process_creation, #442) |
+| Trigger condition | A write-shaped verb (`>`/`tee`) alongside a systemd unit search path (`/etc/systemd/system/`, `/usr/lib/systemd/system/`, `~/.config/systemd/user/`), OR `systemctl enable`/`systemctl daemon-reload` |
+
+Detects two independent shapes of systemd-based persistence: dropping a unit file into a search path, or the activation step (`systemctl enable`/`daemon-reload`) a newly-dropped unit needs before it runs. KNOWN GAP the rule states plainly: the originating issue's own signal is a two-step temporal sequence ("unit file written ... FOLLOWED BY enable/daemon-reload"), and Sigma's single-event model cannot express that sequence — this rule instead matches either shape independently, the same honest single-event-limitation framing as its sibling `proc_creation_lnx_cron_at_persistence.yml`. `systemctl enable`/`daemon-reload` alone is common during ordinary package installation and service management — expect real false-positive volume.
+
+###### 2. Automated Extraction Fields
+
+| Field | Origin | Use in triage |
+|---|---|---|
+| `CommandLine` | rule detection block | Which shape fired — the unit-file write path, or the `systemctl` verb |
+| `Image` | rule detection block (systemctl branch) / event source | `systemctl`, or the shell/tool that wrote the unit file |
+| `process.name` (`comm`) | event source (auditd SYSCALL) | Short process name — cross-check against `process.executable` |
+| `process.pid`, `process.parent.pid` | event source (auditd SYSCALL) | Process/parent PID numbers only — no parent name (see family header) |
+| `user.id`, `user.name` | event source (auditd SYSCALL) | Executing account — privilege required for `/etc/systemd/system/` and `systemctl enable` is itself a signal |
+| `host.name`, `@timestamp` | event source | Host and action time |
+
+###### 3. Enrichment Criteria
+
+- Internal-only artifact class: no external TI artifact on this event — a unit-file write path or a `systemctl` verb has no hash, IP, or domain to enrich.
+- Internal-only: is this ordinary package installation or configuration-management tooling (apt/dpkg postinst scripts, Ansible, Puppet) legitimately writing unit files and running `systemctl enable`/`daemon-reload`? Correlate with the change calendar and the specific unit name.
+- Because the two-step sequence cannot be confirmed from one event, treat a bare `systemctl enable`/`daemon-reload` hit with no visible preceding unit-file write in this playbook's own history as weaker evidence than a hit with one.
+
+###### 4. Containment Decision Flow
+
+**Auto-containment:** severity high with no external-TI artifact → routes to analyst triage (15-minute SLA); Tier B on analyst confirmation that no change record covers the write/activation — EDR-isolate the host and disable the executing account (internal confirmation substitutes for a TI verdict on this artifact-free event).
+**Analyst triage path — 15-minute SLA:**
+1. Verify with KQL (index `logstash-*`; requires #442's auditd pipeline live):
+   ```
+   event.dataset : "auditd.execve" and (process.args : (*\/etc\/systemd\/system\/* or *\/usr\/lib\/systemd\/system\/* or *.config\/systemd\/user\/*) or (process.executable : *\/systemctl and process.args : (*enable* or *daemon-reload*)))
+   ```
+2. Reconstruct the sequence manually: search the same host/account's surrounding auditd history for the OTHER half of the pair (a unit-file write near a `systemctl enable`, or vice versa) — the rule itself cannot join them. Read the unit file's `ExecStart=` on-host to see what it actually runs.
+3. False-positive check: ordinary package installation and configuration-management tooling legitimately writing unit files and running `systemctl enable`/`daemon-reload` as part of normal software deployment — expect meaningful baseline volume; correlate with the change calendar and the specific unit name before escalating; an administrator manually enabling or reloading a legitimate service.
+**Escalation:** the unit's `ExecStart=` runs an unfamiliar binary, a network fetch, or a reverse-shell idiom, or no change record covers the write/activation pair → treat as confirmed persistence and page the IR lead.
+
+###### 5. Remediation & Evidence Preservation
+
+- Export the unit file content and its `systemctl status`/`is-enabled` state before removal — the `ExecStart=` line is the core evidence of what the persistence mechanism runs.
+- Disable and remove the unit (`systemctl disable --now <unit>`, delete the unit file), then `systemctl daemon-reload` to drop it from the manager's view; hunt other hosts for the same unit name or `ExecStart=` content.
+- Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
+
 #### Sysmon Specialized Events (EID 8 CreateRemoteThread, EID 11 FileCreate) — 2 rules
 
 *`proc_creation_win_startup_folder_file_drop.yml` lives in this family despite its filename prefix: its logsource is `file_event` (Sysmon EID 11) and its detection field is `TargetFilename`, not process-creation fields.*
@@ -6023,7 +6571,7 @@ Detects the PutInstance operation that binds an `__EventFilter` to a consumer (`
 
 # References and Resources
 - [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md) — authoritative ATT&CK coverage matrix (auto-generated from `rules/sigma/`)
-- `rules/sigma/` — the 108 deployed Sigma rules (single source of truth for endpoint/network detection logic)
+- `rules/sigma/` — the 118 deployed Sigma rules (single source of truth for endpoint/network detection logic)
 - `rules/elastic/threshold/` — Elastic threshold companion rules carrying count-over-time logic for the 8 paired detections
 - [`docs/SOP-147-evidence-validation-runbook.md`](../SOP-147-evidence-validation-runbook.md) — evidence validation runbook (SHA-256 hashing, UTC windows, tamper-evident capture)
 - Threat intelligence sources: VirusTotal, AbuseIPDB, AlienVault OTX (thresholds defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-workflow))

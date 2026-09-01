@@ -33,11 +33,11 @@ none had a pcap fixture, so none could enter the enabled set under #445's
 promotion gate. `configs/suricata/suricata.yaml`'s `rule-files:` list
 references all 10 files (plus `local.rules`).
 
-**Update (2026-09-01, #446 follow-up):** 11 of the 100 rules are now
-enabled — see "First 11 rules promoted" below. The other 89 remain
-disabled for the reasons already documented in this file (unresolved
-placeholders, un-tuned `detection_filter` thresholds, no fixture yet, or
-DLP sign-off not obtained).
+**Update (2026-09-01, #446 follow-up):** 31 of the 100 rules are now
+enabled — see "Rules promoted" below. The other 69 remain disabled for
+the reasons already documented in this file (unresolved placeholders,
+un-tuned `detection_filter` thresholds, no fixture yet, or DLP sign-off
+not obtained).
 
 ## Syntax fixes (8 rules)
 
@@ -142,7 +142,7 @@ Modbus, S7comm (9000094-9000097). Confirmed by checking each SID's
 signal shape against the full `rules/sigma/` corpus, not assumed from the
 source's own claims.
 
-## First 11 rules promoted (2026-09-01, #446 follow-up)
+## Rules promoted (2026-09-01, #446 follow-up)
 
 11 of the 100 rules had no placeholder to resolve and no `detection_filter`
 threshold to tune — plain port/protocol or fixed-content matches, safe to
@@ -166,26 +166,47 @@ pcap taken on faith) and was flipped from `#alert` to `alert`:
 | 9000097 | S7comm port exposure (`iot_lab_research.rules`) | Established TCP to HOME_NET:102 (TP) vs. :1020 (TN) |
 | 9000098 | Default admin:admin Basic Auth (`iot_lab_research.rules`) | HTTP request carrying `Authorization: Basic YWRtaW46YWRtaW4=` (TP) vs. a Bearer token (TN) |
 
+Two more batches followed the same pattern, all content/port matches with
+no placeholder or threshold dependency:
+
+**`web_lms_attacks.rules` (9000021-9000030, 10/10 rules)** — SQLi/XSS/path-
+traversal/LFI/RFI patterns in `http.uri`, a PHP-upload body check, and two
+scanner-user-agent rules (sqlmap, Nikto). One fixture (9000022, the classic
+`' OR '1'='1` pattern) needed a second pass: the literal payload contains a
+raw space, which breaks HTTP request-line parsing when placed unencoded in
+a URI — percent-encoded (`%20`) in the wire bytes, which Suricata's
+normalized `http.uri` buffer decodes back to a real space before matching,
+same as any real browser/tool would send it.
+
+**`web_shell_compromise.rules` (9000031-9000040, 10/10 rules)** — web shell
+upload/access patterns (`eval(base64_decode`, China Chopper, known shell
+filenames, AntSword UA), reverse-shell content matches, and one
+response-direction rule (9000032, `flow:established,to_client` — matches
+on the *server's* response body, not the request; the fixture's TCP
+handshake has to be initiated by the client for Suricata's to_client/
+to_server direction tracking to resolve correctly, confirmed by an initial
+failed attempt that had the initiator backwards).
+
 Fixtures live at `tests/detections/fixtures/suricata/<SID>_tp.pcap` /
 `<SID>_tn.pcap`. `tests/detections/test_suricata_rules.py`'s
-`PromotionGateRealRepoTests` now covers all 11 as part of the real,
+`PromotionGateRealRepoTests` now covers all 31 as part of the real,
 enabled-rule set (not just the synthetic meta-tests #445 originally
 proved the mechanism with).
 
-**Deliberately excluded from this batch even though they're also
+**Deliberately excluded from these batches even though they're also
 placeholder/threshold-free:** none — every other rule in the 100 has
 either an unresolved placeholder, a `detection_filter` threshold, is one
 of the two DLP rules needing sign-off, or (the large majority) is a
-straightforward content/port match like the 11 above but simply wasn't
+straightforward content/port match like the 31 above but simply wasn't
 reached this session — building and hand-verifying a fixture per rule is
-real, one-at-a-time work; the remaining ~89 need the same treatment, not
+real, one-at-a-time work; the remaining ~69 need the same treatment, not
 a different decision.
 
 ## What is still NOT done
 
-- **89 rules still have no pcap fixture** and stay disabled; #445's
+- **69 rules still have no pcap fixture** and stay disabled; #445's
   promotion gate needs one per rule before any more can be enabled — the
-  same real, one-at-a-time verification work the 11 above just went
+  same real, one-at-a-time verification work the 31 above just went
   through, not yet done for the rest.
 - **3 unresolved placeholders** (9000013, 9000065, 9000099, see above) —
   still blocked on a human with real institutional/threat-intel context;

@@ -148,24 +148,25 @@ same disclose-what's-real-vs-not reasons.
       repo's own never-invent-an-IOC convention. Full reconciliation
       against existing Sigma coverage, genuine-gap inventory, and DLP
       sign-off flag in `docs/detections/suricata-starter-set.md`.
-- [x] **#446 follow-up (2026-09-01)** — 11 of the 100 rules promoted to
+- [x] **#446 follow-up (2026-09-01)** — 31 of the 100 rules promoted to
       enabled: each got a real, verified pcap fixture (`suricata -r`
       replay against real Suricata 7.0.3 + real `scapy`-built packets,
-      not a hand-authored pcap taken on faith) — 9000049, 9000051,
-      9000052, 9000091, 9000092, 9000093, 9000094, 9000095, 9000096,
-      9000097, 9000098. Full per-rule detail in
-      `docs/detections/suricata-starter-set.md`'s "First 11 rules
-      promoted" section. These were the rules with no placeholder to
-      resolve and no `detection_filter` to tune — the other 89 need the
-      same one-at-a-time fixture work, not a different decision.
+      not a hand-authored pcap taken on faith) — 9000021-9000040
+      (web_lms_attacks + web_shell_compromise, 20 rules), 9000049,
+      9000051, 9000052, 9000091-9000098 (11 rules across
+      iot_lab_research/residential_policy_violations/ransomware_c2). Full
+      per-rule detail in `docs/detections/suricata-starter-set.md`'s
+      "Rules promoted" section. These were the rules with no placeholder
+      to resolve and no `detection_filter` to tune — the other 69 need
+      the same one-at-a-time fixture work, not a different decision.
 
 Operational to-dos (Suricata lane):
 - [ ] Deploy `suricata-host-capture.service` to a real capture host
       alongside Zeek; measure CPU headroom
 - [ ] Confirm Filebeat ships `eve.json` and Logstash's Category 0b branch
       populates `rule.*`/`threat.technique.id` as designed
-- [ ] Per-rule pcap fixtures for the remaining 89 rules — nothing enters
-      the enabled set without one (#445's promotion gate); 11/100 done
+- [ ] Per-rule pcap fixtures for the remaining 69 rules — nothing enters
+      the enabled set without one (#445's promotion gate); 31/100 done
 - [ ] Resolve the 3 remaining placeholders (9000013/9000065/9000099) with
       real institutional/threat-intel values before those specific rules
       are ever enabled

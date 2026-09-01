@@ -27,7 +27,7 @@ Relying on fabricated or mock data for SOC dashboards provides false confidence.
 This runbook builds on SOP-022. It formalizes the execution into a strict compliance exercise where every step must be documented, hashed, and tracked in `evidence/README.md`.
 
 ## Monitoring and Notifications
-Evidence collection is manual but relies on the automated logging of the AI Agent and Kibana Watcher to produce the required alerts and audit trails.
+Evidence collection is manual but relies on the automated logging of the AI Agent and the ingest-time SOAR trigger in `configs/logstash.conf` (HMAC-signed dispatch to the Hive-Mind Broker, gated on human approval via the approval queue — #267 retired the separate Kibana Watcher install this used to require) to produce the required alerts and audit trails.
 
 ## Playbook Verification
 To verify the system is ready for an evidence run:

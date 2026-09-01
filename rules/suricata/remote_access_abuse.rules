@@ -24,7 +24,7 @@
 # 5, seconds 60) are the source's own illustrative defaults — tune
 # before enabling.
 
-#alert tcp $EXTERNAL_NET any -> $HOME_NET 3389 (msg:"UNIV External RDP Connection Attempt - Perimeter Should Not Expose RDP"; flow:established,to_server; classtype:attempted-admin; sid:9000071; rev:1;)
+alert tcp $EXTERNAL_NET any -> $HOME_NET 3389 (msg:"UNIV External RDP Connection Attempt - Perimeter Should Not Expose RDP"; flow:established,to_server; classtype:attempted-admin; sid:9000071; rev:1;)
 # SYNTAX FIX (docs/detections/suricata-starter-set.md has the full
 # record): `rdp.cookie` is not a real Suricata 7.0.3 keyword — RDP is a
 # recognized app-layer protocol in this build (`suricata
@@ -36,12 +36,12 @@
 # "mstshash" value this rule already named) — so this drops to a plain
 # `tcp` rule with a raw content match on that field instead of an
 # RDP-app-layer keyword. Same match target, no new indicator invented.
-#alert tcp $EXTERNAL_NET any -> $HOME_NET 3389 (msg:"UNIV RDP Cookie Matches Known Scanning Tool Pattern - mstshash"; flow:established,to_server; content:"Cookie: mstshash="; classtype:attempted-recon; sid:9000072; rev:1;)
+alert tcp $EXTERNAL_NET any -> $HOME_NET 3389 (msg:"UNIV RDP Cookie Matches Known Scanning Tool Pattern - mstshash"; flow:established,to_server; content:"Cookie: mstshash="; classtype:attempted-recon; sid:9000072; rev:1;)
 #alert ssh $EXTERNAL_NET any -> $HOME_NET 22 (msg:"UNIV Repeated External SSH Connection Attempts - Possible Brute Force"; flow:established; detection_filter:track by_src, count 10, seconds 60; classtype:attempted-admin; sid:9000073; rev:1;)
 #alert ssh any any -> any any (msg:"UNIV SSH Client Banner Matches Known Scanning Library - libssh"; ssh.software; content:"libssh"; classtype:attempted-recon; sid:9000074; rev:1;)
-#alert tcp $EXTERNAL_NET any -> $HOME_NET 5900 (msg:"UNIV External VNC Connection Attempt - Perimeter Should Not Expose VNC"; flow:established,to_server; content:"RFB 0"; classtype:attempted-admin; sid:9000075; rev:1;)
-#alert tcp $EXTERNAL_NET any -> $HOME_NET 23 (msg:"UNIV External Telnet Connection Attempt - Deprecated Protocol Should Not Be Exposed"; flow:established,to_server; classtype:attempted-admin; sid:9000076; rev:1;)
-#alert tcp $HOME_NET any -> $EXTERNAL_NET 3389 (msg:"UNIV Internal Host Initiating Outbound RDP - Possible Compromise or Policy Violation"; flow:established,to_server; classtype:policy-violation; sid:9000077; rev:1;)
-#alert tcp $EXTERNAL_NET any -> $HOME_NET 1723 (msg:"UNIV External Connection to PPTP VPN Port - Deprecated/Weak VPN Protocol"; flow:established,to_server; classtype:policy-violation; sid:9000078; rev:1;)
-#alert tcp $EXTERNAL_NET any -> $HOME_NET 22 (msg:"UNIV SSH Connection from Known Cloud Scanning Provider Range - Adjust IP List Per Institution"; flow:established,to_server; classtype:attempted-recon; sid:9000079; rev:1;)
+alert tcp $EXTERNAL_NET any -> $HOME_NET 5900 (msg:"UNIV External VNC Connection Attempt - Perimeter Should Not Expose VNC"; flow:established,to_server; content:"RFB 0"; classtype:attempted-admin; sid:9000075; rev:1;)
+alert tcp $EXTERNAL_NET any -> $HOME_NET 23 (msg:"UNIV External Telnet Connection Attempt - Deprecated Protocol Should Not Be Exposed"; flow:established,to_server; classtype:attempted-admin; sid:9000076; rev:1;)
+alert tcp $HOME_NET any -> $EXTERNAL_NET 3389 (msg:"UNIV Internal Host Initiating Outbound RDP - Possible Compromise or Policy Violation"; flow:established,to_server; classtype:policy-violation; sid:9000077; rev:1;)
+alert tcp $EXTERNAL_NET any -> $HOME_NET 1723 (msg:"UNIV External Connection to PPTP VPN Port - Deprecated/Weak VPN Protocol"; flow:established,to_server; classtype:policy-violation; sid:9000078; rev:1;)
+alert tcp $EXTERNAL_NET any -> $HOME_NET 22 (msg:"UNIV SSH Connection from Known Cloud Scanning Provider Range - Adjust IP List Per Institution"; flow:established,to_server; classtype:attempted-recon; sid:9000079; rev:1;)
 #alert tcp $EXTERNAL_NET any -> $HOME_NET [3389,5900,23] (msg:"UNIV Repeated Connection Attempts Across Multiple Remote Access Ports from Single Source - Possible Access Sweep"; flow:established,to_server; detection_filter:track by_src, count 5, seconds 60; classtype:attempted-recon; sid:9000080; rev:1;)

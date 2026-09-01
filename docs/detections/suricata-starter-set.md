@@ -33,11 +33,14 @@ none had a pcap fixture, so none could enter the enabled set under #445's
 promotion gate. `configs/suricata/suricata.yaml`'s `rule-files:` list
 references all 10 files (plus `local.rules`).
 
-**Update (2026-09-01, #446 follow-up):** 31 of the 100 rules are now
-enabled — see "Rules promoted" below. The other 69 remain disabled for
+**Update (2026-09-01, #446 follow-up):** 62 of the 100 rules are now
+enabled — see "Rules promoted" below. The other 38 remain disabled for
 the reasons already documented in this file (unresolved placeholders,
-un-tuned `detection_filter` thresholds, no fixture yet, or DLP sign-off
-not obtained).
+un-tuned `detection_filter` thresholds, no fixture yet, DLP sign-off not
+obtained, or the newly-found dead-as-configured issue on 9000063/9000064
+below) — plus SMB (9000043-9000045) and FTP-data (9000067), deliberately
+skipped this session as needing more complex protocol-session
+construction than the content/port matches tackled so far.
 
 ## Syntax fixes (8 rules)
 
@@ -187,26 +190,60 @@ handshake has to be initiated by the client for Suricata's to_client/
 to_server direction tracking to resolve correctly, confirmed by an initial
 failed attempt that had the initiator backwards).
 
+**Third batch (31 more rules, across `ransomware_c2.rules`,
+`residential_policy_violations.rules`, `remote_access_abuse.rules`,
+`recon_scanning.rules`, `exfiltration_dlp.rules`)** — DNS query/content
+matches (DGA-shaped high-entropy subdomains, long-query DNS tunneling,
+dynamic-DNS and cryptomining-pool domains, `.onion` lookups), HTTP
+host/URI/user-agent matches (C2 gate URIs, Cobalt Strike default
+malleable-profile URI, piracy-site host, double-extension exfil staging,
+pastebin.com, Nessus/masscan/Zgrab scanner UAs), a TLS SNI content match
+(backblaze.com — simpler than 9000049's regex match), plain TCP
+port/handshake matches (Tor OR/dir ports, cryptomining pool ports,
+external RDP/VNC/Telnet/PPTP/SSH, outbound RDP, MySQL/MSSQL/MongoDB/Redis
+exposure), one DHCP UDP packet match, and one raw-SYN-packet match
+(9000081, Nmap's default `window:1024` — matched on the SYN packet alone,
+no handshake needed since the rule's own `flags:S` selector only looks at
+that one packet).
+
+**Two rules attempted and found dead-as-configured, not just
+unfixtured — 9000063 and 9000064** (large outbound POST to mega.nz /
+dropboxusercontent.com, `http.request_body; bsize:>1000000`): a fixture
+built with a real >1MB POST body did **not** fire either rule. Root
+cause, confirmed by reading the config: `configs/suricata/suricata.yaml`'s
+libhtp `request-body-limit: 100kb` caps how much of the request body
+Suricata ever reassembles for inspection — `bsize:>1000000` can
+structurally never be satisfied under this repo's own production config,
+regardless of how large the real POST is. Not attempting to raise the
+body-limit to fix this now — that's a resource/DoS-surface tuning
+decision (every established HTTP flow now buffers more per request),
+not a quick fixture fix, and belongs with the rest of this issue's
+threshold-tuning scope. Left disabled; flagged here rather than silently
+left in the "no fixture yet" bucket, since a fixture genuinely can't make
+these two fire without a config change first.
+
 Fixtures live at `tests/detections/fixtures/suricata/<SID>_tp.pcap` /
 `<SID>_tn.pcap`. `tests/detections/test_suricata_rules.py`'s
-`PromotionGateRealRepoTests` now covers all 31 as part of the real,
+`PromotionGateRealRepoTests` now covers all 62 as part of the real,
 enabled-rule set (not just the synthetic meta-tests #445 originally
 proved the mechanism with).
 
-**Deliberately excluded from these batches even though they're also
-placeholder/threshold-free:** none — every other rule in the 100 has
-either an unresolved placeholder, a `detection_filter` threshold, is one
-of the two DLP rules needing sign-off, or (the large majority) is a
-straightforward content/port match like the 31 above but simply wasn't
-reached this session — building and hand-verifying a fixture per rule is
-real, one-at-a-time work; the remaining ~69 need the same treatment, not
-a different decision.
+**Deliberately excluded from all three batches even though some are also
+placeholder/threshold-free:** the 3 SMB rules (9000043-9000045 — matching
+on `file.name`, which needs a real SMB2 session with file
+create/write/rename operations, not just a TCP handshake) and the FTP
+data-channel rule (9000067 — needs a correlated FTP control-channel
+session to open the data channel Suricata's `ftp-data` protocol tracks).
+Both are more complex protocol-session constructions than the
+content/port matches tackled so far; left for a future pass rather than
+attempted under time pressure and risking an unverified fixture.
 
 ## What is still NOT done
 
-- **69 rules still have no pcap fixture** and stay disabled; #445's
+- **38 rules still have no pcap fixture** (or, for 9000063/9000064, can't
+  fire under this repo's current config at all) and stay disabled; #445's
   promotion gate needs one per rule before any more can be enabled — the
-  same real, one-at-a-time verification work the 31 above just went
+  same real, one-at-a-time verification work the 62 above just went
   through, not yet done for the rest.
 - **3 unresolved placeholders** (9000013, 9000065, 9000099, see above) —
   still blocked on a human with real institutional/threat-intel context;

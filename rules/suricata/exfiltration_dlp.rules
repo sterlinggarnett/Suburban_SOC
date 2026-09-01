@@ -33,7 +33,7 @@
 # msg), not a verified real ID format for any specific institution —
 # left exactly as supplied, not invented or guessed here.
 
-#alert dns $HOME_NET any -> any 53 (msg:"UNIV Abnormally Long DNS Query - Possible DNS Tunneling"; dns.query; pcre:"/^.{60,}$/"; classtype:trojan-activity; sid:9000061; rev:1;)
+alert dns $HOME_NET any -> any 53 (msg:"UNIV Abnormally Long DNS Query - Possible DNS Tunneling"; dns.query; pcre:"/^.{60,}$/"; classtype:trojan-activity; sid:9000061; rev:1;)
 # SYNTAX FIX: source's bare `dns.query;` selector had no content/pcre
 # match attached to it — Suricata 7.0.3 rejects a sticky buffer
 # designation with nothing matching against it ("setup buffer dns_query
@@ -57,7 +57,7 @@
 # — STOR is issued on the control channel but only actually opens a
 # data-channel flow, which is what this keyword inspects.
 #alert ftp-data $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Outbound FTP Upload (STOR) to External Host"; flow:established,to_server; ftpdata_command:stor; classtype:policy-violation; sid:9000067; rev:1;)
-#alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Outbound File with Double Extension - Possible Exfil Staging"; flow:established,to_server; http.uri; content:".pdf.zip"; nocase; classtype:policy-violation; sid:9000068; rev:1;)
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Outbound File with Double Extension - Possible Exfil Staging"; flow:established,to_server; http.uri; content:".pdf.zip"; nocase; classtype:policy-violation; sid:9000068; rev:1;)
 # SYNTAX FIX (see residential_policy_violations.rules' 9000058 note).
-#alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Outbound Connection to Paste Site - Possible Data Leak"; flow:established,to_server; http.host; content:"pastebin.com"; classtype:policy-violation; sid:9000069; rev:1;)
-#alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV TLS Connection to Unapproved Cloud Backup Domain - backblaze.com"; flow:established; tls.sni; content:"backblaze.com"; nocase; classtype:policy-violation; sid:9000070; rev:1;)
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Outbound Connection to Paste Site - Possible Data Leak"; flow:established,to_server; http.host; content:"pastebin.com"; classtype:policy-violation; sid:9000069; rev:1;)
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV TLS Connection to Unapproved Cloud Backup Domain - backblaze.com"; flow:established; tls.sni; content:"backblaze.com"; nocase; classtype:policy-violation; sid:9000070; rev:1;)

@@ -1,3 +1,9 @@
+> **Superseded.** `docs/Playbook-Structure.md` is the canonical blank playbook
+> template (the one `README.md`'s repository listing points to, and the one
+> `IR_Sigma_Playbook.md`'s restructure was actually built from — see
+> `plans/20260819-ir-sigma-playbook-restructure.md`). This copy is kept only
+> as the historical reference version; do not start a new playbook from here.
+
 # Executive Summary
 [Provide non-technical, high-level information, references, and background.]
 

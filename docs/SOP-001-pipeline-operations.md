@@ -52,6 +52,14 @@ If the pipeline must be halted or reset:
 - Stop captures via `Ctrl+C` in the running terminal.
 - Run `sudo ./scripts/setup/clear_logs.sh` to permanently clear the Zeek logs directory (destructive).
 
+This is pipeline-halt containment (stopping capture/ingest), not device-level
+containment. **Device quarantine (SOAR)** is a separate path this SOP does not
+cover: a detection dispatches an HMAC-signed request to the Hive-Mind Broker,
+which holds it in a human-approval queue (`POST /approve`) before an OpenWrt
+`uci` firewall rule isolates the target device — see
+[README's Architecture section](../README.md#architecture) for the full flow
+and `docs/SOP-022-anomaly-validation.md` for how to exercise it end-to-end.
+
 ### Eradication & Recovery
 To recover or start the pipeline from scratch:
 1. Start Docker and the ELK stack (`docker compose up -d`).
@@ -63,7 +71,9 @@ To recover or start the pipeline from scratch:
 Troubleshooting common issues:
 - **SSH connection refused**: Verify router IP (`10.18.81.1`).
 - **Filebeat TLS handshake fails**: Re-provision host Filebeat CA + client cert if the `certs` volume was reset.
-- **No data in Kibana**: Ensure the capture script targets the correct active interface.
+- **No data in Kibana**: Ensure the capture script targets the correct active interface (if the interface is correct and the fix above doesn't apply, check the time-range cause in `docs/master_pipeline_guide.md`'s troubleshooting table instead).
+
+For issues beyond capture/interface scope (ES cluster-red, Logstash crash-loops, a silently dead Zeek sensor, failing detection CI, etc.), see `docs/master_pipeline_guide.md`'s "Troubleshooting Quick Reference" table — the canonical troubleshooting reference for this pipeline.
 
 # References and Resources
 - [Architecture Diagram](../docs/architecture-diagram.png)

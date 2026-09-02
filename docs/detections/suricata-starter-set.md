@@ -28,10 +28,23 @@ of the source's 100 `alert`-prefixed lines appears in exactly one category
 file (stripped of the disabling `#`), with no line dropped, duplicated, or
 altered in content beyond the syntax fixes below.
 
-**Every rule ships disabled** (leading `#`) per #446's own decision — none
-has a pcap fixture yet, so none may enter the enabled set under #445's
-promotion gate. `configs/suricata/suricata.yaml`'s `rule-files:` list now
+**Every rule shipped disabled** (leading `#`) per #446's own decision —
+none had a pcap fixture, so none could enter the enabled set under #445's
+promotion gate. `configs/suricata/suricata.yaml`'s `rule-files:` list
 references all 10 files (plus `local.rules`).
+
+**Update (2026-09-02, #446 follow-up):** 79 of the 100 rules are now
+enabled — see "Rules promoted" below. Every rule that is NOT enabled
+falls into exactly one of five disclosed, non-arbitrary buckets (21
+total, no leftover "not attempted" category): 14 need `detection_filter`
+thresholds tuned against real traffic this sandbox doesn't have; 2
+(9000013, 9000099) have unresolved placeholder IOCs this repo doesn't
+invent; 2 (9000065, 9000066) are DLP rules needing explicit
+data-handling-policy sign-off; 2 (9000063, 9000064) are dead as
+configured (`request-body-limit: 100kb` vs. their `>1MB` threshold); 1
+(9000003) is unresolved (a libhtp inspect-window interaction that didn't
+fire in this session's fixture attempts). See "What is still NOT done"
+below for the full accounting.
 
 ## Syntax fixes (8 rules)
 
@@ -136,16 +149,188 @@ Modbus, S7comm (9000094-9000097). Confirmed by checking each SID's
 signal shape against the full `rules/sigma/` corpus, not assumed from the
 source's own claims.
 
-## What is NOT done
+## Rules promoted (2026-09-01, #446 follow-up)
 
-- **No pcap fixtures.** All 100 rules stay disabled; #445's promotion
-  gate needs a fixture per rule before any of them can be enabled — that
-  is deliberately out of scope for landing the content itself (100
-  fixtures is its own body of work, and premature before placeholder
-  resolution / threshold tuning / DLP sign-off even happen).
-- **No threshold tuning.** Every `detection_filter` count/seconds value
-  is the source's own illustrative default, disclosed as such inline —
-  not validated against this deployment's actual traffic.
+11 of the 100 rules had no placeholder to resolve and no `detection_filter`
+threshold to tune — plain port/protocol or fixed-content matches, safe to
+verify and enable without live traffic or a human sign-off decision. Each
+got a real, verified pcap fixture (`suricata -r` replay against the actual
+rule text, real Suricata 7.0.3 + real `scapy`-built packets — same
+verification posture as #445's own promotion-gate tests, not a hand-authored
+pcap taken on faith) and was flipped from `#alert` to `alert`:
+
+| SID | Rule | Fixture shape |
+|---|---|---|
+| 9000049 | TLS SNI is a raw IP address (`ransomware_c2.rules`) | Real `scapy` TLS 1.2 ClientHello with an SNI extension carrying an IP-literal string (TP) vs. a hostname (TN), over a full TCP 3-way handshake |
+| 9000051 | BitTorrent handshake (`residential_policy_violations.rules`) | TCP payload starting `\x13BitTorrent protocol` (TP) vs. a plain HTTP GET on the same port (TN) |
+| 9000052 | BitTorrent DHT (`residential_policy_violations.rules`) | UDP payload starting `d1:ad2:id20:` (TP) vs. benign UDP payload (TN) |
+| 9000091 | Mirai telnet default root/xc3511 (`iot_lab_research.rules`) | TCP:23 payload `root\r\nxc3511` (TP) vs. a different login pair (TN) |
+| 9000092 | Mirai telnet default admin/admin (`iot_lab_research.rules`) | Same shape, `admin\r\nadmin` |
+| 9000093 | Outbound telnet from HOME_NET (`iot_lab_research.rules`) | Any established TCP flow to EXTERNAL_NET:23 (TP) vs. the same flow to :443 (TN) — no content match in the rule itself |
+| 9000094 | CoAP port exposure (`iot_lab_research.rules`) | UDP to HOME_NET:5683 (TP) vs. :53 (TN) |
+| 9000095 | MQTT port exposure (`iot_lab_research.rules`) | Established TCP to HOME_NET:1883 (TP) vs. :8080 (TN) |
+| 9000096 | Modbus port exposure (`iot_lab_research.rules`) | Established TCP to HOME_NET:502 (TP) vs. :5020 (TN) |
+| 9000097 | S7comm port exposure (`iot_lab_research.rules`) | Established TCP to HOME_NET:102 (TP) vs. :1020 (TN) |
+| 9000098 | Default admin:admin Basic Auth (`iot_lab_research.rules`) | HTTP request carrying `Authorization: Basic YWRtaW46YWRtaW4=` (TP) vs. a Bearer token (TN) |
+
+Two more batches followed the same pattern, all content/port matches with
+no placeholder or threshold dependency:
+
+**`web_lms_attacks.rules` (9000021-9000030, 10/10 rules)** — SQLi/XSS/path-
+traversal/LFI/RFI patterns in `http.uri`, a PHP-upload body check, and two
+scanner-user-agent rules (sqlmap, Nikto). One fixture (9000022, the classic
+`' OR '1'='1` pattern) needed a second pass: the literal payload contains a
+raw space, which breaks HTTP request-line parsing when placed unencoded in
+a URI — percent-encoded (`%20`) in the wire bytes, which Suricata's
+normalized `http.uri` buffer decodes back to a real space before matching,
+same as any real browser/tool would send it.
+
+**`web_shell_compromise.rules` (9000031-9000040, 10/10 rules)** — web shell
+upload/access patterns (`eval(base64_decode`, China Chopper, known shell
+filenames, AntSword UA), reverse-shell content matches, and one
+response-direction rule (9000032, `flow:established,to_client` — matches
+on the *server's* response body, not the request; the fixture's TCP
+handshake has to be initiated by the client for Suricata's to_client/
+to_server direction tracking to resolve correctly, confirmed by an initial
+failed attempt that had the initiator backwards).
+
+**Third batch (31 more rules, across `ransomware_c2.rules`,
+`residential_policy_violations.rules`, `remote_access_abuse.rules`,
+`recon_scanning.rules`, `exfiltration_dlp.rules`)** — DNS query/content
+matches (DGA-shaped high-entropy subdomains, long-query DNS tunneling,
+dynamic-DNS and cryptomining-pool domains, `.onion` lookups), HTTP
+host/URI/user-agent matches (C2 gate URIs, Cobalt Strike default
+malleable-profile URI, piracy-site host, double-extension exfil staging,
+pastebin.com, Nessus/masscan/Zgrab scanner UAs), a TLS SNI content match
+(backblaze.com — simpler than 9000049's regex match), plain TCP
+port/handshake matches (Tor OR/dir ports, cryptomining pool ports,
+external RDP/VNC/Telnet/PPTP/SSH, outbound RDP, MySQL/MSSQL/MongoDB/Redis
+exposure), one DHCP UDP packet match, and one raw-SYN-packet match
+(9000081, Nmap's default `window:1024` — matched on the SYN packet alone,
+no handshake needed since the rule's own `flags:S` selector only looks at
+that one packet).
+
+**Two rules attempted and found dead-as-configured, not just
+unfixtured — 9000063 and 9000064** (large outbound POST to mega.nz /
+dropboxusercontent.com, `http.request_body; bsize:>1000000`): a fixture
+built with a real >1MB POST body did **not** fire either rule. Root
+cause, confirmed by reading the config: `configs/suricata/suricata.yaml`'s
+libhtp `request-body-limit: 100kb` caps how much of the request body
+Suricata ever reassembles for inspection — `bsize:>1000000` can
+structurally never be satisfied under this repo's own production config,
+regardless of how large the real POST is. Not attempting to raise the
+body-limit to fix this now — that's a resource/DoS-surface tuning
+decision (every established HTTP flow now buffers more per request),
+not a quick fixture fix, and belongs with the rest of this issue's
+threshold-tuning scope. Left disabled; flagged here rather than silently
+left in the "no fixture yet" bucket, since a fixture genuinely can't make
+these two fire without a config change first.
+
+**Fourth batch (3 more rules, `auth_sso_abuse.rules`)** — 9000004
+(default `username=admin` credential in a `/cas/login` POST body) and
+9000006/9000007 (OpenBullet/SentryMBA credential-stuffing-tool user
+agents against `/cas/login`).
+
+**9000003 attempted, left disabled — genuinely finicky, not a quick
+fix.** `bsize:>8000` on `http.request_body` (the 8000-byte SAML-POST-size
+rule this repo's own #445 syntax fix rewrote from a broken `dsize`
+check) did not fire against an 8112-byte real POST body in this
+session's fixture attempts, including with an explicit FIN teardown
+(ruling out a flow-timeout truncation as the cause). `eve.json`'s
+`fileinfo` event showed the body buffer as `"state":"TRUNCATED"` at 6826
+bytes — short of both what was sent and the 8000-byte threshold, and not
+obviously explained by `request-body-limit: 100kb` (`configs/suricata/
+suricata.yaml`) alone. `request-body-minimal-inspect-size: 32kb` and
+`request-body-inspect-window: 4kb` in the same libhtp block are the
+likely interacting factors — `bsize`'s exact interaction with those two
+progressive-inspection settings needs more investigation than this
+session had time for. Not disclosed as dead-as-configured like
+9000063/9000064 (unlike those, nothing here rules out a working fixture
+existing) — flagged as unresolved instead.
+
+**Fifth batch (9 more rules, `phishing_email.rules`)** — the first SMTP
+rules attempted this session. Every fixture is a full, realistic SMTP
+session (`scapy`-built): server `220` greeting, `EHLO`, `MAIL FROM`,
+`RCPT TO`, `DATA`/`354`, the actual email headers+body (where the rules'
+plain `content` matches apply — no sticky buffer, so they match the raw
+to_server stream during the DATA phase), the `.` end-of-data, `QUIT`, and
+a clean FIN teardown — not a bare TCP handshake, since Suricata's SMTP
+probing parser needs the real `220 ` banner exchange to identify the
+flow as SMTP at all before any of these rules can even apply. All 9
+verified on the first attempt: gift-card/wire-transfer/BEC social-
+engineering phrase matches (9000011/9000012/9000018), a password-
+protected-zip and two macro-enabled-attachment filename matches
+(9000014/9000015/9000016), a job-scam phrase pair (9000017), a URL-
+shortener domain match (9000019), and one DNS lookalike-domain-pattern
+match (9000020, not actually SMTP — it's a `dns` rule that happened to
+live in this category file). **9000013 stays excluded** — its
+`univv-edu` look-alike domain is an unresolved placeholder, the one rule
+in this file this session did not attempt.
+
+**Sixth batch (5 more rules, 2026-09-02 — the protocol-complexity rules
+deliberately deferred on 2026-09-01)** — 9000043/9000044/9000045 (SMB,
+`ransomware_c2.rules`) and 9000067 (FTP-data, `exfiltration_dlp.rules`)
+tackled first, then 9000074 (SSH, `remote_access_abuse.rules`) picked up
+as a same-session oversight (it was fixture-eligible all along — no
+placeholder, no threshold — just missed when that category file's other
+9 rules were batched).
+
+- **SMB (9000043-9000045, ransom-note/renamed-extension `file.name`
+  matches):** `scapy`'s full SMB2 layer support (`scapy.layers.smb2`)
+  made this tractable — Negotiate Protocol, Session Setup (a fake NTLM
+  blob; Suricata's rust-smb parser tracks message flow/state, not
+  cryptographic auth validity), Tree Connect, then Create. The first
+  attempt (Create + Close only) parsed perfectly in `eve.json`'s `smb`
+  events (`"filename":"README_TO_DECRYPT.txt"` logged correctly) but
+  didn't fire the rule — `file.name` is a **file-tracking** sticky
+  buffer, populated by Suricata's file API from an actual data transfer,
+  not the bare Create alone. Adding a Write (some dummy payload) and a
+  Close after the Create fixed it on the next attempt.
+- **FTP-data (9000067, outbound STOR upload):** scapy has no FTP layer,
+  but FTP control commands are plain ASCII, so this needed only raw text
+  built by hand: a full control-channel session (`USER`/`PASS`/`TYPE
+  I`/`PASV`/`STOR`), then a *separate* TCP connection to the
+  PASV-advertised address:port carrying the actual upload bytes — both
+  flows in the same pcap, since Suricata's `ftp-data` protocol tracking
+  correlates the data channel back to the control channel's `STOR`
+  command via that PASV negotiation. The TN swaps `STOR` for `RETR`
+  (download, not upload) to prove the rule keys on the actual command,
+  not just "any FTP data channel."
+- **SSH (9000074, `libssh` client-banner scanning-tool fingerprint):**
+  the simplest of the three — SSH's version-exchange banner
+  (`SSH-2.0-<software>\r\n`) is plain text sent by both sides at
+  connection start, no key exchange needed for `ssh.software` to extract
+  it. Verified first try.
+
+Fixtures live at `tests/detections/fixtures/suricata/<SID>_tp.pcap` /
+`<SID>_tn.pcap`. `tests/detections/test_suricata_rules.py`'s
+`PromotionGateRealRepoTests` now covers all 79 as part of the real,
+enabled-rule set (not just the synthetic meta-tests #445 originally
+proved the mechanism with).
+
+## What is still NOT done
+
+21 rules remain disabled — every one for a specific, disclosed reason
+below, no leftover "not attempted" category:
+
+- **14 need `detection_filter` threshold tuning** (9000001, 9000002,
+  9000005, 9000008, 9000009, 9000010, 9000046, 9000060, 9000062,
+  9000073, 9000080, 9000082, 9000083, 9000100) — every shipped
+  count/seconds value is the source's own illustrative default, not
+  validated against this deployment's actual traffic (no live traffic
+  exists in this sandbox to tune against).
+- **2 unresolved placeholders** (9000013, 9000099, see above) — still
+  blocked on a human with real institutional/threat-intel context; this
+  repo doesn't invent IOCs.
+- **2 DLP rules** (9000065, 9000066) — need explicit data-handling-policy
+  owner sign-off, not obtained. (9000065 is also one of the 2 unresolved
+  placeholders above — `STU\d{7}` needs a real format either way.)
+- **2 dead as configured** (9000063, 9000064) — see above,
+  `request-body-limit: 100kb` structurally can't satisfy their `>1MB`
+  threshold without a config change not made here.
+- **1 unresolved** (9000003) — see above, a libhtp
+  inspect-window/minimal-inspect-size interaction that didn't fire in
+  this session's fixture attempts; flagged, not guessed at.
 - **ATT&CK coverage** — still explicitly scoped out
   (`findings/20260830-445-suricata-attack-coverage-scope.md`); this
   landing doesn't change that decision, it's the trigger to eventually

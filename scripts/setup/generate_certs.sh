@@ -22,7 +22,7 @@ set -euo pipefail
 # SAFETY GUARD (added after a live incident): this standalone script is NOT the
 # stack's source of truth for certificates. docker-compose.yml runs a one-shot
 # `setup` service that mints an Elastic-certutil CA + node certs into the shared
-# `certs` volume. This script instead mints a SEPARATE "UIW-SOC Internal CA" with
+# `certs` volume. This script instead mints a SEPARATE "Suburban-SOC Internal CA" with
 # a different layout (certs/es/...). If its output reaches the compose `certs`
 # volume, the CA no longer matches the running Elasticsearch node cert and every
 # client (Logstash, Kibana, curl) fails TLS with "PKIX path building failed",
@@ -50,20 +50,22 @@ mkdir -p "$CA_DIR" "$ES_DIR"
 
 if [[ -f "$CA_DIR/ca.crt" ]]; then
   echo "[=] CA already exists at $CA_DIR/ca.crt — delete ./certs to regenerate. Skipping."
+  echo "[!] If this CA predates the O=Suburban-SOC subject fix (#508), it still carries"
+  echo "    the old O=UIW-SOC subject — delete ./certs and re-run to pick up the fix."
   exit 0
 fi
 
 echo "[*] Generating internal CA (valid ${DAYS} days)..."
 openssl genrsa -out "$CA_DIR/ca.key" 4096
 openssl req -x509 -new -nodes -key "$CA_DIR/ca.key" -sha256 -days "$DAYS" \
-  -subj "/O=UIW-SOC/OU=CDP/CN=UIW-SOC Internal CA" \
+  -subj "/O=Suburban-SOC/OU=CDP/CN=Suburban-SOC Internal CA" \
   -out "$CA_DIR/ca.crt"
 
 echo "[*] Generating Elasticsearch node certificate..."
 openssl genrsa -out "$ES_DIR/es.key" 4096
 # SANs cover the in-network service name and localhost for host access.
 openssl req -new -key "$ES_DIR/es.key" \
-  -subj "/O=UIW-SOC/OU=CDP/CN=elasticsearch" \
+  -subj "/O=Suburban-SOC/OU=CDP/CN=elasticsearch" \
   -out "$ES_DIR/es.csr"
 
 cat > "$ES_DIR/es.ext" <<'EOF'

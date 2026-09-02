@@ -13,6 +13,14 @@
 > Credentials, local filesystem paths, usernames, and session identifiers in this
 > log have been **redacted**. The Elasticsearch credential that previously appeared
 > here has been rotated/invalidated.
+>
+> Session banners and local paths in the raw log below read
+> `~/projects/UIW_SOC/` — a different local working-directory name than this
+> repository. This file is kept as **cross-project reference material**, not
+> a record of work performed in this Suburban-SOC repository under that name;
+> do not cite file paths, commands, or outcomes from this transcript as this
+> project's own history without independently verifying them against this
+> repo.
 
 ## USER (2026-06-03T22:25:32Z)
 

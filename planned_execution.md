@@ -19,8 +19,8 @@ hadn't been re-sorted). Every open issue now has exactly one
 properly-scoped milestone; M15's full history moved to `<details>` below,
 matching the M12/M13/M14 pattern.
 
-**7 open milestones** (issue counts as of the restructure; M23/M24 added
-since — see the last two rows):
+**7 open milestones** (issue counts as of the restructure; M23/M24/M25
+added since — see the last three rows):
 
 | Milestone | Issues | Theme |
 |---|---|---|
@@ -33,6 +33,7 @@ since — see the last two rows):
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 | [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 1/4 closed (updated 2026-09-01). PR #506 (Stage 1, #443/#444) and PR #507 (Stage 2+3, #445/#446) are both merged to `main`. #445 closed outright. #443/#444 are structurally complete but stay open — their own "done when" needs a live capture host + real traffic this sandbox doesn't have (same blocker class as M17's #415/#421). #446 (100-rule starter set) landed disabled with real remaining scope: per-rule pcap fixtures, placeholder-IOC resolution, threshold tuning, DLP owner sign-off | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
 | [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ✅ 5/5 closed — **CLOSED** (#449/#453/#463/#442/#441 all merged via PR #505, 2026-08-30) | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
+| [M25 — Repo Audit Remediation](https://github.com/voltron-1/Suburban_SOC/milestone/30) | ⏳ 2/16 closed (created 2026-08-31, repo-audit round 2, #508–#523) — #523 + #514 closed 2026-09-01 via the owner-provided wiki refresh (wiki commit `25ab241`) and its companion PR; #522 in progress, 5/6 pages done (Commit-Approach outstanding) | Repo-audit follow-ups: stale wiki pages (Watcher-era architecture, SOP-number collisions), UIW branding contamination, stale CLAUDE.md/README/planned_execution status lines, missing troubleshooting + playbook entries, branch-protection and cert-org fixes |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —

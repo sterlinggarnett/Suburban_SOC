@@ -33,14 +33,18 @@ none had a pcap fixture, so none could enter the enabled set under #445's
 promotion gate. `configs/suricata/suricata.yaml`'s `rule-files:` list
 references all 10 files (plus `local.rules`).
 
-**Update (2026-09-01, #446 follow-up):** 74 of the 100 rules are now
-enabled — see "Rules promoted" below. The other 26 remain disabled for
-the reasons already documented in this file (unresolved placeholders,
-un-tuned `detection_filter` thresholds, DLP sign-off not obtained, or the
-dead-as-configured/finicky-buffering issues on 9000003/9000063/9000064)
-— plus SMB (9000043-9000045) and FTP-data (9000067), deliberately
-skipped this session as needing more complex protocol-session
-construction than the content/port/SMTP matches tackled so far.
+**Update (2026-09-02, #446 follow-up):** 79 of the 100 rules are now
+enabled — see "Rules promoted" below. Every rule that is NOT enabled
+falls into exactly one of five disclosed, non-arbitrary buckets (21
+total, no leftover "not attempted" category): 14 need `detection_filter`
+thresholds tuned against real traffic this sandbox doesn't have; 2
+(9000013, 9000099) have unresolved placeholder IOCs this repo doesn't
+invent; 2 (9000065, 9000066) are DLP rules needing explicit
+data-handling-policy sign-off; 2 (9000063, 9000064) are dead as
+configured (`request-body-limit: 100kb` vs. their `>1MB` threshold); 1
+(9000003) is unresolved (a libhtp inspect-window interaction that didn't
+fire in this session's fixture attempts). See "What is still NOT done"
+below for the full accounting.
 
 ## Syntax fixes (8 rules)
 
@@ -263,38 +267,70 @@ live in this category file). **9000013 stays excluded** — its
 `univv-edu` look-alike domain is an unresolved placeholder, the one rule
 in this file this session did not attempt.
 
+**Sixth batch (5 more rules, 2026-09-02 — the protocol-complexity rules
+deliberately deferred on 2026-09-01)** — 9000043/9000044/9000045 (SMB,
+`ransomware_c2.rules`) and 9000067 (FTP-data, `exfiltration_dlp.rules`)
+tackled first, then 9000074 (SSH, `remote_access_abuse.rules`) picked up
+as a same-session oversight (it was fixture-eligible all along — no
+placeholder, no threshold — just missed when that category file's other
+9 rules were batched).
+
+- **SMB (9000043-9000045, ransom-note/renamed-extension `file.name`
+  matches):** `scapy`'s full SMB2 layer support (`scapy.layers.smb2`)
+  made this tractable — Negotiate Protocol, Session Setup (a fake NTLM
+  blob; Suricata's rust-smb parser tracks message flow/state, not
+  cryptographic auth validity), Tree Connect, then Create. The first
+  attempt (Create + Close only) parsed perfectly in `eve.json`'s `smb`
+  events (`"filename":"README_TO_DECRYPT.txt"` logged correctly) but
+  didn't fire the rule — `file.name` is a **file-tracking** sticky
+  buffer, populated by Suricata's file API from an actual data transfer,
+  not the bare Create alone. Adding a Write (some dummy payload) and a
+  Close after the Create fixed it on the next attempt.
+- **FTP-data (9000067, outbound STOR upload):** scapy has no FTP layer,
+  but FTP control commands are plain ASCII, so this needed only raw text
+  built by hand: a full control-channel session (`USER`/`PASS`/`TYPE
+  I`/`PASV`/`STOR`), then a *separate* TCP connection to the
+  PASV-advertised address:port carrying the actual upload bytes — both
+  flows in the same pcap, since Suricata's `ftp-data` protocol tracking
+  correlates the data channel back to the control channel's `STOR`
+  command via that PASV negotiation. The TN swaps `STOR` for `RETR`
+  (download, not upload) to prove the rule keys on the actual command,
+  not just "any FTP data channel."
+- **SSH (9000074, `libssh` client-banner scanning-tool fingerprint):**
+  the simplest of the three — SSH's version-exchange banner
+  (`SSH-2.0-<software>\r\n`) is plain text sent by both sides at
+  connection start, no key exchange needed for `ssh.software` to extract
+  it. Verified first try.
+
 Fixtures live at `tests/detections/fixtures/suricata/<SID>_tp.pcap` /
 `<SID>_tn.pcap`. `tests/detections/test_suricata_rules.py`'s
-`PromotionGateRealRepoTests` now covers all 74 as part of the real,
+`PromotionGateRealRepoTests` now covers all 79 as part of the real,
 enabled-rule set (not just the synthetic meta-tests #445 originally
 proved the mechanism with).
 
-**Deliberately excluded from all three batches even though some are also
-placeholder/threshold-free:** the 3 SMB rules (9000043-9000045 — matching
-on `file.name`, which needs a real SMB2 session with file
-create/write/rename operations, not just a TCP handshake) and the FTP
-data-channel rule (9000067 — needs a correlated FTP control-channel
-session to open the data channel Suricata's `ftp-data` protocol tracks).
-Both are more complex protocol-session constructions than the
-content/port matches tackled so far; left for a future pass rather than
-attempted under time pressure and risking an unverified fixture.
-
 ## What is still NOT done
 
-- **26 rules still have no pcap fixture** (or, for 9000063/9000064, can't
-  fire under this repo's current config at all; 9000003 unresolved for
-  reasons above) and stay disabled; #445's promotion gate needs one per
-  rule before any more can be enabled — the same real, one-at-a-time
-  verification work the 74 above just went through, not yet done for the
-  rest.
-- **3 unresolved placeholders** (9000013, 9000065, 9000099, see above) —
-  still blocked on a human with real institutional/threat-intel context;
-  not attempted.
-- **No threshold tuning.** Every remaining `detection_filter`
-  count/seconds value is the source's own illustrative default, disclosed
-  as such inline — not validated against this deployment's actual
-  traffic (no live traffic exists in this sandbox to tune against).
-- **DLP sign-off** (9000065/9000066) — still not obtained.
+21 rules remain disabled — every one for a specific, disclosed reason
+below, no leftover "not attempted" category:
+
+- **14 need `detection_filter` threshold tuning** (9000001, 9000002,
+  9000005, 9000008, 9000009, 9000010, 9000046, 9000060, 9000062,
+  9000073, 9000080, 9000082, 9000083, 9000100) — every shipped
+  count/seconds value is the source's own illustrative default, not
+  validated against this deployment's actual traffic (no live traffic
+  exists in this sandbox to tune against).
+- **2 unresolved placeholders** (9000013, 9000099, see above) — still
+  blocked on a human with real institutional/threat-intel context; this
+  repo doesn't invent IOCs.
+- **2 DLP rules** (9000065, 9000066) — need explicit data-handling-policy
+  owner sign-off, not obtained. (9000065 is also one of the 2 unresolved
+  placeholders above — `STU\d{7}` needs a real format either way.)
+- **2 dead as configured** (9000063, 9000064) — see above,
+  `request-body-limit: 100kb` structurally can't satisfy their `>1MB`
+  threshold without a config change not made here.
+- **1 unresolved** (9000003) — see above, a libhtp
+  inspect-window/minimal-inspect-size interaction that didn't fire in
+  this session's fixture attempts; flagged, not guessed at.
 - **ATT&CK coverage** — still explicitly scoped out
   (`findings/20260830-445-suricata-attack-coverage-scope.md`); this
   landing doesn't change that decision, it's the trigger to eventually

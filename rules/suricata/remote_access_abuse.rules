@@ -38,7 +38,7 @@ alert tcp $EXTERNAL_NET any -> $HOME_NET 3389 (msg:"UNIV External RDP Connection
 # RDP-app-layer keyword. Same match target, no new indicator invented.
 alert tcp $EXTERNAL_NET any -> $HOME_NET 3389 (msg:"UNIV RDP Cookie Matches Known Scanning Tool Pattern - mstshash"; flow:established,to_server; content:"Cookie: mstshash="; classtype:attempted-recon; sid:9000072; rev:1;)
 #alert ssh $EXTERNAL_NET any -> $HOME_NET 22 (msg:"UNIV Repeated External SSH Connection Attempts - Possible Brute Force"; flow:established; detection_filter:track by_src, count 10, seconds 60; classtype:attempted-admin; sid:9000073; rev:1;)
-#alert ssh any any -> any any (msg:"UNIV SSH Client Banner Matches Known Scanning Library - libssh"; ssh.software; content:"libssh"; classtype:attempted-recon; sid:9000074; rev:1;)
+alert ssh any any -> any any (msg:"UNIV SSH Client Banner Matches Known Scanning Library - libssh"; ssh.software; content:"libssh"; classtype:attempted-recon; sid:9000074; rev:1;)
 alert tcp $EXTERNAL_NET any -> $HOME_NET 5900 (msg:"UNIV External VNC Connection Attempt - Perimeter Should Not Expose VNC"; flow:established,to_server; content:"RFB 0"; classtype:attempted-admin; sid:9000075; rev:1;)
 alert tcp $EXTERNAL_NET any -> $HOME_NET 23 (msg:"UNIV External Telnet Connection Attempt - Deprecated Protocol Should Not Be Exposed"; flow:established,to_server; classtype:attempted-admin; sid:9000076; rev:1;)
 alert tcp $HOME_NET any -> $EXTERNAL_NET 3389 (msg:"UNIV Internal Host Initiating Outbound RDP - Possible Compromise or Policy Violation"; flow:established,to_server; classtype:policy-violation; sid:9000077; rev:1;)

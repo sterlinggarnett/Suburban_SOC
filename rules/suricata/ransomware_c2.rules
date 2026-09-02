@@ -20,9 +20,9 @@
 
 alert dns $HOME_NET any -> any 53 (msg:"UNIV DNS Query with High-Entropy Subdomain - Possible DGA/C2"; dns.query; pcre:"/^[a-z0-9]{20,}\./i"; classtype:trojan-activity; sid:9000041; rev:1;)
 alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"UNIV Outbound POST to Uncommon Gate URI - Possible C2 Check-In"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/gate.php"; classtype:trojan-activity; sid:9000042; rev:1;)
-#alert smb any any -> any any (msg:"UNIV SMB Write of Known Ransomware Ransom Note Filename"; flow:established; file.name; content:"README_TO_DECRYPT"; nocase; classtype:trojan-activity; sid:9000043; rev:1;)
-#alert smb any any -> any any (msg:"UNIV SMB File Renamed with Known Ransomware Extension - .locked"; flow:established; file.name; content:".locked"; nocase; classtype:trojan-activity; sid:9000044; rev:1;)
-#alert smb any any -> any any (msg:"UNIV SMB File Renamed with Known Ransomware Extension - .encrypted"; flow:established; file.name; content:".encrypted"; nocase; classtype:trojan-activity; sid:9000045; rev:1;)
+alert smb any any -> any any (msg:"UNIV SMB Write of Known Ransomware Ransom Note Filename"; flow:established; file.name; content:"README_TO_DECRYPT"; nocase; classtype:trojan-activity; sid:9000043; rev:1;)
+alert smb any any -> any any (msg:"UNIV SMB File Renamed with Known Ransomware Extension - .locked"; flow:established; file.name; content:".locked"; nocase; classtype:trojan-activity; sid:9000044; rev:1;)
+alert smb any any -> any any (msg:"UNIV SMB File Renamed with Known Ransomware Extension - .encrypted"; flow:established; file.name; content:".encrypted"; nocase; classtype:trojan-activity; sid:9000045; rev:1;)
 #alert tcp $HOME_NET any -> $HOME_NET 445 (msg:"UNIV High-Volume Internal SMB Connections from Single Host - Possible Ransomware Lateral Spread"; flow:established; detection_filter:track by_src, count 50, seconds 60; classtype:trojan-activity; sid:9000046; rev:1;)
 alert dns $HOME_NET any -> any 53 (msg:"UNIV DNS Query to Known Dynamic DNS Provider - duckdns.org"; dns.query; content:"duckdns.org"; nocase; classtype:trojan-activity; sid:9000047; rev:1;)
 alert dns $HOME_NET any -> any 53 (msg:"UNIV DNS Query to Known Dynamic DNS Provider - no-ip.org"; dns.query; content:"no-ip.org"; nocase; classtype:trojan-activity; sid:9000048; rev:1;)

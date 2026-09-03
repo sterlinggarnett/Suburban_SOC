@@ -19,6 +19,11 @@ auditpol /set /subcategory:"Security Group Management" /success:enable /failure:
 auditpol /set /subcategory:"File Share" /success:enable /failure:enable
 auditpol /set /subcategory:"Registry" /success:enable /failure:disable
 
+# Firewall rule additions (4946) — #283, closes the New-NetFirewallRule
+# PowerShell-cmdlet blind spot proc_creation_win_netsh_firewall_rule_added.yml
+# has. NOT on by default, unlike most subcategories above.
+auditpol /set /subcategory:"MPSSVC Rule-Level Policy Change" /success:enable /failure:disable
+
 echo "Enable Command Line Auditing for EID 4688..."
 New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit" -Name "ProcessCreationIncludeCmdLine_Enabled" -Value 1 -PropertyType DWord -Force
 

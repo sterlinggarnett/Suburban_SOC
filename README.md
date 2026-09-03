@@ -243,7 +243,7 @@ within a milestone, not milestone completions in their own right:
   expanding this fix's blast radius.
 - **Detection framework enrichment (PR #112).** The detection plane spans
   **86 ATT&CK techniques across 12 tactics** (see [`docs/detections/attack-coverage.md`](docs/detections/attack-coverage.md) for the authoritative coverage matrix). The
-  **119 Sigma rules** (`rules/sigma/`) each carry their own ATT&CK technique tag and
+  **120 Sigma rules** (`rules/sigma/`) each carry their own ATT&CK technique tag and
   convert to Elastic SIEM rules via pySigma (`deploy_detections.sh`) — the rules,
   not the pipeline, are the single source of truth for endpoint detection. In
   addition, `configs/logstash.conf` classifies the two Zeek **network** detections —

@@ -61,8 +61,16 @@ winlogbeat.event_logs:
   # (auth_win_rdp_logon_type10, auth_win_pass_the_hash_logon,
   # auth_win_disabled_account_logon_attempt), and "Audit User Account
   # Management" (Account Management) for 4720 (auth_win_user_account_created).
+  # 4946 added #283 (security review of #233/#234's netsh firewall-rule
+  # rule): "a rule was added to the Windows Firewall exception list" fires
+  # regardless of whether the change came from netsh, the
+  # New-NetFirewallRule PowerShell cmdlet, or the GUI — see
+  # auth_win_firewall_rule_added.yml. Audit-policy prerequisite:
+  #   4946 — "Audit MPSSVC Rule-Level Policy Change" (Policy Change) — NOT
+  #          on by default in standard Windows security baselines, unlike
+  #          most of the event IDs collected here.
   - name: Security
-    event_id: 1102, 4624, 4625, 4648, 4661, 4662, 4672, 4719, 4720, 4728, 4732, 4756, 4768, 4769
+    event_id: 1102, 4624, 4625, 4648, 4661, 4662, 4672, 4719, 4720, 4728, 4732, 4756, 4768, 4769, 4946
 
   # Windows System — reboots / service control manager, event-log cleared (104),
   # service start-type changes (7040), new service installs (7045). See

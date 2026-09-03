@@ -1,0 +1,51 @@
+title: Firewall Rule Added via Windows Firewall Policy Engine
+id: b466de39-8b08-4923-85bd-4c95f3ea66e5
+status: experimental
+description: |
+    Detects Security 4946 ("A change has been made to Windows Firewall
+    exception list. A rule was added"), the native audit event for the
+    firewall policy engine itself — it fires regardless of whether the
+    change came from `netsh`, the `New-NetFirewallRule` PowerShell cmdlet,
+    or the GUI. proc_creation_win_netsh_firewall_rule_added.yml (this
+    batch's other firewall-rule-addition rule) only sees the netsh.exe
+    invocation path and explicitly discloses no visibility into the
+    PowerShell cmdlet — this rule closes exactly that gap (#283, filed
+    during that rule's own #233 security review).
+    Needs `configs/endpoint/winlogbeat.yml` to collect EventID 4946 on the
+    Security channel (added alongside this rule) AND the non-default
+    Advanced Audit Policy subcategory "Audit MPSSVC Rule-Level Policy
+    Change" (Policy Change category) enabled on the host — unlike most of
+    this pipeline's other Security-channel event IDs, this one is NOT on
+    by default in standard Windows security baselines.
+    UNVERIFIED FORMAT ASSUMPTION: this environment has no live Windows
+    endpoint shipping real 4946 telemetry (same class of gap
+    system_win_driver_service_installed.yml's ServiceType hedge
+    discloses). Microsoft's own documented 4946 schema carries additional
+    fields (RuleName, ApplicationPath, ProfileChanged among them) that
+    would materially improve triage — but this rule deliberately selects
+    on EventID alone and none of them are mapped in
+    configs/detections/suburban-soc-ecs.yml yet: guessing at their real
+    Winlogbeat rendering here risks the exact #217-class silent-no-op a
+    wrong field name produces (compiles clean, matches nothing in
+    production). EventID is a well-established, unambiguous field with no
+    such risk. Add the richer fields (with their own field-mapping
+    entries) once a real 4946 event confirms how they render, rather than
+    now.
+references:
+    - https://attack.mitre.org/techniques/T1562/004/
+    - https://learn.microsoft.com/en-us/windows/security/threat-protection/auditing/event-4946
+author: Suburban-SOC
+date: 2026-09-03
+tags:
+    - attack.defense_evasion
+    - attack.t1562.004
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4946
+    condition: selection
+falsepositives:
+    - Legitimate IT/deployment automation opening a required port for a new service, via any of netsh/PowerShell/the GUI — correlate the added rule's name/program/port against the change calendar, same triage as this batch's netsh-specific sibling rule.
+level: medium

@@ -13,7 +13,7 @@ This playbook provides a structured, per-rule methodology to respond to alerts t
 IR Sigma Playbook (Endpoint & Network Alerts)
 
 ## Problem Statement
-Suburban-SOC deploys 119 Sigma detection rules across endpoint (Sysmon, Windows event channels, Linux auth/process creation) and network (Zeek) telemetry, spanning 86 MITRE ATT&CK techniques across 12 tactics (see [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md)). Every one of those alerts requires a standardized triage and containment response; a generic playbook cannot tell an analyst which fields to extract, which threat-intelligence lookups apply, or when containment may be automated. This playbook gives each deployed rule its own response procedure.
+Suburban-SOC deploys 120 Sigma detection rules across endpoint (Sysmon, Windows event channels, Linux auth/process creation) and network (Zeek) telemetry, spanning 86 MITRE ATT&CK techniques across 12 tactics (see [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md)). Every one of those alerts requires a standardized triage and containment response; a generic playbook cannot tell an analyst which fields to extract, which threat-intelligence lookups apply, or when containment may be automated. This playbook gives each deployed rule its own response procedure.
 
 ## Objectives
 - Rapidly identify and validate suspicious activities flagged by Sigma rules.
@@ -43,7 +43,7 @@ Alerts are generated natively in the Elastic Detection Engine and forwarded to t
 ## Playbook Verification
 - An alert corresponding to a managed Sigma rule fires (e.g. `proc_creation_win_lsass_dump.yml`).
 - Endpoint telemetry indicating suspicious child processes is visible in Kibana.
-- The alert's rule maps to exactly one section in this playbook (verified mechanically: 119 rules, 119 sections).
+- The alert's rule maps to exactly one section in this playbook (verified mechanically: 120 rules, 120 sections).
 
 ## Recommended Response Action(s)
 The generic actions below are superseded by the per-rule sections in Rule Response Procedures at the end of this section; they remain as the workflow-phase summary.
@@ -108,7 +108,7 @@ Rule sections inherit their family's baseline and state only deviations.
 <a id="master-detection--response-matrix"></a>
 ### Master Detection & Response Matrix
 
-One row per deployed Sigma rule (119 rows), grouped by log-source family in the same
+One row per deployed Sigma rule (120 rows), grouped by log-source family in the same
 order as the Rule Response Procedures sections below, alphabetical by rule file within
 each family. **Extracted Fields** lists the rule's own detection-block field names
 verbatim; the fuller extraction set (standard event-source fields) is in each rule's
@@ -145,6 +145,7 @@ vocabularies defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-work
 | [Mshta Remote or Script Payload Execution](#proc_creation_win_mshta_remote) | T1218.005 | `Image`, `CommandLine` | Hash → VT ≥5; Domain/URL → OTX | Tier B — auto-isolate on TI-confirm |
 | [MSI Package Installed from a Remote URL](#proc_creation_win_msiexec_remote) | T1218.007 | `Image`, `CommandLine` | Hash → VT ≥5; Domain/URL → OTX | Tier C — indicator block on TI-confirm |
 | [Network Share Enumeration via net.exe](#proc_creation_win_net_share_recon) | T1135 | `Image`, `OriginalFileName`, `CommandLine` | Hash → VT ≥5 | Tier C — indicator block on TI-confirm |
+| [Firewall Rule Added via Windows Firewall Policy Engine](#auth_win_firewall_rule_added) | T1562.004 | `EventID` | Internal-only | Tier B (identity) — account disable on TI-confirm |
 | [Firewall Rule Added via netsh](#proc_creation_win_netsh_firewall_rule_added) | T1562.004 | `Image`, `OriginalFileName`, `CommandLine` | Hash → VT ≥5 | Tier C — indicator block on TI-confirm |
 | [Port-Proxy Relay Configured via netsh](#proc_creation_win_netsh_portproxy_relay) | T1090.001 | `Image`, `OriginalFileName`, `CommandLine` | Hash → VT ≥5; IP → AbuseIPDB ≥50% | Tier B — auto-isolate on TI-confirm |
 | [Domain Controller Discovery via Nltest](#proc_creation_win_nltest_discovery) | T1018 | `Image`, `CommandLine` | Hash → VT ≥5 | Tier D — triage-only |
@@ -1768,6 +1769,56 @@ Detects `net view` (list shares/computers reachable from this host) and bare `ne
 - Export the host's process-creation slice for the window — the discovery command sequence is the recon fingerprint.
 - No host artifact to clean for the enumeration itself; remediation follows whatever the correlation sweep uncovers (lateral movement, planted tooling).
 - Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
+
+<a id="auth_win_firewall_rule_added"></a>
+##### Firewall Rule Added via Windows Firewall Policy Engine
+
+**Rule file:** `rules/sigma/auth_win_firewall_rule_added.yml` · **Status:** experimental · **Severity:** medium
+
+###### 1. Rule Summary & MITRE Mapping
+
+| Attribute | Value |
+|---|---|
+| Tactic(s) | Defense Evasion |
+| Technique(s) | T1562.004 — Impair Defenses: Disable or Modify System Firewall |
+| Severity (`level`) | medium |
+| Data source | Winlogbeat (Windows Security) |
+| Trigger condition | Security 4946 — "a rule was added to the Windows Firewall exception list" |
+
+Detects the firewall policy engine's own native audit event, which fires regardless of whether the addition came from `netsh`, the `New-NetFirewallRule` PowerShell cmdlet, or the GUI — closing the exact PowerShell-cmdlet blind spot `proc_creation_win_netsh_firewall_rule_added.yml` (below) discloses it cannot see. Requires the non-default "Audit MPSSVC Rule-Level Policy Change" (Policy Change) Advanced Audit Policy subcategory — unlike most Security-channel event IDs this pipeline collects, 4946 is not on by default.
+
+###### 2. Automated Extraction Fields
+
+| Field | Origin | Use in triage |
+|---|---|---|
+| `EventID` | rule detection block | Confirms the firewall-rule-added event (4946) |
+
+Deliberately minimal: no live Windows endpoint has confirmed how Winlogbeat renders 4946's richer fields (`RuleName`, `ApplicationPath`, `ProfileChanged` per Microsoft's documented schema) in this environment, so none are mapped or selected on yet — guessing here risks a silently-broken field-name mismatch, the same class of gap this repo's own `#217` review found and fixed elsewhere. Pending that verification, triage on this alert needs the raw Windows event itself (Event Viewer / a live KQL pull of the full `winlog.event_data` object) for the rule name and permitted program, not the fields this table lists.
+
+###### 3. Enrichment Criteria
+
+- **Internal-only** — no field here carries an external TI artifact (IP, hash, domain) until the richer 4946 fields are mapped; correlate against the change calendar and deployment records, same as the netsh sibling rule below.
+- Pull the full raw event (`winlog.event_data`) for the rule name, direction, port, and permitted program to enrich manually until those fields are mapped.
+- Cross-check `proc_creation_win_netsh_firewall_rule_added.yml`'s own alerts for the same host/window — a host firing only this rule (not the netsh one) indicates the PowerShell or GUI path, the exact case this rule exists to catch.
+
+###### 4. Containment Decision Flow
+
+**Auto-containment:** severity medium, Internal-only enrichment (no TI to auto-confirm against) → no automated action; every alert routes to analyst triage.
+**Analyst triage path** — 30-minute SLA:
+1. Verify with KQL (index `logstash-*`):
+   ```
+   winlog.event_id : 4946 and winlog.computer_name : "<host>"
+   ```
+2. Pull the raw event for the added rule's name, direction, port, and permitted program (not yet in the ECS-mapped fields above).
+3. Cross-check the netsh sibling rule for the same host/window (see Enrichment Criteria).
+4. False-positive check: legitimate IT/deployment automation opening a required port for a new service, via any of netsh/PowerShell/the GUI — correlate against the change calendar.
+**Escalation:** the added rule permits an unsigned or user-writable-path program, opens an inbound port outside any change window, or coincides with other suspicious activity on the same host → page the IR lead.
+
+###### 5. Remediation & Evidence Preservation
+
+- Export the full rule definition (`netsh advfirewall firewall show rule` or `Get-NetFirewallRule`) and hash the permitted binary before any change.
+- Delete the unauthorized rule; remove the permitted binary and its persistence if TI-confirmed.
+- Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and host before cleanup.
 
 <a id="proc_creation_win_netsh_firewall_rule_added"></a>
 ##### Firewall Rule Added via netsh
@@ -6624,7 +6675,7 @@ Detects the PutInstance operation that binds an `__EventFilter` to a consumer (`
 
 # References and Resources
 - [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md) — authoritative ATT&CK coverage matrix (auto-generated from `rules/sigma/`)
-- `rules/sigma/` — the 119 deployed Sigma rules (single source of truth for endpoint/network detection logic)
+- `rules/sigma/` — the 120 deployed Sigma rules (single source of truth for endpoint/network detection logic)
 - `rules/elastic/threshold/` — Elastic threshold companion rules carrying count-over-time logic for the 8 paired detections
 - [`docs/SOP-147-evidence-validation-runbook.md`](../SOP-147-evidence-validation-runbook.md) — evidence validation runbook (SHA-256 hashing, UTC windows, tamper-evident capture)
 - Threat intelligence sources: VirusTotal, AbuseIPDB, AlienVault OTX (thresholds defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-workflow))

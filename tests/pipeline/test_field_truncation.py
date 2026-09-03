@@ -208,6 +208,33 @@ def tag_oversized_dns_answer(event: dict) -> bool:
     return any(isinstance(a, str) and _utf16_length(a) > DNS_ANSWERS_CEILING for a in elements)
 
 
+ZEEK_TXT_TRUNCATION_LENGTH = 4096
+
+
+def tag_dns_answer_truncated_by_zeek(event: dict) -> bool:
+    """Mirrors configs/logstash.conf's #389 ruby filter block (same
+    if [dns][answers] block as #352's tag_oversized_dns_answer, added
+    directly below it). #389 live-verified that Zeek's own DNS analyzer
+    independently hard-truncates a joined TXT-answer answers[] string at
+    exactly 4096 UTF-16 code units, with no marker anywhere in dns.log —
+    tag_oversized_dns_answer's own >8191 check can never catch this,
+    since Zeek discards the excess before Logstash ever sees it. An
+    element landing at EXACTLY 4096 is the interim, cheap detection
+    signal #389's own review round proposed: not proof of truncation (a
+    genuinely 4096-code-unit answer is possible, if unlikely), but
+    high-fidelity enough to page an analyst toward the source record's
+    true wire length. Shares elements-flattening/scalar-handling with
+    tag_oversized_dns_answer above — same shapes, same call site."""
+    answers = _nested_get(event, ["dns", "answers"])
+    if answers is None:
+        return False
+    elements = _flatten(answers) if isinstance(answers, list) else [answers]
+    return any(
+        isinstance(a, str) and _utf16_length(a) == ZEEK_TXT_TRUNCATION_LENGTH
+        for a in elements
+    )
+
+
 class FieldTruncationTaggingTests(unittest.TestCase):
     def test_short_scriptblocktext_not_tagged(self):
         event = {"winlog": {"event_data": {"ScriptBlockText": "Invoke-Something -Arg 1"}}}
@@ -655,6 +682,63 @@ class OversizedDnsAnswerTaggingTests(unittest.TestCase):
         self.assertTrue(tag_oversized_dns_answer(over))
 
 
+class DnsAnswerTruncatedByZeekTaggingTests(unittest.TestCase):
+    """#389: the interim exactly-4096-code-unit detection signal for
+    Zeek's own silent TXT-answer truncation — see tag_dns_answer_
+    truncated_by_zeek's docstring."""
+
+    def test_exactly_4096_tagged(self):
+        event = {"dns": {"answers": ["A" * ZEEK_TXT_TRUNCATION_LENGTH]}}
+        self.assertTrue(tag_dns_answer_truncated_by_zeek(event))
+
+    def test_4095_not_tagged(self):
+        event = {"dns": {"answers": ["A" * (ZEEK_TXT_TRUNCATION_LENGTH - 1)]}}
+        self.assertFalse(tag_dns_answer_truncated_by_zeek(event))
+
+    def test_4097_not_tagged(self):
+        # Not "over a ceiling" — an exact-length signal, so one past the
+        # target length is not a match either, unlike tag_oversized_dns_
+        # answer's >ceiling check.
+        event = {"dns": {"answers": ["A" * (ZEEK_TXT_TRUNCATION_LENGTH + 1)]}}
+        self.assertFalse(tag_dns_answer_truncated_by_zeek(event))
+
+    def test_short_array_not_tagged(self):
+        event = {"dns": {"answers": ["v=spf1 include:_spf.example.com ~all", "short"]}}
+        self.assertFalse(tag_dns_answer_truncated_by_zeek(event))
+
+    def test_second_element_at_length_still_tagged(self):
+        event = {"dns": {"answers": ["short-one", "B" * ZEEK_TXT_TRUNCATION_LENGTH]}}
+        self.assertTrue(tag_dns_answer_truncated_by_zeek(event))
+
+    def test_nested_array_at_length_tagged(self):
+        event = {"dns": {"answers": [["A" * ZEEK_TXT_TRUNCATION_LENGTH]]}}
+        self.assertTrue(tag_dns_answer_truncated_by_zeek(event))
+
+    def test_scalar_answers_at_length_tagged(self):
+        event = {"dns": {"answers": "C" * ZEEK_TXT_TRUNCATION_LENGTH}}
+        self.assertTrue(tag_dns_answer_truncated_by_zeek(event))
+
+    def test_no_dns_field_no_crash_no_tag(self):
+        self.assertFalse(tag_dns_answer_truncated_by_zeek({"query": "example.com"}))
+
+    def test_no_answers_field_no_crash_no_tag(self):
+        self.assertFalse(tag_dns_answer_truncated_by_zeek({"dns": {}}))
+
+    def test_non_string_scalar_answers_no_crash_no_tag(self):
+        event = {"dns": {"answers": 12345}}
+        self.assertFalse(tag_dns_answer_truncated_by_zeek(event))
+
+    def test_astral_char_boundary_utf16_units_not_code_points(self):
+        # Same UTF-16-code-unit-vs-code-point divergence as
+        # OversizedDnsAnswerTaggingTests' equivalent test: 2048 astral
+        # (surrogate-pair) chars = 4096 UTF-16 units (tagged); 2048 BMP
+        # chars = 2048 units (not tagged).
+        astral = {"dns": {"answers": ["\U0001F600" * 2048]}}
+        bmp = {"dns": {"answers": ["A" * 2048]}}
+        self.assertTrue(tag_dns_answer_truncated_by_zeek(astral))
+        self.assertFalse(tag_dns_answer_truncated_by_zeek(bmp))
+
+
 class CeilingConsistencyTests(unittest.TestCase):
     """#263 security-auditor MEDIUM: the "keep `ceiling` in lockstep with the
     template's ignore_above" invariant stated in configs/logstash.conf's
@@ -758,7 +842,14 @@ class CeilingConsistencyTests(unittest.TestCase):
                 'event.get("[dns][answers]")',
                 "answers.is_a?(Array) ? answers.flatten : [answers]",
                 'event.set("[pipeline][oversized_dns_answer]", "true")',
-                'event.tag("pipeline_oversized_dns_answer")'):
+                'event.tag("pipeline_oversized_dns_answer")',
+                # #389: the interim exactly-4096-code-unit signal for
+                # Zeek's own silent TXT-answer truncation, same
+                # renamed-or-removed-silently risk as the #352 literals
+                # above.
+                '(a.encode("UTF-16LE").bytesize / 2) == 4096',
+                'event.set("[pipeline][dns_answer_truncated_by_zeek]", "true")',
+                'event.tag("pipeline_dns_answer_truncated_by_zeek")'):
             with self.subTest(literal=literal):
                 self.assertIn(
                     literal, block,

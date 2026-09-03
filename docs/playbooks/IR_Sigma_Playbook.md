@@ -13,7 +13,7 @@ This playbook provides a structured, per-rule methodology to respond to alerts t
 IR Sigma Playbook (Endpoint & Network Alerts)
 
 ## Problem Statement
-Suburban-SOC deploys 118 Sigma detection rules across endpoint (Sysmon, Windows event channels, Linux auth/process creation) and network (Zeek) telemetry, spanning 86 MITRE ATT&CK techniques across 12 tactics (see [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md)). Every one of those alerts requires a standardized triage and containment response; a generic playbook cannot tell an analyst which fields to extract, which threat-intelligence lookups apply, or when containment may be automated. This playbook gives each deployed rule its own response procedure.
+Suburban-SOC deploys 119 Sigma detection rules across endpoint (Sysmon, Windows event channels, Linux auth/process creation) and network (Zeek) telemetry, spanning 86 MITRE ATT&CK techniques across 12 tactics (see [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md)). Every one of those alerts requires a standardized triage and containment response; a generic playbook cannot tell an analyst which fields to extract, which threat-intelligence lookups apply, or when containment may be automated. This playbook gives each deployed rule its own response procedure.
 
 ## Objectives
 - Rapidly identify and validate suspicious activities flagged by Sigma rules.
@@ -43,7 +43,7 @@ Alerts are generated natively in the Elastic Detection Engine and forwarded to t
 ## Playbook Verification
 - An alert corresponding to a managed Sigma rule fires (e.g. `proc_creation_win_lsass_dump.yml`).
 - Endpoint telemetry indicating suspicious child processes is visible in Kibana.
-- The alert's rule maps to exactly one section in this playbook (verified mechanically: 118 rules, 118 sections).
+- The alert's rule maps to exactly one section in this playbook (verified mechanically: 119 rules, 119 sections).
 
 ## Recommended Response Action(s)
 The generic actions below are superseded by the per-rule sections in Rule Response Procedures at the end of this section; they remain as the workflow-phase summary.
@@ -108,7 +108,7 @@ Rule sections inherit their family's baseline and state only deviations.
 <a id="master-detection--response-matrix"></a>
 ### Master Detection & Response Matrix
 
-One row per deployed Sigma rule (118 rows), grouped by log-source family in the same
+One row per deployed Sigma rule (119 rows), grouped by log-source family in the same
 order as the Rule Response Procedures sections below, alphabetical by rule file within
 each family. **Extracted Fields** lists the rule's own detection-block field names
 verbatim; the fuller extraction set (standard event-source fields) is in each rule's
@@ -173,6 +173,7 @@ vocabularies defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-work
 | [AS-REP Roasting — TGT Requested for an Account Without Pre-Authentication](#auth_win_asreproast_no_preauth_tgt) | T1558.004 | `EventID`, `PreAuthType`, `TargetUserName` | IP → AbuseIPDB ≥50% | Tier B (identity) — account disable on TI-confirm |
 | [Audit Policy Changed](#auth_win_audit_policy_changed) | T1562.002 | `EventID` | Internal-only | Tier B (identity) — account disable on TI-confirm |
 | [Repeated Failed Sign-Ins (Windows Security 4625)](#auth_win_bruteforce_failed_logons) | T1110 | `EventID` | IP → AbuseIPDB ≥50% | Tier B (identity) — account disable on TI-confirm |
+| [On-Host Password Spray Indicator via Failed Logons With No Real Source (Windows Security 4625)](#auth_win_bruteforce_onhost_spray) | T1110.003 | `EventID`, `IpAddress`, `TargetUserName` | Internal-only | Tier B (identity) — account disable on confirmed sweep |
 | [Password Spray Indicator via Failed Logons From a Single Source (Windows Security 4625)](#auth_win_bruteforce_source_spray) | T1110.003 | `EventID`, `IpAddress` | IP → AbuseIPDB ≥50% | Tier B (identity) — account disable on TI-confirm |
 | [DCSync — Directory Replication Rights Exercised by a Non-DC Account](#auth_win_dcsync_replication_rights_used) | T1003.006 | `EventID`, `AccessMask`, `Properties`, `SubjectUserName` | Internal-only | Tier A — auto-isolate + identity kill |
 | [Logon Attempt Against a Disabled Account](#auth_win_disabled_account_logon_attempt) | T1078.002 | `EventID`, `SubStatus`, `Status` | IP → AbuseIPDB ≥50% | Tier C — indicator block on TI-confirm |
@@ -3259,6 +3260,58 @@ Identifies failed Windows logon events. This file is deliberately single-event l
 - Perimeter-block the confirmed source; force a password reset on the account if any success followed, and review the domain lockout policy against the observed attempt rate.
 - Export the 4625/4624 slice for the account and source before index rollover — the attempt cadence is the evidence of automation.
 - Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and source host before cleanup.
+
+<a id="auth_win_bruteforce_onhost_spray"></a>
+##### On-Host Password Spray Indicator via Failed Logons With No Real Source (Windows Security 4625)
+
+**Rule file:** `rules/sigma/auth_win_bruteforce_onhost_spray.yml` · **Status:** experimental · **Severity:** medium
+
+###### 1. Rule Summary & MITRE Mapping
+
+| Attribute | Value |
+|---|---|
+| Tactic(s) | Credential Access |
+| Technique(s) | T1110.003 — Brute Force: Password Spraying |
+| Severity (`level`) | medium |
+| Data source | Winlogbeat (Windows Security) |
+| Trigger condition | Security 4625 where `IpAddress` IS one of the four no-source sentinel values (`-`, `0.0.0.0`, `::`, empty string) |
+
+Same base selection as `auth_win_bruteforce_source_spray.yml`, but the exact complement of its query: this rule selects what that one excludes. Logic-of-record for the paired Elastic threshold rule `rules/elastic/threshold/auth-win-bruteforce-onhost-spray.ndjson`, which buckets failures by `winlog.computer_name` (no real network source exists for this population) instead of `IpAddress`, and alerts when **one host accrues ≥ 6 distinct target accounts within a 5-minute window** — same cardinality shape as the source-IP sibling. Filed as #396 after review of `auth_win_bruteforce_source_spray.yml`'s own sentinel exclusion (#370) found it had silently dropped the only coverage that rule accidentally had for a genuine on-host spray — e.g. `runas`/`LogonUser()` calls from an already-landed foothold, which log 4625 with `IpAddress:"-"` too. Scored medium, not high like the sibling: an on-host spray from a foothold that already has local code execution is a post-compromise indicator, not the initial-access signal the network-sourced sibling represents.
+
+###### 2. Automated Extraction Fields
+
+| Field | Origin | Use in triage |
+|---|---|---|
+| `EventID` | rule detection block | Confirms the failed-logon event (4625) |
+| `IpAddress` | rule detection block | Confirms the event is in the no-source-sentinel population this rule scopes to (not a TI artifact — see below) |
+| `TargetUserName` | event source (standard) | Swept account — the companion counts distinct values |
+| `winlog.computer_name` | event source (standard) | Bucketing key — the host is the only real identity signal available for this population |
+| `Status`, `SubStatus` | event source (standard) | Uniform failure reason across the account set is the spray signature |
+
+###### 3. Enrichment Criteria
+
+- **Internal-only** — `IpAddress` is by construction one of the 4 no-source sentinel values, never a real address, so no external TI lookup (AbuseIPDB/VT/OTX) applies here; this is the rule's defining difference from its source-IP sibling.
+- Correlate `winlog.computer_name` against asset inventory/EDR to establish whether the host already carries an open case (this population is meaningful specifically because it implies existing local access, not a network-perimeter event).
+- The distinct-account count is the primary corroboration — a host with a genuine ≥ 6-account local sweep warrants a case regardless of TI, since there is no TI signal to check.
+
+###### 4. Containment Decision Flow
+
+**Auto-containment:** severity medium, Internal-only enrichment (no TI to auto-confirm against) → no automated action; every alert routes to analyst triage.
+**Analyst triage path** — 30-minute SLA (medium severity, post-compromise indicator rather than initial access):
+1. Verify with KQL (index `logstash-*`), counting distinct target accounts per host per 5-minute window (≥ 6 matches the companion threshold):
+   ```
+   winlog.event_id : 4625 and winlog.event_data.IpAddress : ("-" or "0.0.0.0" or "::" or "") and winlog.computer_name : "<host>"
+   ```
+2. Success pivot: `winlog.event_id : 4624 and winlog.computer_name : "<host>"` in the same window — any hit converts the indicator into a confirmed local compromise of that account.
+3. Cross-check `auth_win_bruteforce_source_spray.yml`'s own alerts for the same host/window — a host showing both is likely compromised via the network-sourced spray first, with this alert marking lateral, on-host follow-on activity.
+4. False-positive checks: a misconfigured application or service account retrying the same stale credential against several local accounts; a scheduled task or script iterating stale credentials after a credential rotation.
+**Escalation:** any success from the swept host, or corroborating EDR telemetry (new process, new scheduled task) on that host → page the IR lead and treat the host as compromised, not just suspicious.
+
+###### 5. Remediation & Evidence Preservation
+
+- Isolate the host if EDR corroborates compromise; force password resets for every swept account that shows a subsequent success on that host.
+- Export the full 4625/4624 slice for the host and window — the account list and cadence are the local-spray fingerprint, same evidentiary value as the network-sourced sibling's source-IP slice.
+- Preserve evidence per SOP-147 (`docs/SOP-147-evidence-validation-runbook.md`): SHA-256 hash all collected files/screenshots, record the UTC window and host before cleanup.
 
 <a id="auth_win_bruteforce_source_spray"></a>
 ##### Password Spray Indicator via Failed Logons From a Single Source (Windows Security 4625)
@@ -6571,7 +6624,7 @@ Detects the PutInstance operation that binds an `__EventFilter` to a consumer (`
 
 # References and Resources
 - [`docs/detections/attack-coverage.md`](../detections/attack-coverage.md) — authoritative ATT&CK coverage matrix (auto-generated from `rules/sigma/`)
-- `rules/sigma/` — the 118 deployed Sigma rules (single source of truth for endpoint/network detection logic)
+- `rules/sigma/` — the 119 deployed Sigma rules (single source of truth for endpoint/network detection logic)
 - `rules/elastic/threshold/` — Elastic threshold companion rules carrying count-over-time logic for the 8 paired detections
 - [`docs/SOP-147-evidence-validation-runbook.md`](../SOP-147-evidence-validation-runbook.md) — evidence validation runbook (SHA-256 hashing, UTC windows, tamper-evident capture)
 - Threat intelligence sources: VirusTotal, AbuseIPDB, AlienVault OTX (thresholds defined in [Standard 4-Phase IR Workflow](#standard-4-phase-ir-workflow))

@@ -5,7 +5,7 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**118 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**119 rules.** Each query is the exact Lucene the Sigma rule compiles to.
 
 ## SSH Login Attempt for a Nonexistent User
 
@@ -69,6 +69,14 @@ winlog.event_id:4719
 
 ```
 winlog.event_id:4625
+```
+
+## On-Host Password Spray Indicator via Failed Logons With No Real Source (Windows Security 4625)
+
+- **Rule:** `auth_win_bruteforce_onhost_spray.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1110.003
+
+```
+winlog.event_id:4625 AND (winlog.event_data.IpAddress:(\- OR 0.0.0.0 OR \:\: OR ""))
 ```
 
 ## Password Spray Indicator via Failed Logons From a Single Source (Windows Security 4625)

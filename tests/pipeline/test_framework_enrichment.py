@@ -371,7 +371,7 @@ class DetectionAsCodeTests(unittest.TestCase):
         # a grok-failed zeek document (invisible to every zeek Sigma rule
         # since #291) had zero visible signal. Must stamp a pipeline.*
         # field, matching this file's own pipeline.truncated/pipeline.byte_
-        # clamped/pipeline.oversized_dns_answer convention (#252/#263/#352),
+        # clamped/pipeline.oversized convention (#252/#263/#352, #390),
         # so metric_zeek_path_nomatch_count() in slo_metrics.py can measure
         # it. Scoped to the Category 0 zeek_logs branch specifically, not
         # just "does this substring appear anywhere in the file".

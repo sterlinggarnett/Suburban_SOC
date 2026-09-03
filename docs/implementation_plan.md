@@ -227,6 +227,9 @@ output.logstash:
 > [!IMPORTANT]
 > **Update (issue #192):** The deployed [winlogbeat.yml](file:///wsl$/Ubuntu/home/tjlam/projects/Suburban-SOC/configs/endpoint/winlogbeat.yml) collection scope has since been extended beyond this original proposal — Security now also collects 1102/4728/4756, System also collects 104/7040/7045, and two new channels were added (`Microsoft-Windows-WMI-Activity/Operational` 5861, `Microsoft-Windows-PowerShell/Operational` 4103/4104). See that file for the current, authoritative event ID list rather than this snippet.
 
+> [!WARNING]
+> **Gap (issue #265):** neither this snippet nor the deployed `winlogbeat.yml` sets `ssl.certificate`/`ssl.key` — only `ssl.certificate_authorities`. Now that the Logstash Beats input enforces client-cert auth (`ssl_client_authentication => required`, issue #219), any real Winlogbeat instance pointed at this stack will fail its TLS handshake (`remote error: tls: certificate required`, see the Troubleshooting table in `docs/master_pipeline_guide.md`) until #265's cert-minting/distribution work lands. This is currently harmless — no real endpoint has onboarded yet (`evidence/README.md` still records B.3 as "awaiting a live endpoint") — but don't follow this snippet to a real Windows host without #265 fixed first.
+
 #### [NEW] [filebeat_endpoint.yml](file:///wsl$/Ubuntu/home/tjlam/projects/Suburban-SOC/configs/endpoint/filebeat_endpoint.yml)
 
 Filebeat configuration for Linux endpoint monitoring:
@@ -250,6 +253,9 @@ filebeat.inputs:
 output.logstash:
   hosts: ["${LOGSTASH_HOST:localhost:5044}"]
 ```
+
+> [!WARNING]
+> **Gap (issue #265):** same missing `ssl.certificate`/`ssl.key` gap as `winlogbeat.yml` above — see that note for the current status.
 
 #### [MODIFY] [logstash.conf](file:///wsl$/Ubuntu/home/tjlam/projects/Suburban-SOC/configs/logstash.conf) — Enhanced endpoint parsing
 

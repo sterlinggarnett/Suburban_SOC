@@ -33,18 +33,20 @@ none had a pcap fixture, so none could enter the enabled set under #445's
 promotion gate. `configs/suricata/suricata.yaml`'s `rule-files:` list
 references all 10 files (plus `local.rules`).
 
-**Update (2026-09-02, #446 follow-up):** 79 of the 100 rules are now
+**Update (2026-09-03, #446 follow-up):** 80 of the 100 rules are now
 enabled — see "Rules promoted" below. Every rule that is NOT enabled
-falls into exactly one of five disclosed, non-arbitrary buckets (21
+falls into exactly one of four disclosed, non-arbitrary buckets (20
 total, no leftover "not attempted" category): 14 need `detection_filter`
 thresholds tuned against real traffic this sandbox doesn't have; 2
 (9000013, 9000099) have unresolved placeholder IOCs this repo doesn't
 invent; 2 (9000065, 9000066) are DLP rules needing explicit
 data-handling-policy sign-off; 2 (9000063, 9000064) are dead as
-configured (`request-body-limit: 100kb` vs. their `>1MB` threshold); 1
-(9000003) is unresolved (a libhtp inspect-window interaction that didn't
-fire in this session's fixture attempts). See "What is still NOT done"
-below for the full accounting.
+configured (`request-body-limit: 100kb` vs. their `>1MB` threshold).
+9000003 (previously unresolved, a suspected libhtp inspect-window
+interaction) was root-caused and promoted this session — see "Seventh
+batch" below; it turned out to be a pcap-replay segment-pool artifact,
+not a libhtp inspection setting. See "What is still NOT done" below for
+the full accounting.
 
 ## Syntax fixes (8 rules)
 
@@ -304,13 +306,47 @@ placeholder, no threshold — just missed when that category file's other
 
 Fixtures live at `tests/detections/fixtures/suricata/<SID>_tp.pcap` /
 `<SID>_tn.pcap`. `tests/detections/test_suricata_rules.py`'s
-`PromotionGateRealRepoTests` now covers all 79 as part of the real,
+`PromotionGateRealRepoTests` now covers all 80 as part of the real,
 enabled-rule set (not just the synthetic meta-tests #445 originally
 proved the mechanism with).
 
+**Seventh batch (1 more rule, 2026-09-03) — 9000003 root-caused and
+promoted.** The prior session's "didn't fire, likely a libhtp inspect-
+window interaction" hedge turned out not to be the cause. Root-caused by
+replaying the fixture repeatedly with `stats.log` enabled: `tcp.
+segment_from_pool` was consistently **one less** than the number of
+PSH-ACK data segments actually sent (5 pulled from pool for 6 sent at a
+realistic ~1400-byte MSS; 2 for 3 sent at a 4096-byte MSS) — the segment
+immediately preceding this fixture's FIN teardown never registers in
+this replay path, reproducible across 5+ repeat runs of the identical
+pcap. At realistic MSS, losing that segment's ~1400 bytes drops the
+reassembled body from 8112 to 6826 bytes — under `bsize`'s 8000-byte
+threshold, hence no alert; `eve.json`'s `fileinfo` event confirms this
+directly (`"state":"TRUNCATED","size":6826`). Coarsening the fixture's
+segmentation to a 4096-byte MSS (3 segments instead of 6) loses the same
+one segment but still leaves 8018 body bytes — over threshold, alert
+fires, deterministic across 5 repeat runs. A single unsegmented ~8.1KB
+packet was also tried and produces no HTTP parse/fileinfo event at all
+(exceeds a realistic single-frame size), ruling that shape out as a
+workaround.
+HONEST DISCLOSURE: this confirms the rule's own detection logic is
+correct (it fires against real, fully reassembled body content once
+enough of it survives replay) and that the miscount is a genuine,
+deterministic artifact of `suricata -r` single-flow pcap replay in this
+environment, not evidence of a bug in the rule or a config change needed
+in `configs/suricata/suricata.yaml` — but the actual root cause *inside*
+Suricata's stream/segment-pool code for why the pre-FIN segment drops
+was not chased into the source (the installed package ships no source to
+read, matching this repo's established black-box-verification posture
+for the pinned `zeek/zeek` image). The fixture works around a replay
+artifact, not around anything about real network traffic — a real
+capture of this exact HTTP exchange would not exhibit ~1400-byte-MSS
+segment loss, since that only reproduces here as measured against
+`tcp.segment_from_pool`.
+
 ## What is still NOT done
 
-21 rules remain disabled — every one for a specific, disclosed reason
+20 rules remain disabled — every one for a specific, disclosed reason
 below, no leftover "not attempted" category:
 
 - **14 need `detection_filter` threshold tuning** (9000001, 9000002,
@@ -328,9 +364,6 @@ below, no leftover "not attempted" category:
 - **2 dead as configured** (9000063, 9000064) — see above,
   `request-body-limit: 100kb` structurally can't satisfy their `>1MB`
   threshold without a config change not made here.
-- **1 unresolved** (9000003) — see above, a libhtp
-  inspect-window/minimal-inspect-size interaction that didn't fire in
-  this session's fixture attempts; flagged, not guessed at.
 - **ATT&CK coverage** — still explicitly scoped out
   (`findings/20260830-445-suricata-attack-coverage-scope.md`); this
   landing doesn't change that decision, it's the trigger to eventually

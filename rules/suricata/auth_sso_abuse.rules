@@ -27,7 +27,7 @@
 # reassembled HTTP body isn't one packet) — replaced with the app-layer-
 # correct `http.request_body; bsize:>8000` (same ">8000 byte body" intent,
 # msg/sid/classtype unchanged).
-#alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Abnormally Large POST to SAML Endpoint - Possible XML Injection"; flow:established,to_server; http.uri; content:"/idp/profile/SAML2"; http.request_body; bsize:>8000; classtype:web-application-attack; sid:9000003; rev:1;)
+alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Abnormally Large POST to SAML Endpoint - Possible XML Injection"; flow:established,to_server; http.uri; content:"/idp/profile/SAML2"; http.request_body; bsize:>8000; classtype:web-application-attack; sid:9000003; rev:1;)
 alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Default Credential Attempt on Login Portal"; flow:established,to_server; http.uri; content:"/cas/login"; http.request_body; content:"username=admin"; nocase; classtype:attempted-admin; sid:9000004; rev:1;)
 #alert tls $EXTERNAL_NET any -> $HOME_NET 8443 (msg:"UNIV VPN Portal Repeated TLS Connections - Possible Credential Brute Force"; flow:established; detection_filter:track by_src, count 20, seconds 60; classtype:attempted-admin; sid:9000005; rev:1;)
 alert http $EXTERNAL_NET any -> $HOME_NET 443 (msg:"UNIV Login Portal Accessed by Known Credential Stuffing Tool - OpenBullet"; flow:established,to_server; http.uri; content:"/cas/login"; http.user_agent; content:"OpenBullet"; nocase; classtype:attempted-admin; sid:9000006; rev:1;)

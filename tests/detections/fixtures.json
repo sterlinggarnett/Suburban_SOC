@@ -1809,6 +1809,16 @@
       }
     ]
   },
+  "auth_win_firewall_rule_added.yml": {
+    "true_positive": {
+      "EventID": 4946
+    },
+    "true_negatives": [
+      {
+        "EventID": 4624
+      }
+    ]
+  },
   "auth_win_sensitive_group_recon.yml": {
     "true_positive": {
       "EventID": 4661,

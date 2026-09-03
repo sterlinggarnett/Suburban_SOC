@@ -21,14 +21,15 @@ description: |
     Security review (#233) identified a THIRD option this correction missed:
     Security EventID 4946 ("a rule was added to the Windows Firewall
     exception list"), the native audit event for the policy engine itself,
-    which would fire identically regardless of whether the change came from
+    which fires identically regardless of whether the change came from
     netsh, the PowerShell cmdlet, or the GUI — closing the exact gap stated
-    above. The Security channel is already collected in this pipeline, so
-    this is a materially smaller lift than standing up EventID 2004. Not
-    implemented here: it needs its own non-default audit-policy subcategory
-    ("Audit MPSSVC Rule-Level Policy Change") and an unverified field format,
-    same class of uncertainty as this batch's other System-channel rules —
-    tracked as a follow-up rather than expanding this rule's scope.
+    above. Implemented as its own separate rule rather than folded into
+    this one (#283): auth_win_firewall_rule_added.yml, a different Sigma
+    logsource (Security channel, not process_creation) that a single
+    rule's logsource declaration can't span alongside this one. This rule
+    stays regardless — it also catches the legacy `netsh firewall add`
+    syntax and gives immediate command-line context a bare 4946 alert
+    wouldn't have.
 references:
     - https://attack.mitre.org/techniques/T1562/004/
 author: Suburban-SOC

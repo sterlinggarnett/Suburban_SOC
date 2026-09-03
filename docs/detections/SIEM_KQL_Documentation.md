@@ -5,7 +5,7 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**119 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**120 rules.** Each query is the exact Lucene the Sigma rule compiles to.
 
 ## SSH Login Attempt for a Nonexistent User
 
@@ -109,6 +109,14 @@ winlog.event_id:4625 AND ((winlog.event_data.SubStatus:(0xC0000072 OR 0xc0000072
 
 ```
 winlog.event_id:4648
+```
+
+## Firewall Rule Added via Windows Firewall Policy Engine
+
+- **Rule:** `auth_win_firewall_rule_added.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1562.004
+
+```
+winlog.event_id:4946
 ```
 
 ## Kerberoasting — RC4 Service Ticket Requested for a User SPN

@@ -1,0 +1,49 @@
+title: On-Host Password Spray Indicator via Failed Logons With No Real Source (Windows Security 4625)
+id: e5ff2de4-4acb-4581-b6e4-8158d9bc3c10
+status: experimental
+description: >
+    #396: complements auth_win_bruteforce_source_spray.yml, whose
+    #370 sentinel exclusion (IpAddress one of "-"/"0.0.0.0"/"::"/"")
+    correctly stopped local/console/service-account 4625 noise from
+    collapsing into one false severity:high "password spray" alert, but as
+    a side effect also removed the only coverage that rule accidentally
+    had for a genuine ON-HOST password spray — e.g. runas/LogonUser() API
+    calls from an already-landed foothold, which log 4625 with
+    IpAddress:"-" too, indistinguishable by IP alone from routine local
+    noise. This file selects EXACTLY the population #370 excludes (the
+    same 4 sentinel values) and is the logic-of-record for the paired
+    Elastic threshold rule (rules/elastic/threshold/auth-win-bruteforce-
+    onhost-spray.ndjson), which buckets by winlog.computer_name instead of
+    IpAddress and alerts when a single host sees >=6 distinct
+    TargetUserName failures within a 5-minute window — the same
+    cardinality shape as auth_win_bruteforce_source_spray.yml's paired
+    rule, on the host identity signal instead of the (absent) network
+    source. Deliberately status: experimental, same reason as its sibling:
+    deploy_detections.sh must not also deploy this as a noisy per-event
+    query rule — the cardinality logic only exists in the threshold
+    companion. Exact complement of auth_win_bruteforce_source_spray.yml by
+    construction (this file's filter_ip_sentinel selects what that file's
+    filter_ip_sentinel excludes) — a real 4625 event matches exactly one
+    of the two, never both and never neither.
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4625
+    filter_ip_sentinel:
+        IpAddress:
+            - '-'
+            - '0.0.0.0'
+            - '::'
+            - ''
+    condition: selection and filter_ip_sentinel
+falsepositives:
+    - A misconfigured application or service account retrying the same
+      stale credential against many local resources.
+    - A scheduled task or script iterating stale credentials against
+      several local accounts after a credential rotation.
+level: medium
+tags:
+    - attack.credential_access
+    - attack.t1110.003

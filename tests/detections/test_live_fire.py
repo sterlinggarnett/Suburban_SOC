@@ -458,7 +458,8 @@ class NetworkLiveFireTests(LiveFireTestCase):
     def test_dns_answers_over_new_8191_ceiling_is_dropped(self):
         # #352 (security-auditor follow-up): mirror-image of the test above,
         # for the CURRENT ceiling — proves the premise #352's Logstash
-        # visibility tag (pipeline.oversized_dns_answer) exists to surface:
+        # visibility tag (pipeline.oversized, generalized by #390) exists
+        # to surface:
         # a dns.answers value over 8191 chars is silently unindexed by the
         # real compiled query, exactly like the pre-#292 1024-char case,
         # just at a higher bar. 9000 chars is comfortably over 8191.

@@ -983,28 +983,28 @@ class MetricFunctionTests(unittest.TestCase):
         self.assertIn("logstash-security-*", index)
         self.assertIn({"term": {"pipeline.byte_clamped": "true"}}, query["bool"]["filter"])
 
-    # --- #352: oversized DNS answer count -----------------------------------
-    def test_oversized_dns_answer_count_raises_on_es_failure(self):
+    # --- #352 (generalized #390): oversized field count ---------------------
+    def test_oversized_field_count_raises_on_es_failure(self):
         with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
             with self.assertRaises(slo_metrics.MetricUnavailable):
-                slo_metrics.metric_oversized_dns_answer_count()
+                slo_metrics.metric_oversized_field_count()
 
-    def test_oversized_dns_answer_count_returns_count_on_success(self):
+    def test_oversized_field_count_returns_count_on_success(self):
         with mock.patch.object(slo_metrics, "es",
                                return_value=_FakeResponse(200, {"count": 3})):
-            self.assertEqual(slo_metrics.metric_oversized_dns_answer_count(), 3)
+            self.assertEqual(slo_metrics.metric_oversized_field_count(), 3)
 
-    def test_oversized_dns_answer_count_returns_zero_when_none_seen(self):
+    def test_oversized_field_count_returns_zero_when_none_seen(self):
         with mock.patch.object(slo_metrics, "es",
                                return_value=_FakeResponse(200, {"count": 0})):
-            self.assertEqual(slo_metrics.metric_oversized_dns_answer_count(), 0)
+            self.assertEqual(slo_metrics.metric_oversized_field_count(), 0)
 
-    def test_oversized_dns_answer_count_queries_pipeline_oversized_dns_answer_tag(self):
+    def test_oversized_field_count_queries_pipeline_oversized_tag(self):
         with mock.patch.object(slo_metrics, "_count", return_value=0) as mock_count:
-            slo_metrics.metric_oversized_dns_answer_count()
+            slo_metrics.metric_oversized_field_count()
         index, query = mock_count.call_args[0]
         self.assertIn("logstash-security-*", index)
-        self.assertIn({"term": {"pipeline.oversized_dns_answer": "true"}}, query["bool"]["filter"])
+        self.assertIn({"term": {"pipeline.oversized": "true"}}, query["bool"]["filter"])
 
     # --- #349: zeek path-grok nomatch count --------------------------------
     def test_zeek_path_nomatch_count_raises_on_es_failure(self):
@@ -1423,7 +1423,7 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                        ingest_lag=10.0, parse_err=0.0, audit_write_failures=0.0,
                        orphaned_claims=0.0, vanished_claims=0.0, raw_alert_volume=None,
                        field_truncation_count=0, field_byte_clamp_count=0,
-                       oversized_dns_answer_count=0, zeek_path_nomatch_count=0,
+                       oversized_field_count=0, zeek_path_nomatch_count=0,
                        capture_loss_max_pct=0.0, intel_feed_stale_heartbeats=1.0,
                        intel_indicator_count_drop_pct=0.0,
                        broker_response_tampering_count=0.0,
@@ -1455,8 +1455,8 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                            return_value=field_truncation_count),
         mock.patch.object(slo_metrics, "metric_field_byte_clamp_count",
                            return_value=field_byte_clamp_count),
-        mock.patch.object(slo_metrics, "metric_oversized_dns_answer_count",
-                           return_value=oversized_dns_answer_count),
+        mock.patch.object(slo_metrics, "metric_oversized_field_count",
+                           return_value=oversized_field_count),
         mock.patch.object(slo_metrics, "metric_zeek_path_nomatch_count",
                            return_value=zeek_path_nomatch_count),
         mock.patch.object(slo_metrics, "metric_capture_loss_percent",
@@ -1803,23 +1803,24 @@ class MainExitCodeTests(unittest.TestCase):
         ntfy_post.assert_called_once()
         self.assertIn("field_byte_clamp_count", ntfy_post.call_args.kwargs["data"].decode())
 
-    def test_oversized_dns_answer_count_never_breaches_regardless_of_value(self):
-        # #352: NO_TARGET, same reasoning as field_truncation_count/
-        # field_byte_clamp_count — no real DNS telemetry volume measured
-        # yet to justify a specific breach threshold, even though any
-        # nonzero count is worth investigating manually (possible
-        # net_zeek_dns_txt_answer_abuse.yml length-heuristic evasion).
-        # coverage pinned to the real env's SLO_COVERAGE_MIN for the same
-        # pre-existing reason as the sibling tests above.
+    def test_oversized_field_count_never_breaches_regardless_of_value(self):
+        # #352, generalized #390: NO_TARGET, same reasoning as field_
+        # truncation_count/field_byte_clamp_count — no real DNS/threat-feed
+        # telemetry volume measured yet to justify a specific breach
+        # threshold, even though any nonzero count is worth investigating
+        # manually (possible net_zeek_dns_txt_answer_abuse.yml length-
+        # heuristic evasion for a dns.answers hit). coverage pinned to the
+        # real env's SLO_COVERAGE_MIN for the same pre-existing reason as
+        # the sibling tests above.
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
-            for p in _mock_all_metrics(oversized_dns_answer_count=500, coverage=105.0):
+            for p in _mock_all_metrics(oversized_field_count=500, coverage=105.0):
                 stack.enter_context(p)
             code = _run_main_capturing_exit()
         self.assertEqual(code, 0)
 
-    def test_oversized_dns_answer_count_unmeasurable_is_never_silent(self):
-        # Regression guard: metric_oversized_dns_answer_count must actually
+    def test_oversized_field_count_unmeasurable_is_never_silent(self):
+        # Regression guard: metric_oversized_field_count must actually
         # be wired into main()'s metric_fns dict, not just defined.
         with contextlib.ExitStack() as stack, \
              mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
@@ -1827,12 +1828,12 @@ class MainExitCodeTests(unittest.TestCase):
             for p in _mock_all_metrics():
                 stack.enter_context(p)
             stack.enter_context(mock.patch.object(
-                slo_metrics, "metric_oversized_dns_answer_count",
+                slo_metrics, "metric_oversized_field_count",
                 side_effect=slo_metrics.MetricUnavailable("es down")))
             code = _run_main_capturing_exit()
         self.assertEqual(code, 3)
         ntfy_post.assert_called_once()
-        self.assertIn("oversized_dns_answer_count", ntfy_post.call_args.kwargs["data"].decode())
+        self.assertIn("oversized_field_count", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_ntfy_failure_is_swallowed_not_fatal(self):
         # A downed ntfy.sh must not crash main() or change the breach exit code.

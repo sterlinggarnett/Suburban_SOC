@@ -70,7 +70,8 @@ winlogbeat.event_logs:
   #          on by default in standard Windows security baselines, unlike
   #          most of the event IDs collected here.
   - name: Security
-    event_id: 1102, 4624, 4625, 4648, 4661, 4662, 4672, 4719, 4720, 4728, 4732, 4756, 4768, 4769, 4946
+    event_id: 1102, 4624, 4625, 4648, 4661, 4662, 4672, 4719, 4720, 4728, 4732, 4756,
+      4768, 4769, 4946
 
   # Windows System — reboots / service control manager, event-log cleared (104),
   # service start-type changes (7040), new service installs (7045). See

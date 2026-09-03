@@ -201,9 +201,11 @@ def _run_zeek_over_pcap(tmpdir: Path, pcap_name: str, out_subdir: str,
 
 class _Capture:
     """tcpdump on loopback, scoped to one TCP port — started before the real
-    exchange and stopped (SIGTERM, so it flushes the pcap) after, with a
-    short settle sleep on each side to avoid the classic capture-not-yet-
-    armed / capture-stopped-before-the-FIN race this pattern is prone to.
+    exchange and stopped after it. A short settle sleep on the start side
+    lets tcpdump arm before traffic flows; on the stop side stop() polls the
+    save file until it has settled (see that method) rather than guessing a
+    fixed delay, so neither the classic capture-not-yet-armed race nor the
+    ring-not-yet-drained race this pattern is prone to can truncate the pcap.
 
     Opening a live capture device needs CAP_NET_RAW/CAP_NET_ADMIN (or root)
     that a plain, unprivileged `tcpdump` invocation does not have on a
@@ -220,11 +222,30 @@ class _Capture:
     regression of this exact class fails loudly at the capture step itself
     instead of a confusing downstream Zeek error two steps later."""
 
+    # pcap global header (24 bytes) that tcpdump writes when it opens the save
+    # file, before any packet — a capture that recorded nothing sits at exactly
+    # this size.
+    _PCAP_HEADER_BYTES = 24
+
     def __init__(self, tmpdir: Path, pcap_name: str, port: int):
         self.pcap_path = tmpdir / pcap_name
+        # --immediate-mode: deliver each packet to tcpdump the instant it is
+        # captured, instead of through the kernel's default TPACKET_V3 ring,
+        # which only hands a block of packets up to userspace once that block
+        # fills or its per-block retirement timer expires. A sub-100ms
+        # loopback exchange never fills a block, so every block waits out its
+        # timer, and across the several retirement cycles the exchange spans
+        # (compounded by scheduler wakeups) the tail packets were observed
+        # here (#411 follow-up) landing in the save file in bursts up to ~1s
+        # AFTER the exchange already finished — so any bounded wait before
+        # stopping tcpdump could catch a truncated prefix (handshake + SMTP banner +
+        # EHLO only) and Zeek's files.log came back empty. -U still forces a
+        # per-packet write to the file once delivered; the two together make
+        # the save file track the wire in real time so stop()'s
+        # size-has-settled check below is trustworthy.
         self._proc = subprocess.Popen(
-            ["sudo", "-n", "tcpdump", "-i", "lo", "-w", str(self.pcap_path), "-U",
-             f"tcp port {port}"],
+            ["sudo", "-n", "tcpdump", "-i", "lo", "-w", str(self.pcap_path),
+             "-U", "--immediate-mode", f"tcp port {port}"],
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         time.sleep(1.0)  # let tcpdump actually attach before traffic starts
         if self._proc.poll() is not None:
@@ -236,7 +257,39 @@ class _Capture:
                 f"stderr: {stderr!r}")
 
     def stop(self):
-        time.sleep(0.5)  # let the last packet (FIN/ACK) land before we stop
+        # Wait for tcpdump to finish flushing the captured exchange to disk
+        # BEFORE terminating it, instead of a fixed sleep. Caught live (#411
+        # follow-up): a fixed `time.sleep(0.5)` here raced tcpdump's
+        # kernel-ring -> save-file drain — the exchange always reached the
+        # wire (tcpdump's own "received by filter" counted every packet,
+        # "dropped by kernel" was 0) but "packets captured" (what actually got
+        # written) was nondeterministically truncated when SIGTERM arrived
+        # before the ring was drained, so the pcap held only the TCP handshake
+        # + SMTP banner + EHLO and Zeek's files.log came back empty. This is
+        # the flaky-capture cause the SMTP test's own assertion message warned
+        # about ("or the capture/replay plumbing itself broke"). `-U` writes
+        # each packet as it is read, so the save file grows monotonically:
+        # poll its size until it has grown past the bare header AND then held
+        # steady, which means tcpdump has caught up with the (already-finished)
+        # exchange. Same condition-based-waiting fix, and same defensive
+        # spirit, as this class's tcpdump-not-yet-attached guard above.
+        deadline = time.time() + 15.0
+        last_size = -1
+        stable_since = None
+        while time.time() < deadline:
+            try:
+                size = self.pcap_path.stat().st_size
+            except FileNotFoundError:
+                size = 0
+            if size != last_size:
+                last_size = size
+                stable_since = None
+            elif size > self._PCAP_HEADER_BYTES:
+                if stable_since is None:
+                    stable_since = time.time()
+                elif time.time() - stable_since >= 0.6:
+                    break
+            time.sleep(0.05)
         still_running = self._proc.poll() is None
         self._proc.terminate()
         try:
@@ -250,11 +303,22 @@ class _Capture:
                 f"tcpdump had already exited (code {self._proc.returncode}) before the "
                 f"capture was stopped — no pcap was actually being written during the "
                 f"real exchange. stderr: {stderr!r}")
-        if not self.pcap_path.exists() or self.pcap_path.stat().st_size == 0:
+        # Reject a header-only pcap (tcpdump attached and wrote the global
+        # header but captured zero packets), not just a missing/zero-byte one
+        # — the same distinction the stop() poll above relies on — so a
+        # capture that recorded nothing fails loudly here at the capture step
+        # instead of surfacing only as the vaguer "zero files.log records"
+        # diagnostic two steps later in the Zeek replay.
+        try:
+            size = self.pcap_path.stat().st_size
+        except FileNotFoundError:
+            size = -1
+        if size <= self._PCAP_HEADER_BYTES:
             stderr = self._proc.stderr.read().decode(errors="replace") if self._proc.stderr else ""
             raise RuntimeError(
-                f"tcpdump ran but {self.pcap_path} is missing or empty after capture — "
-                f"stderr: {stderr!r}")
+                f"tcpdump ran but {self.pcap_path} captured no packets after the exchange "
+                f"(size {size} bytes, at or below the {self._PCAP_HEADER_BYTES}-byte pcap "
+                f"header) — stderr: {stderr!r}")
 
 
 class ZeekMimeDetectionLiveFireTests(unittest.TestCase):

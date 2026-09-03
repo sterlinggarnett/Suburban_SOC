@@ -168,7 +168,18 @@ same disclose-what's-real-vs-not reasons.
       Full per-rule detail in `docs/detections/suricata-starter-set.md`'s
       "Rules promoted" section.
 
-      Every one of the remaining 21 rules is now accounted for under a
+      9000003 root-caused and promoted 2026-09-03 (was a `suricata -r`
+      pcap-replay segment-pool artifact — one TCP data segment
+      immediately preceding the fixture's FIN consistently never
+      registered in `tcp.segment_from_pool`, dropping the reassembled
+      body under `bsize`'s 8000-byte threshold at a realistic ~1400-byte
+      MSS; a coarser 4096-byte MSS fixture loses the same one segment but
+      still clears the threshold, deterministic across repeat replays —
+      not a libhtp inspect-window setting after all. See
+      `docs/detections/suricata-starter-set.md`'s "Seventh batch" for the
+      full writeup). 80/100 now enabled.
+
+      Every one of the remaining 20 rules is now accounted for under a
       specific, disclosed reason — no more "not attempted" bucket: 14
       need `detection_filter` tuning against real traffic (9000001,
       9000002, 9000005, 9000008, 9000009, 9000010, 9000046, 9000060,
@@ -176,8 +187,7 @@ same disclose-what's-real-vs-not reasons.
       placeholders (9000013, 9000099); 2 DLP rules needing sign-off
       (9000065, 9000066 — 9000065 double-counts as a placeholder too); 2
       dead-as-configured (9000063, 9000064 — `request-body-limit: 100kb`
-      vs. their `>1MB` threshold); 1 unresolved (9000003 — libhtp
-      inspect-window interaction, not guessed at).
+      vs. their `>1MB` threshold).
 
 Operational to-dos (Suricata lane):
 - [ ] Deploy `suricata-host-capture.service` to a real capture host
@@ -186,11 +196,13 @@ Operational to-dos (Suricata lane):
       populates `rule.*`/`threat.technique.id` as designed
 - [ ] Tune the 14 `detection_filter` thresholds against real traffic —
       the only bucket left that's pure fixture/config work, not blocked
-      on a human decision; 79/100 enabled
+      on a human decision; 80/100 enabled
 - [ ] Decide whether to raise `request-body-limit` for 9000063/9000064 to
       actually fire, or rewrite/retire them — dead as currently authored
-- [ ] Investigate 9000003's bsize/libhtp-inspect-window interaction —
-      unresolved, not confirmed dead
+- [x] 9000003's bsize interaction — root-caused 2026-09-03: a
+      `suricata -r` pcap-replay segment-pool artifact, not a libhtp
+      inspect-window setting; fixed with a coarser-MSS fixture and
+      promoted (enabled)
 - [ ] Resolve the 3 remaining placeholders (9000013/9000065/9000099) with
       real institutional/threat-intel values before those specific rules
       are ever enabled

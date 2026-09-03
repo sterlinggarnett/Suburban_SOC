@@ -22,6 +22,11 @@ __pycache__/
 # ==== Raw Network & Log Data ====
 *.pcap
 *.pcapng
+# Suricata pcap fixtures (#445 promotion gate) ARE committed — a blanket
+# *.pcap ignore above would silently drop every one of them from git,
+# making the promotion gate's "no fixture, no enable" contract vacuous in
+# CI (the checked-out repo would have no fixture to replay against).
+!tests/detections/fixtures/suricata/*.pcap
 *.log
 *.csv
 zeek_logs/

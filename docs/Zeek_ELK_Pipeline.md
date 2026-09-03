@@ -2,6 +2,11 @@
 
 This document serves as a complete recap of everything we accomplished to build your network packet analysis lab. You successfully built a pipeline that takes raw packet captures, converts them to structured JSON logs, and ships them directly into an ELK database for visual analysis.
 
+> This is a build-history narrative — the troubleshooting notes below are
+> tied to the specific issues hit while building this pipeline. For current,
+> consolidated troubleshooting guidance, see `docs/master_pipeline_guide.md`'s
+> "Troubleshooting Quick Reference" table.
+
 ## Architecture Overview
 
 1. **Zeek (Docker):** Ingests raw `.pcap` files and outputs detailed `.log` files in JSON format.

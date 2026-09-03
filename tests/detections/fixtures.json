@@ -374,6 +374,25 @@
       }
     ]
   },
+  "auth_win_bruteforce_onhost_spray.yml": {
+    "true_positive": {
+      "EventID": 4625,
+      "TargetUserName": "jsmith",
+      "IpAddress": "-"
+    },
+    "true_negatives": [
+      {
+        "EventID": 4625,
+        "TargetUserName": "jsmith",
+        "IpAddress": "203.0.113.42"
+      },
+      {
+        "EventID": 4624,
+        "TargetUserName": "jsmith",
+        "IpAddress": "-"
+      }
+    ]
+  },
   "auth_win_bruteforce_source_spray.yml": {
     "true_positive": {
       "EventID": 4625,

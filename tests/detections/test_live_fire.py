@@ -458,7 +458,8 @@ class NetworkLiveFireTests(LiveFireTestCase):
     def test_dns_answers_over_new_8191_ceiling_is_dropped(self):
         # #352 (security-auditor follow-up): mirror-image of the test above,
         # for the CURRENT ceiling — proves the premise #352's Logstash
-        # visibility tag (pipeline.oversized_dns_answer) exists to surface:
+        # visibility tag (pipeline.oversized, generalized by #390) exists
+        # to surface:
         # a dns.answers value over 8191 chars is silently unindexed by the
         # real compiled query, exactly like the pre-#292 1024-char case,
         # just at a higher bar. 9000 chars is comfortably over 8191.
@@ -731,6 +732,22 @@ def _win_4625_base_doc() -> dict:
     return {"winlog": {"event_id": "4625", "event_data": {}}}
 
 
+def _win_4625_onhost_spray_base_doc() -> dict:
+    # #396: auth-win-bruteforce-onhost-spray.ndjson's query selects on
+    # winlog.event_data.IpAddress being one of the 4 no-source sentinels,
+    # but its threshold bucketing field is winlog.computer_name -
+    # _index_matching_doc only ever writes the threshold field (and the
+    # cardinality field, when set) into the base doc, never a query-
+    # matching field that's neither of those. Same class of override the
+    # two DNS cardinality rules' cardinality_value_for exists for (#434),
+    # here on the base_doc side instead: without this, the indexed
+    # document would have no IpAddress at all and the rule's query would
+    # never match it.
+    doc = _win_4625_base_doc()
+    doc["winlog"]["event_data"]["IpAddress"] = "-"
+    return doc
+
+
 def _win_4648_base_doc() -> dict:
     return {"winlog": {"event_id": "4648", "event_data": {}}}
 
@@ -818,6 +835,17 @@ THRESHOLD_TEST_CONFIGS = {
     "auth-win-bruteforce-failed-logons.ndjson": {
         "base_doc": lambda: _win_4625_base_doc(), "cardinality": None,
         "entity_for": _default_entity_for("failed-logons"),
+    },
+    "auth-win-bruteforce-onhost-spray.ndjson": {
+        # #396: same TargetUserName cardinality as its source-spray sibling
+        # below, bucketed on winlog.computer_name instead of winlog.
+        # event_data.IpAddress — _index_matching_doc writes the entity into
+        # rule["threshold"]["field"][0] (computer_name here) automatically,
+        # but the query-matching IpAddress sentinel needs its own base_doc
+        # (see _win_4625_onhost_spray_base_doc's own comment).
+        "base_doc": lambda: _win_4625_onhost_spray_base_doc(),
+        "cardinality": "winlog.event_data.TargetUserName",
+        "entity_for": _default_entity_for("onhost-spray"),
     },
     "auth-win-bruteforce-source-spray.ndjson": {
         "base_doc": lambda: _win_4625_base_doc(),

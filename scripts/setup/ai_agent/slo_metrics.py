@@ -44,11 +44,14 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
                                                   multi-byte content had to be defensively
                                                   clamped to avoid a Lucene immense-term
                                                   whole-document rejection
-  Oversized DNS answer count       measured    — pipeline.oversized_dns_answer over the
-                                                  window (#352), no target — a nonzero count
-                                                  means a dns.answers value over 8191 chars
-                                                  was silently dropped from the index,
-                                                  possibly evading net_zeek_dns_txt_
+  Oversized field count             measured    — pipeline.oversized over the window
+                                                  (#352, generalized #390 to related.user/
+                                                  related.hosts/threat.feed.name alongside
+                                                  dns.answers), no target — a nonzero count
+                                                  means one of those array-shaped fields was
+                                                  silently dropped from the index past its
+                                                  ignore_above ceiling; for dns.answers this
+                                                  possibly evades net_zeek_dns_txt_
                                                   answer_abuse.yml's length-heuristic rule
   Zeek path-grok nomatch count     == 0        — pipeline.zeek_path_nomatch over the
                                                   window (#349) — a nonzero count means a
@@ -223,7 +226,7 @@ BREACH_IF_NA = {"ingest_lag_seconds", "zeek_ingest_lag_seconds", "suricata_inges
 # worse than no threshold at all. Still participates in the errors/exit-3 path
 # below like every other metric — an unmeasurable value is never silently benign.
 NO_TARGET = {"raw_alert_volume", "field_truncation_count", "field_byte_clamp_count",
-             "oversized_dns_answer_count"}
+             "oversized_field_count"}
 
 
 # FAIL CLOSED (audit P1-2): verify TLS against the stack CA instead of verify=False.
@@ -1224,30 +1227,48 @@ def metric_field_byte_clamp_count():
                   {"bool": {"filter": [win, {"term": {"pipeline.byte_clamped": "true"}}]}})
 
 
-def metric_oversized_dns_answer_count():
-    """Count of pipeline.oversized_dns_answer:"true" docs in the window (#352).
+def metric_oversized_field_count():
+    """Count of pipeline.oversized:"true" docs in the window (#352,
+    generalized by #390).
 
     dns.answers (Zeek's TXT-record DNS answers, #292) is mapped
     ignore_above:8191 — unlike dns.question.name (protocol-capped at 253
     bytes, structurally unable to reach even the old 1024 default), a Zeek
     dns.log answers value has no such bound short of DNS's 65535-byte
     RDLENGTH, so a value over 8191 chars is silently dropped from the index
-    with no error and (before #352) no visibility either.
-    configs/logstash.conf's ruby filter tags
-    pipeline.oversized_dns_answer="true" when it detects this (scalar or
-    array [dns][answers], either shape); this metric turns that tag into a
-    measured rate, matching field_truncation_count/field_byte_clamp_count's
-    own precedent (#252/#263) rather than leaving the tag write-only
-    (security-auditor follow-up to #352's first draft — a tag nothing
-    queries doesn't actually deliver the "visibility" #352 asked for).
+    with no error and (before #352) no visibility either. #390 found the
+    identical blind spot in related.user/related.hosts (template-mapped
+    ignore_above:8191, but array-shaped and so invisible to the
+    field_truncation_count/field_byte_clamp_count String-only clamp
+    mechanism) and threat.feed.name (ignore_above:1024 via the
+    strings_as_keyword default) — same silent-drop failure mode, same
+    fix, generalized into one mechanism rather than a bespoke per-field
+    block.
+    configs/logstash.conf's ruby filter tags pipeline.oversized="true" +
+    pipeline.oversized_fields (the list of which of the four fields hit)
+    when it detects this (scalar or array value, either shape, on any of
+    the four); this metric turns that tag into a measured rate, matching
+    field_truncation_count/field_byte_clamp_count's own precedent
+    (#252/#263) rather than leaving the tag write-only (security-auditor
+    follow-up to #352's first draft — a tag nothing queries doesn't
+    actually deliver the "visibility" #352 asked for). Deliberately a
+    single aggregate count, not one metric per field — pipeline.
+    oversized_fields already carries the per-field breakdown for an
+    analyst drilling into a nonzero count; #390's own text is explicit
+    this generalization was the moment to avoid a metric explosion as
+    more array fields are added later.
 
     A nonzero count here has a specific analyst meaning worth acting on
-    directly, unlike the two precedent metrics above: it means
-    net_zeek_dns_txt_answer_abuse.yml's length-heuristic rule may have been
-    evaded by an answer too long for its compiled query to ever match —
-    real TXT-based C2 tools chunk payload into ~250-byte answers (UDP
-    response-size limits), so an oversized answer is itself an anomaly, not
-    organic traffic shaped this way (see that rule's own description).
+    directly for dns.answers, unlike the two precedent metrics above: it
+    means net_zeek_dns_txt_answer_abuse.yml's length-heuristic rule may
+    have been evaded by an answer too long for its compiled query to ever
+    match — real TXT-based C2 tools chunk payload into ~250-byte answers
+    (UDP response-size limits), so an oversized answer is itself an
+    anomaly, not organic traffic shaped this way (see that rule's own
+    description). related.user/related.hosts/threat.feed.name carry no
+    equivalent dedicated detection rule today — a hit there is visibility
+    only, same as field_truncation_count's own precedent for its lower-
+    ceiling fields.
 
     HONEST DISCLOSURE (tester-debugger, #352 review): a >8191-char
     dns.answers value has been live-verified as structurally unreachable
@@ -1256,27 +1277,30 @@ def metric_oversized_dns_answer_count():
     ~4096 chars, with no marker, before Elasticsearch's ignore_above ever
     gets a chance to matter (filed as #389, needs a Zeek-side fix, out of
     scope for this pipeline). This metric should read 0 in production
-    right now; that is expected, not evidence the tag/metric are dead —
-    they remain defense-in-depth against a non-Zeek dns.answers producer —
-    NOT hypothetical, the unauthenticated :5514 HTTP input this pipeline
-    exposes on soc-mesh-net can write an arbitrary [dns][answers] shape
-    today (configs/logstash.conf's own Category 0 comment) — as well as a
-    future Zeek version without this cap, or #389 being fixed in a way
-    that raises real answer lengths past 8191. See the ruby
-    filter's own comment in configs/logstash.conf (right above the
-    `if [dns][answers]` block) for the paired half of this disclosure -
+    right now for that field; that is expected, not evidence the tag/
+    metric are dead — they remain defense-in-depth against a non-Zeek
+    dns.answers producer — NOT hypothetical, the unauthenticated :5514
+    HTTP input this pipeline exposes on soc-mesh-net can write an
+    arbitrary [dns][answers] shape today (configs/logstash.conf's own
+    Category 0 comment) — as well as a future Zeek version without this
+    cap, or #389 being fixed in a way that raises real answer lengths
+    past 8191. threat.feed.name's own producer (Category 0/1's Zeek
+    intel.log rename) is live today, though real feed names are short in
+    practice (theoretical exposure, not observed). See the ruby filter's
+    own comment in configs/logstash.conf (right above the
+    `array_fields = {` block) for the paired half of this disclosure -
     the two are meant to be read together, not each a complete account
     on its own.
 
     NO_TARGET (see below), matching field_truncation_count/
-    field_byte_clamp_count's own precedent: no real DNS telemetry volume
-    has been measured through this pipeline in this environment yet, so
-    there is no data to set a breach threshold against rather than a
-    guessed one.
+    field_byte_clamp_count's own precedent: no real DNS/threat-feed
+    telemetry volume has been measured through this pipeline in this
+    environment yet, so there is no data to set a breach threshold
+    against rather than a guessed one.
     """
     win = {"range": {"@timestamp": {"gte": WINDOW}}}
     return _count("logstash-security-*",
-                  {"bool": {"filter": [win, {"term": {"pipeline.oversized_dns_answer": "true"}}]}})
+                  {"bool": {"filter": [win, {"term": {"pipeline.oversized": "true"}}]}})
 
 
 def metric_zeek_path_nomatch_count():
@@ -1663,7 +1687,7 @@ def main():
         "raw_alert_volume": metric_raw_alert_volume,
         "field_truncation_count": metric_field_truncation_count,
         "field_byte_clamp_count": metric_field_byte_clamp_count,
-        "oversized_dns_answer_count": metric_oversized_dns_answer_count,
+        "oversized_field_count": metric_oversized_field_count,
         "zeek_path_nomatch_count": metric_zeek_path_nomatch_count,
         "capture_loss_max_pct": metric_capture_loss_percent,
         "intel_feed_stale_heartbeats": metric_intel_feed_stale_heartbeats,

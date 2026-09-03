@@ -115,26 +115,24 @@ _RENAME_PAIR_RE = re.compile(r'''["']([^"']+)["']\s*=>\s*["']([^"']+)["']''')
 #     (configs/server/dataquality_dashboard.ndjson, soc_navigation_hub.
 #     ndjson both reference agent.hostname) AND a real distinct field from
 #     its source (agent.name != agent.hostname) - not a duplicate.
-#   - "[log][file][path]" => "log.file.path": NOT referenced by any
-#     dashboard (grepped configs/server/*.ndjson - zero hits, unlike the
-#     entry above). Its dotted target ALSO dot-expands to the exact same
-#     final Elasticsearch location as its own bracket-notation SOURCE
-#     ([log][file][path] -> nested log.file.path) - live-confirmed
-#     against a real Elasticsearch index: a document with both the
-#     nested and flat-dotted forms keeps BOTH keys distinct in _source
-#     (no data loss/overwrite), but the mapped field itself becomes
-#     multi-valued with the identical value indexed twice, not two
-#     genuinely different values - a harmless but genuinely redundant
-#     self-write, not a real second field. The issue's own "confirmed
-#     intentional" framing was only half right. Left in the allowlist
-#     rather than removed here (a pipeline BEHAVIOR change, out of scope
-#     for a hygiene-CHECK issue, and this test only asserts the CHECK
-#     doesn't false-positive on already-live config, not that the config
-#     itself is optimal) -
-#     tracked as a follow-up instead.
+#   - "[log][file][path]" => "log.file.path": WAS in this allowlist -
+#     NOT referenced by any dashboard (grepped configs/server/*.ndjson -
+#     zero hits, unlike the entry below). Its dotted target ALSO
+#     dot-expands to the exact same final Elasticsearch location as its
+#     own bracket-notation SOURCE ([log][file][path] -> nested
+#     log.file.path) - live-confirmed against a real Elasticsearch index:
+#     a document with both the nested and flat-dotted forms keeps BOTH
+#     keys distinct in _source (no data loss/overwrite), but the mapped
+#     field itself becomes multi-valued with the identical value indexed
+#     twice, not two genuinely different values - a harmless but
+#     genuinely redundant self-write, not a real second field. The
+#     issue's own "confirmed intentional" framing was only half right.
+#     #403 removed the copy line itself (the pipeline BEHAVIOR change
+#     this comment used to say was out of scope for #336's hygiene-CHECK
+#     issue) - this allowlist entry is removed alongside it, since the
+#     rename/copy scanner would otherwise never see this pair again.
 _RENAME_DOTTED_TARGET_ALLOWLIST = {
     ("copy", "[agent][name]", "agent.hostname"),
-    ("copy", "[log][file][path]", "log.file.path"),
 }
 
 # #290 security-auditor follow-up: a stray apostrophe inside a multi-line
@@ -373,7 +371,7 @@ class DetectionAsCodeTests(unittest.TestCase):
         # a grok-failed zeek document (invisible to every zeek Sigma rule
         # since #291) had zero visible signal. Must stamp a pipeline.*
         # field, matching this file's own pipeline.truncated/pipeline.byte_
-        # clamped/pipeline.oversized_dns_answer convention (#252/#263/#352),
+        # clamped/pipeline.oversized convention (#252/#263/#352, #390),
         # so metric_zeek_path_nomatch_count() in slo_metrics.py can measure
         # it. Scoped to the Category 0 zeek_logs branch specifically, not
         # just "does this substring appear anywhere in the file".

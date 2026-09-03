@@ -20,13 +20,13 @@
 # version(s) actually seen before relying on it (window-size fingerprints
 # drift across tool versions/OSes).
 
-#alert tcp $EXTERNAL_NET any -> $HOME_NET any (msg:"UNIV Possible Nmap Scan - Default Nmap SYN Window Size Pattern"; flow:to_server; flags:S; window:1024; classtype:attempted-recon; sid:9000081; rev:1;)
+alert tcp $EXTERNAL_NET any -> $HOME_NET any (msg:"UNIV Possible Nmap Scan - Default Nmap SYN Window Size Pattern"; flow:to_server; flags:S; window:1024; classtype:attempted-recon; sid:9000081; rev:1;)
 #alert tcp $EXTERNAL_NET any -> $HOME_NET any (msg:"UNIV High Volume of SYN Packets from Single Source - Possible Port Scan"; flow:to_server; flags:S; detection_filter:track by_src, count 50, seconds 10; classtype:attempted-recon; sid:9000082; rev:1;)
 #alert icmp $EXTERNAL_NET any -> $HOME_NET any (msg:"UNIV ICMP Sweep Detected from Single External Source"; itype:8; detection_filter:track by_src, count 30, seconds 10; classtype:attempted-recon; sid:9000083; rev:1;)
-#alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"UNIV Known Vulnerability Scanner User-Agent - Nessus"; flow:established,to_server; http.user_agent; content:"Nessus"; nocase; classtype:attempted-recon; sid:9000084; rev:1;)
-#alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"UNIV Known Vulnerability Scanner User-Agent - masscan"; flow:established,to_server; http.user_agent; content:"masscan"; nocase; classtype:attempted-recon; sid:9000085; rev:1;)
-#alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"UNIV Known Vulnerability Scanner User-Agent - Zgrab"; flow:established,to_server; http.user_agent; content:"Zgrab"; nocase; classtype:attempted-recon; sid:9000086; rev:1;)
-#alert tcp $EXTERNAL_NET any -> $HOME_NET 3306 (msg:"UNIV External Connection Attempt to MySQL Port - Should Not Be Internet Facing"; flow:established,to_server; classtype:attempted-recon; sid:9000087; rev:1;)
-#alert tcp $EXTERNAL_NET any -> $HOME_NET 1433 (msg:"UNIV External Connection Attempt to MSSQL Port - Should Not Be Internet Facing"; flow:established,to_server; classtype:attempted-recon; sid:9000088; rev:1;)
-#alert tcp $EXTERNAL_NET any -> $HOME_NET 27017 (msg:"UNIV External Connection Attempt to MongoDB Port - Should Not Be Internet Facing"; flow:established,to_server; classtype:attempted-recon; sid:9000089; rev:1;)
-#alert tcp $EXTERNAL_NET any -> $HOME_NET 6379 (msg:"UNIV External Connection Attempt to Redis Port - Should Not Be Internet Facing"; flow:established,to_server; classtype:attempted-recon; sid:9000090; rev:1;)
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"UNIV Known Vulnerability Scanner User-Agent - Nessus"; flow:established,to_server; http.user_agent; content:"Nessus"; nocase; classtype:attempted-recon; sid:9000084; rev:1;)
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"UNIV Known Vulnerability Scanner User-Agent - masscan"; flow:established,to_server; http.user_agent; content:"masscan"; nocase; classtype:attempted-recon; sid:9000085; rev:1;)
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"UNIV Known Vulnerability Scanner User-Agent - Zgrab"; flow:established,to_server; http.user_agent; content:"Zgrab"; nocase; classtype:attempted-recon; sid:9000086; rev:1;)
+alert tcp $EXTERNAL_NET any -> $HOME_NET 3306 (msg:"UNIV External Connection Attempt to MySQL Port - Should Not Be Internet Facing"; flow:established,to_server; classtype:attempted-recon; sid:9000087; rev:1;)
+alert tcp $EXTERNAL_NET any -> $HOME_NET 1433 (msg:"UNIV External Connection Attempt to MSSQL Port - Should Not Be Internet Facing"; flow:established,to_server; classtype:attempted-recon; sid:9000088; rev:1;)
+alert tcp $EXTERNAL_NET any -> $HOME_NET 27017 (msg:"UNIV External Connection Attempt to MongoDB Port - Should Not Be Internet Facing"; flow:established,to_server; classtype:attempted-recon; sid:9000089; rev:1;)
+alert tcp $EXTERNAL_NET any -> $HOME_NET 6379 (msg:"UNIV External Connection Attempt to Redis Port - Should Not Be Internet Facing"; flow:established,to_server; classtype:attempted-recon; sid:9000090; rev:1;)

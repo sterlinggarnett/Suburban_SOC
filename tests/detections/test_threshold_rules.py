@@ -56,6 +56,7 @@ def _minutes(value: str) -> int:
 # none of its tests vary event age relative to the window boundary).
 DETECTION_WINDOW_MINUTES = {
     "auth-win-bruteforce-failed-logons.ndjson": 5,
+    "auth-win-bruteforce-onhost-spray.ndjson": 5,
     "auth-win-bruteforce-source-spray.ndjson": 5,
     "auth-win-explicit-cred-account-sweep.ndjson": 5,
     "disc-win-domain-group-discovery-repeat.ndjson": 10,
@@ -207,6 +208,48 @@ class ThresholdRuleTests(unittest.TestCase):
         for sentinel in ("-", "0.0.0.0", "::", '""'):
             self.assertIn(sentinel, unescaped_query,
                            f"{path.name}: query must exclude IpAddress sentinel {sentinel!r}")
+
+    def test_bruteforce_onhost_spray_includes_all_four_ip_sentinels(self):
+        # #396: the mirror-image regression guard of the test above - this
+        # rule exists specifically to bucket the population #370 excluded
+        # from auth-win-bruteforce-source-spray.ndjson (on-host password
+        # spray with no real network source), so its query must SELECT
+        # exactly those 4 sentinel values, not exclude them. Same
+        # unescape-then-check approach as the sibling test, for the same
+        # reason (don't re-pin the escaping convention here).
+        path = THRESHOLD_DIR / "auth-win-bruteforce-onhost-spray.ndjson"
+        rule = load_ndjson(path)[0]
+        unescaped_query = rule["query"].replace("\\", "")
+        for sentinel in ("-", "0.0.0.0", "::", '""'):
+            self.assertIn(sentinel, unescaped_query,
+                           f"{path.name}: query must include IpAddress sentinel {sentinel!r}")
+
+    def test_onhost_spray_is_exact_complement_of_source_spray(self):
+        # #396's own explicit acceptance criterion: "verify no double-
+        # counting/duplicate-alert overlap with the existing rule (they
+        # should now be exact complements: real-source-IP events vs.
+        # sentinel-only events, never both)". Both queries share the same
+        # base selection (winlog.event_id:4625) and the identical sentinel
+        # clause, differing only in NOT - so a real 4625 event's IpAddress
+        # is either one of the 4 sentinels (matches onhost-spray only) or
+        # it isn't (matches source-spray only), never both, never neither.
+        # This is a structural proof from the two queries' own text, not a
+        # live-fire proof against real documents - #443/#444-class live
+        # verification (a real Elasticsearch + real 4625 documents) is
+        # outside what this sandbox can run; see this PR's own test-plan
+        # disclosure for that limitation.
+        source = load_ndjson(THRESHOLD_DIR / "auth-win-bruteforce-source-spray.ndjson")[0]
+        onhost = load_ndjson(THRESHOLD_DIR / "auth-win-bruteforce-onhost-spray.ndjson")[0]
+        prefix = "winlog.event_id:4625 AND ("
+        self.assertTrue(onhost["query"].startswith(prefix) and onhost["query"].endswith(")"),
+                         f"auth-win-bruteforce-onhost-spray.ndjson: unexpected query shape {onhost['query']!r}")
+        inner = onhost["query"][len(prefix):-1]
+        expected_source_query = f"{prefix}NOT ({inner}))"
+        self.assertEqual(source["query"], expected_source_query,
+                          "auth-win-bruteforce-source-spray.ndjson and auth-win-bruteforce-onhost-spray.ndjson "
+                          "have drifted apart - they must stay exact NOT-complements of each other "
+                          "(same base selection, same sentinel clause, opposite polarity) or a real "
+                          "4625 event could match both rules (duplicate alerts) or neither (a coverage gap)")
 
     def test_lookback_guarantees_full_containment_of_the_documented_detection_window(self):
         # #393 (security-auditor finding on the fix's own review): nothing

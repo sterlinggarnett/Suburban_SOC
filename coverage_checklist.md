@@ -148,22 +148,57 @@ same disclose-what's-real-vs-not reasons.
       repo's own never-invent-an-IOC convention. Full reconciliation
       against existing Sigma coverage, genuine-gap inventory, and DLP
       sign-off flag in `docs/detections/suricata-starter-set.md`.
+- [x] **#446 follow-up (2026-09-01/02)** — 79 of the 100 rules promoted
+      to enabled across 6 batches: each got a real, verified pcap fixture
+      (`suricata -r` replay against real Suricata 7.0.3 + real
+      `scapy`-built packets, not a hand-authored pcap taken on faith).
+      Batch 1 (11): 9000049, 9000051, 9000052, 9000091-9000098. Batch 2
+      (20): 9000021-9000040 (web_lms_attacks + web_shell_compromise).
+      Batch 3 (31): 9000041, 9000042, 9000047, 9000048, 9000050,
+      9000053-9000059, 9000061, 9000068-9000072, 9000075-9000079,
+      9000081, 9000084-9000090. Batch 4 (3): 9000004, 9000006, 9000007.
+      Batch 5 (9): 9000011, 9000012, 9000014-9000020 (phishing_email.rules
+      — SMTP-protocol rules, each fixture a full scapy-built SMTP
+      session). Batch 6 (5): 9000043-9000045 (SMB — scapy's full SMB2
+      layer support, Negotiate/Session-Setup/Tree-Connect/Create, plus a
+      Write+Close since `file.name` is a file-tracking buffer that a bare
+      Create doesn't populate), 9000067 (FTP-data — hand-built control
+      channel + correlated PASV data channel, no scapy FTP layer needed),
+      9000074 (SSH — plain-text banner exchange, simplest of the three).
+      Full per-rule detail in `docs/detections/suricata-starter-set.md`'s
+      "Rules promoted" section.
+
+      Every one of the remaining 21 rules is now accounted for under a
+      specific, disclosed reason — no more "not attempted" bucket: 14
+      need `detection_filter` tuning against real traffic (9000001,
+      9000002, 9000005, 9000008, 9000009, 9000010, 9000046, 9000060,
+      9000062, 9000073, 9000080, 9000082, 9000083, 9000100); 2 unresolved
+      placeholders (9000013, 9000099); 2 DLP rules needing sign-off
+      (9000065, 9000066 — 9000065 double-counts as a placeholder too); 2
+      dead-as-configured (9000063, 9000064 — `request-body-limit: 100kb`
+      vs. their `>1MB` threshold); 1 unresolved (9000003 — libhtp
+      inspect-window interaction, not guessed at).
 
 Operational to-dos (Suricata lane):
 - [ ] Deploy `suricata-host-capture.service` to a real capture host
       alongside Zeek; measure CPU headroom
 - [ ] Confirm Filebeat ships `eve.json` and Logstash's Category 0b branch
       populates `rule.*`/`threat.technique.id` as designed
-- [ ] Per-rule pcap fixtures — nothing enters the enabled set without one
-      (#445's promotion gate)
+- [ ] Tune the 14 `detection_filter` thresholds against real traffic —
+      the only bucket left that's pure fixture/config work, not blocked
+      on a human decision; 79/100 enabled
+- [ ] Decide whether to raise `request-body-limit` for 9000063/9000064 to
+      actually fire, or rewrite/retire them — dead as currently authored
+- [ ] Investigate 9000003's bsize/libhtp-inspect-window interaction —
+      unresolved, not confirmed dead
 - [ ] Resolve the 3 remaining placeholders (9000013/9000065/9000099) with
       real institutional/threat-intel values before those specific rules
       are ever enabled
 - [ ] Obtain explicit data-handling-policy owner sign-off before enabling
       the DLP rules (9000065/9000066)
-- [ ] Tune every `detection_filter` count/seconds value against measured
-      traffic — the shipped values are the source's own illustrative
-      defaults, not a baseline for this deployment
+- [ ] Tune every remaining `detection_filter` count/seconds value against
+      measured traffic — the shipped values are the source's own
+      illustrative defaults, not a baseline for this deployment
 
 ## Global
 - [ ] `python3 tests/validate_emulation_map.py` returns 0 fail

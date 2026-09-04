@@ -4336,8 +4336,13 @@ without a companion doc/board/wiki pass, so this one reconciled all three.
   unless `ALLOW_REVIEW_DOWNGRADE=1`, boolean flags validated (bad value =
   error, not "off"), branch/repo regex-validated, post-PUT read-back that
   fails if a required check is missing, and a deploy-changelog row per
-  run. New `tests/setup/test_setup_branch_protection.py` drives the real
-  script through a fake `gh` shim (12 cases) and runs in CI's
+  run. A second review round (security-auditor re-audit + code-reviewer)
+  added: push restrictions with empty actor lists preserved rather than
+  nulled, the older `contexts`-only response shape carried forward, the
+  read-back compares every intended field and pin (not just check names),
+  `GH_REPO` validated like the branch, and the deploy-changelog hook
+  tested. `tests/setup/test_setup_branch_protection.py` drives the real
+  script through a fake `gh` shim (30 cases) and runs in CI's
   setup-script step. PR left for the owner to merge — security-control
   change, outside the standing self-merge bypass.
 

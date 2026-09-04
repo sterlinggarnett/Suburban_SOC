@@ -15,8 +15,9 @@ follow-up hardening promise:
 * push restrictions and the boolean sub-policies a full PUT would reset are
   carried forward from the live object;
 * only an HTTP 404 bootstraps from nothing — any other read failure aborts
-  before the PUT; flag values and the branch name are validated; a read-back
-  that lost a required check is a failure, not a success banner.
+  before the PUT; flag values, the branch name and the repo slug are
+  validated; a read-back that lost a required check, a pin, or any other
+  intended field is a failure, not a success banner.
 
 Needs ``bash`` and ``jq`` on PATH (both present on ubuntu-latest and the
 lab hosts); the test skips itself otherwise.
@@ -59,14 +60,23 @@ if [[ "${1:-}" == "api" && "${2:-}" == "-X" && "${3:-}" == "PUT" ]]; then
 fi
 if [[ "${1:-}" == "api" ]]; then
   if [[ -s "$FAKE_GH_PUT" ]]; then
-    jq --argjson drop "${FAKE_GH_READBACK_DROP:-0}" '{
+    # read-back synthesised from the PUT, in GitHub's GET shape; FAKE_GH_READBACK_DROP
+    # drops the last check and FAKE_GH_READBACK_TAMPER=<key> flips one boolean, so the
+    # script's read-back comparison has something real to catch
+    jq --argjson drop "${FAKE_GH_READBACK_DROP:-0}" --arg tamper "${FAKE_GH_READBACK_TAMPER:-}" '{
       required_status_checks: {strict: .required_status_checks.strict,
         checks: (.required_status_checks.checks | if $drop == 1 then .[:-1] else . end)},
-      enforce_admins: {enabled: .enforce_admins},
+      enforce_admins: {enabled: (if $tamper == "enforce_admins" then false else .enforce_admins end)},
+      allow_force_pushes: {enabled: (if $tamper == "allow_force_pushes" then true else .allow_force_pushes end)},
+      allow_deletions: {enabled: .allow_deletions},
       required_pull_request_reviews: .required_pull_request_reviews,
       restrictions: (if .restrictions == null then null else
         {users: [.restrictions.users[] | {login: .}], teams: [.restrictions.teams[] | {slug: .}], apps: [.restrictions.apps[] | {slug: .}]} end),
-      required_linear_history: {enabled: .required_linear_history}}' "$FAKE_GH_PUT"
+      required_linear_history: {enabled: .required_linear_history},
+      required_conversation_resolution: {enabled: .required_conversation_resolution},
+      block_creations: {enabled: .block_creations},
+      lock_branch: {enabled: .lock_branch},
+      allow_fork_syncing: {enabled: .allow_fork_syncing}}' "$FAKE_GH_PUT"
     exit 0
   fi
   case "${FAKE_GH_GET_MODE:-ok}" in
@@ -108,7 +118,7 @@ def _live(**overrides):
     return base
 
 
-def run(tmp_path: Path, live=None, env=None, mode="ok", branch="main", readback_drop=False):
+def run(tmp_path: Path, live=None, env=None, mode="ok", branch="main", readback_drop=False, tamper="", script=SCRIPT):
     shim = tmp_path / "bin"
     shim.mkdir()
     gh = shim / "gh"
@@ -127,6 +137,7 @@ def run(tmp_path: Path, live=None, env=None, mode="ok", branch="main", readback_
         "FAKE_GH_CALLS": str(calls),
         "FAKE_GH_GET_MODE": mode,
         "FAKE_GH_READBACK_DROP": "1" if readback_drop else "0",
+        "FAKE_GH_READBACK_TAMPER": tamper,
         "GH_REPO": "example/repo",
         "SKIP_CHANGELOG": "1",
     }
@@ -134,7 +145,7 @@ def run(tmp_path: Path, live=None, env=None, mode="ok", branch="main", readback_
         e.pop(k, None)
     e.update(env or {})
     proc = subprocess.run(
-        ["bash", str(SCRIPT), branch], env=e, capture_output=True, text=True, timeout=60
+        ["bash", str(script), branch], env=e, capture_output=True, text=True, timeout=60
     )
     payload = json.loads(put_file.read_text()) if put_file.exists() and put_file.stat().st_size else None
     return proc, payload, calls.read_text()
@@ -188,6 +199,7 @@ class TestReviewGate:
         "required_approving_review_count": 2,
         "require_last_push_approval": False,
         "dismissal_restrictions": {"users": [{"login": "alice"}], "teams": [], "apps": []},
+        "bypass_pull_request_allowances": {"users": [], "teams": [{"slug": "release-managers"}], "apps": []},
     }
 
     def test_live_review_gate_is_preserved_by_default(self, tmp_path):
@@ -197,6 +209,7 @@ class TestReviewGate:
         assert rev["required_approving_review_count"] == 2
         assert rev["require_code_owner_reviews"] is True
         assert rev["dismissal_restrictions"] == {"users": ["alice"], "teams": [], "apps": []}
+        assert rev["bypass_pull_request_allowances"] == {"users": [], "teams": ["release-managers"], "apps": []}
 
     def test_live_review_gate_removed_only_with_explicit_downgrade(self, tmp_path):
         proc, payload, _ = run(
@@ -225,6 +238,42 @@ class TestReviewGate:
         assert rev["require_code_owner_reviews"] is True
 
 
+class TestLiveShapes:
+    """Response shapes GitHub can return that a naive jq program mishandles."""
+
+    def test_restrictions_with_empty_actor_lists_are_preserved_not_nulled(self, tmp_path):
+        live = _live(restrictions={"url": "https://api/x", "users_url": "u", "teams_url": "t", "apps_url": "a",
+                                   "users": [], "teams": [], "apps": []})
+        proc, payload, _ = run(tmp_path, live)
+        assert proc.returncode == 0, proc.stderr
+        assert payload["restrictions"] == {"users": [], "teams": [], "apps": []}, "empty lists are a policy, not absence"
+
+    def test_dismissal_restrictions_with_only_url_fields_are_omitted(self, tmp_path):
+        gate = {"required_approving_review_count": 1, "dismiss_stale_reviews": True,
+                "dismissal_restrictions": {"url": "https://api/x", "users_url": "u", "teams_url": "t"}}
+        proc, payload, _ = run(tmp_path, _live(required_pull_request_reviews=gate))
+        assert proc.returncode == 0, proc.stderr
+        rev = payload["required_pull_request_reviews"]
+        assert rev["required_approving_review_count"] == 1
+        assert "dismissal_restrictions" not in rev, "an empty dismissal list means off; do not send one"
+
+    def test_legacy_contexts_only_shape_keeps_live_checks_unpinned(self, tmp_path):
+        live = _live()
+        live["required_status_checks"] = {"strict": True, "contexts": ["old-scanner", "detections"]}
+        proc, payload, _ = run(tmp_path, live)
+        assert proc.returncode == 0, proc.stderr
+        checks = {c["context"]: c for c in payload["required_status_checks"]["checks"]}
+        assert set(checks) == set(SCRIPT_CHECKS) | {"old-scanner"}
+        assert "app_id" not in checks["old-scanner"]
+        assert checks["detections"]["app_id"] == ACTIONS_APP, "an unpinned live check that is one of ours gets pinned"
+
+    def test_protection_present_but_without_status_checks_bootstraps_them(self, tmp_path):
+        proc, payload, _ = run(tmp_path, {"enforce_admins": {"enabled": True}})
+        assert proc.returncode == 0, proc.stderr
+        assert _contexts(payload) == set(SCRIPT_CHECKS)
+        assert payload["restrictions"] is None and payload["required_pull_request_reviews"] is None
+
+
 class TestCarryForward:
     def test_restrictions_and_boolean_subpolicies_survive_the_full_put(self, tmp_path):
         live = _live(
@@ -232,6 +281,7 @@ class TestCarryForward:
             required_linear_history={"enabled": True},
             required_conversation_resolution={"enabled": True},
             lock_branch={"enabled": True},
+            allow_fork_syncing={"enabled": True},
         )
         proc, payload, _ = run(tmp_path, live)
         assert proc.returncode == 0, proc.stderr
@@ -239,6 +289,7 @@ class TestCarryForward:
         assert payload["required_linear_history"] is True
         assert payload["required_conversation_resolution"] is True
         assert payload["lock_branch"] is True
+        assert payload["allow_fork_syncing"] is True
         assert payload["block_creations"] is False
 
 
@@ -252,8 +303,21 @@ class TestFailClosed:
     def test_readback_missing_a_required_check_is_a_failure(self, tmp_path):
         proc, payload, _ = run(tmp_path, _live(), readback_drop=True)
         assert proc.returncode == 1
-        assert "read-back after PUT is missing required checks" in proc.stderr
+        assert "does not match the intended policy" in proc.stderr and "required checks missing" in proc.stderr
         assert "Done." not in proc.stdout
+
+    @pytest.mark.parametrize("tamper", ["enforce_admins", "allow_force_pushes"])
+    def test_readback_with_a_policy_field_not_applied_is_a_failure(self, tmp_path, tamper):
+        proc, payload, _ = run(tmp_path, _live(), tamper=tamper)
+        assert proc.returncode == 1
+        assert "does not match the intended policy" in proc.stderr and tamper in proc.stderr
+        assert "Done." not in proc.stdout
+
+    @pytest.mark.parametrize("slug", ["voltron-1/..", "onlyowner", "a/b/c", "a b/c", "a/b?x=1"])
+    def test_unsafe_repo_slug_is_rejected_before_any_api_call(self, tmp_path, slug):
+        proc, payload, calls = run(tmp_path, env={"GH_REPO": slug})
+        assert proc.returncode == 2
+        assert payload is None and calls == ""
 
     @pytest.mark.parametrize("value", ["maybe", "01", "1 ", "yes\r"])
     def test_non_boolean_flag_values_are_rejected_not_treated_as_off(self, tmp_path, value):
@@ -266,3 +330,34 @@ class TestFailClosed:
         proc, payload, calls = run(tmp_path, branch=branch)
         assert proc.returncode == 2
         assert payload is None and calls == ""
+
+
+class TestChangelogHook:
+    """The deploy-changelog call is the SOP-007 evidence trail; it must fire on a
+    real run and must not turn a successfully applied policy into a failure."""
+
+    def _copy_with_stub(self, tmp_path: Path, stub_body: str):
+        d = tmp_path / "scripts"
+        d.mkdir()
+        copy = d / "setup_branch_protection.sh"
+        copy.write_text(SCRIPT.read_text())
+        stub = d / "deploy_changelog.sh"
+        stub.write_text(stub_body)
+        stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+        return copy
+
+    def test_changelog_is_recorded_with_component_and_live_summary(self, tmp_path):
+        rec = tmp_path / "changelog-args.txt"
+        copy = self._copy_with_stub(tmp_path, f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "{rec}"\n')
+        proc, payload, _ = run(tmp_path, _live(), env={"SKIP_CHANGELOG": "0"}, script=copy)
+        assert proc.returncode == 0, proc.stderr
+        args = rec.read_text().splitlines()
+        assert args[0] == "branch-protection (example/repo@main)"
+        assert args[1].startswith("checks=") and "enforce_admins=true" in args[1] and "review_gate=off" in args[1]
+
+    def test_changelog_failure_does_not_fail_an_applied_policy(self, tmp_path):
+        copy = self._copy_with_stub(tmp_path, "#!/usr/bin/env bash\nexit 1\n")
+        proc, payload, _ = run(tmp_path, _live(), env={"SKIP_CHANGELOG": "0"}, script=copy)
+        assert proc.returncode == 0, proc.stderr
+        assert payload is not None
+        assert "deploy-changelog entry failed" in proc.stderr and "Done." in proc.stdout

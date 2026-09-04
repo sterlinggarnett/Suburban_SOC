@@ -38,7 +38,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Both values are interpolated into the API path — allow only ref-safe chars.
 [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]{1,244}$ && "$BRANCH" != *..* && "$BRANCH" != /* && "$BRANCH" != -* ]] \
   || { echo "!! invalid branch name: '$BRANCH'" >&2; exit 2; }
-[[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "!! invalid GH_REPO: '$REPO'" >&2; exit 2; }
+[[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$REPO" != *..* ]] || { echo "!! invalid GH_REPO: '$REPO'" >&2; exit 2; }
 
 bool_flag() {  # <name> <value> -> prints 1/0; anything else is an error, not "off"
   case "${2,,}" in
@@ -47,6 +47,8 @@ bool_flag() {  # <name> <value> -> prints 1/0; anything else is an error, not "o
     *) echo "!! $1='$2' is not a boolean (use 1 or 0)" >&2; exit 2 ;;
   esac
 }
+# NB: keep these as bare assignments — `local`/`export`/`declare` would mask the
+# subshell's exit 2 and turn a bad value into "off".
 want_review=$(bool_flag REQUIRE_REVIEW "${REQUIRE_REVIEW:-0}")
 allow_downgrade=$(bool_flag ALLOW_REVIEW_DOWNGRADE "${ALLOW_REVIEW_DOWNGRADE:-0}")
 skip_changelog=$(bool_flag SKIP_CHANGELOG "${SKIP_CHANGELOG:-0}")
@@ -105,9 +107,15 @@ payload=$(printf '%s\n' "${REQUIRED_CHECKS[@]}" | jq -R . | jq -s \
   . as $mine
   | ($live.required_status_checks.checks // []) as $live_checks
   | ($live_checks | map(.context)) as $live_names
-  # live checks keep their pin (or stay unpinned if they were); new ones are pinned to Actions
-  | ( ($live_checks | map(if .app_id == null then {context: .context} else {context: .context, app_id: .app_id} end))
-      + ([$mine[] | select(. as $c | ($live_names | index($c)) == null)] | map({context: ., app_id: $actions_app}))
+  # older response shape: `contexts` only, no `checks` — keep those too, unpinned as they were
+  | (($live.required_status_checks.contexts // []) - $live_names) as $legacy_only
+  # live checks keep their pin; an unpinned live check that is one of ours gets the Actions
+  # pin (tightening); unknown unpinned ones stay as they were; new ones are pinned to Actions
+  | ( ($live_checks | map(if .app_id != null then {context: .context, app_id: .app_id}
+                          elif (. as $c | $mine | index($c.context)) != null then {context: .context, app_id: $actions_app}
+                          else {context: .context} end))
+      + ($legacy_only | map(if (. as $c | $mine | index($c)) != null then {context: ., app_id: $actions_app} else {context: .} end))
+      + ([$mine[] | select(. as $c | (($live_names + $legacy_only) | index($c)) == null)] | map({context: ., app_id: $actions_app}))
     ) as $checks
   | ($live.required_pull_request_reviews) as $live_rev
   | ( if $want_review == 1 then
@@ -121,7 +129,9 @@ payload=$(printf '%s\n' "${REQUIRED_CHECKS[@]}" | jq -R . | jq -s \
       required_status_checks: { strict: true, checks: ($checks | sort_by(.context)) },
       enforce_admins: true,
       required_pull_request_reviews: $reviews,
-      restrictions: (if nonempty($live.restrictions) then slugs($live.restrictions) else null end),
+      # presence-based on purpose: a restrictions object with empty actor lists is a
+      # valid (stricter) policy, unlike dismissal/bypass lists where empty means off
+      restrictions: (if $live.restrictions != null then slugs($live.restrictions) else null end),
       required_linear_history:          ($live.required_linear_history.enabled // false),
       required_conversation_resolution: ($live.required_conversation_resolution.enabled // false),
       block_creations:                  ($live.block_creations.enabled // false),
@@ -140,13 +150,36 @@ fi
 gh api -X PUT "repos/$REPO/branches/$BRANCH/protection" \
   -H 'Accept: application/vnd.github+json' --input - <<<"$payload" >/dev/null
 
-# --- 4. Read back and refuse to claim success if a required check is missing.
+# --- 4. Read back and compare the applied policy with the intent — not just the
+#        check names: strict, enforce_admins, force-push/deletion, review gate,
+#        restrictions, the carried booleans, and each pin we sent.
 after=$(gh api "repos/$REPO/branches/$BRANCH/protection")
-wanted=$(jq -c '.required_status_checks.checks | map(.context)' <<<"$payload")
-missing=$(jq -r --argjson want "$wanted" \
-  '($want - ((.required_status_checks.checks // []) | map(.context))) | join(", ")' <<<"$after")
-if [[ -n "$missing" ]]; then
-  echo "!! read-back after PUT is missing required checks: $missing" >&2
+intent=$(jq -c '{
+    checks: (.required_status_checks.checks | map({context: .context, app_id: (.app_id // "any")}) | sort_by(.context)),
+    strict: .required_status_checks.strict, enforce_admins: .enforce_admins,
+    allow_force_pushes: .allow_force_pushes, allow_deletions: .allow_deletions,
+    review_count: (if .required_pull_request_reviews == null then null else .required_pull_request_reviews.required_approving_review_count end),
+    restrictions: (if .restrictions == null then null else {users: (.restrictions.users | sort), teams: (.restrictions.teams | sort), apps: (.restrictions.apps | sort)} end),
+    required_linear_history: .required_linear_history, required_conversation_resolution: .required_conversation_resolution,
+    block_creations: .block_creations, lock_branch: .lock_branch, allow_fork_syncing: .allow_fork_syncing }' <<<"$payload")
+drift=$(jq -r --argjson want "$intent" '
+  { checks: ((.required_status_checks.checks // []) | map({context: .context, app_id: (.app_id // "any")})),
+    strict: .required_status_checks.strict, enforce_admins: .enforce_admins.enabled,
+    allow_force_pushes: (.allow_force_pushes.enabled // false), allow_deletions: (.allow_deletions.enabled // false),
+    review_count: (if .required_pull_request_reviews == null then null else .required_pull_request_reviews.required_approving_review_count end),
+    restrictions: (if .restrictions == null then null else {users: ([.restrictions.users[]? | .login] | sort), teams: ([.restrictions.teams[]? | .slug] | sort), apps: ([.restrictions.apps[]? | .slug] | sort)} end),
+    required_linear_history: (.required_linear_history.enabled // false), required_conversation_resolution: (.required_conversation_resolution.enabled // false),
+    block_creations: (.block_creations.enabled // false), lock_branch: (.lock_branch.enabled // false), allow_fork_syncing: (.allow_fork_syncing.enabled // false) } as $after
+  | ([ $want | to_entries[] | select(.key != "checks") | select(.value != $after[.key]) | .key ]) as $fields
+  | (($want.checks | map(.context)) - ($after.checks | map(.context))) as $missing
+  | ([ $want.checks[] | select(.app_id != "any") | . as $w
+       | select(([$after.checks[] | select(.context == $w.context) | .app_id] | first) != $w.app_id) | .context ]) as $unpinned
+  | (if ($fields | length) > 0 then "fields not applied: " + ($fields | join(", ")) else empty end),
+    (if ($missing | length) > 0 then "required checks missing: " + ($missing | join(", ")) else empty end),
+    (if ($unpinned | length) > 0 then "app pin not applied: " + ($unpinned | join(", ")) else empty end)' <<<"$after")
+if [[ -n "$drift" ]]; then
+  echo "!! read-back after PUT does not match the intended policy:" >&2
+  while IFS= read -r line; do echo "   $line" >&2; done <<<"$drift"
   exit 1
 fi
 summary=$(jq -r '

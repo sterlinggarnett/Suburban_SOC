@@ -4285,10 +4285,11 @@ without a companion doc/board/wiki pass, so this one reconciled all three.
   list endpoint still reported 281 at check time). End state 282 items:
   every closed issue in Done, the 11 open issues in Backlog (10) or In
   progress (#522 → then closed). Nine GitHub milestone *objects* whose
-  issues are all closed (M11–M14, M19–M22, M24) are still `open` on
+  issues were all closed (M11–M14, M19–M22, M24) were still `open` on
   GitHub — the milestone-close API call was blocked by this session's
-  permission classifier, so that's left for the owner (one `gh api -X
-  PATCH repos/voltron-1/Suburban_SOC/milestones/<n> -f state=closed` each).
+  permission classifier, so the owner ran the `PATCH … state=closed`
+  loop by hand the same day. All nine verified closed; the five still
+  open (M16, M17, M18, M23, M25) are exactly the ones with open issues.
 - **Wiki (#522, closed).** Commit-Approach — the last of the six
   Watcher-era pages — rewritten from the capstone "Delegated Commits /
   merge-to-main / single Project Lead" model to the real workflow: PR-only

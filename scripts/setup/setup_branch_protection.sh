@@ -42,9 +42,21 @@ REQUIRED_CHECKS=(
 echo "==> Enforcing branch protection on '$BRANCH' (requires admin)"
 
 # Union with the live required list so a stale copy of this script can never
-# weaken the policy. A 404 (branch not yet protected) yields an empty list.
-live_contexts=$(gh api "repos/:owner/:repo/branches/$BRANCH/protection" \
-  --jq '.required_status_checks.contexts // []' 2>/dev/null || echo '[]')
+# weaken the policy. Only a 404 (branch not yet protected) yields an empty
+# list; any other read failure (auth, rate limit, network) aborts rather than
+# being mistaken for "first run".
+errf=$(mktemp); trap 'rm -f "$errf"' EXIT
+if ! live_contexts=$(gh api "repos/:owner/:repo/branches/$BRANCH/protection" \
+    --jq '.required_status_checks.contexts // []' 2>"$errf"); then
+  if grep -q 'HTTP 404' "$errf"; then
+    live_contexts='[]'
+  else
+    echo "!! could not read the live policy for '$BRANCH' — aborting so a transient" >&2
+    echo "   error is not mistaken for an unprotected branch:" >&2
+    cat "$errf" >&2
+    exit 1
+  fi
+fi
 contexts=$(printf '%s\n' "${REQUIRED_CHECKS[@]}" | jq -R . \
   | jq -s --argjson live "$live_contexts" '. + $live | unique')
 

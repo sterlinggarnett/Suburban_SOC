@@ -4343,8 +4343,9 @@ without a companion doc/board/wiki pass, so this one reconciled all three.
   `GH_REPO` validated like the branch, and the deploy-changelog hook
   tested. `tests/setup/test_setup_branch_protection.py` drives the real
   script through a fake `gh` shim (30 cases) and runs in CI's
-  setup-script step. PR left for the owner to merge — security-control
-  change, outside the standing self-merge bypass.
+  setup-script step. Merged as PR #543 on the owner's explicit go-ahead
+  (19 checks green) — a security-control change, so outside the
+  standing self-merge bypass.
 
 ## LAST SESSION — 2026-08-18
 

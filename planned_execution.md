@@ -4317,9 +4317,34 @@ without a companion doc/board/wiki pass, so this one reconciled all three.
   required (doesn't run on every PR). shellcheck clean; union logic
   dry-tested against the live list (9 → 9). SOP-007 recovery step now
   reads the live policy first and documents the review-gate decision.
-  **M25 closed 17/17.** Every remaining open issue in the tracker (11)
+  **M25 closed 17/17.** Every remaining open issue in the tracker (10)
   is environment-blocked or waiting on real traffic/telemetry — no
   actionable backlog left for this sandbox.
+- **Branch-protection script hardening (owner-requested follow-up to
+  #539's review, no issue — a live-control gap is not filed
+  publicly).** The parallel security-auditor review of PR #542 found
+  that the full PUT still reset everything except the check list: a live
+  review gate, push restrictions, linear-history/conversation-resolution/
+  lock-branch flags were sent as null/false; checks were pushed in the
+  legacy `contexts` form, dropping the `app_id` pin that binds each
+  required check to the Actions app producing it; `REQUIRE_REVIEW` treated
+  every non-`1` value as off; `$BRANCH`/repo were unvalidated and the
+  "Done" banner echoed the intended payload, not the live result.
+  Fixed in one pass: checks PUT in the `checks` form (live pins kept,
+  new ones pinned to the Actions app 15368), every other sub-policy read
+  from the live object and carried forward, live review gate preserved
+  unless `ALLOW_REVIEW_DOWNGRADE=1`, boolean flags validated (bad value =
+  error, not "off"), branch/repo regex-validated, post-PUT read-back that
+  fails if a required check is missing, and a deploy-changelog row per
+  run. A second review round (security-auditor re-audit + code-reviewer)
+  added: push restrictions with empty actor lists preserved rather than
+  nulled, the older `contexts`-only response shape carried forward, the
+  read-back compares every intended field and pin (not just check names),
+  `GH_REPO` validated like the branch, and the deploy-changelog hook
+  tested. `tests/setup/test_setup_branch_protection.py` drives the real
+  script through a fake `gh` shim (30 cases) and runs in CI's
+  setup-script step. PR left for the owner to merge — security-control
+  change, outside the standing self-merge bypass.
 
 ## LAST SESSION — 2026-08-18
 

@@ -52,11 +52,17 @@ To restore proper change management controls if tampered with:
 1. Check the live policy first, then re-apply it (repo admin only):
    `gh api repos/voltron-1/Suburban_SOC/branches/main/protection --jq '{checks: .required_status_checks.contexts, admins: .enforce_admins.enabled, reviews: .required_pull_request_reviews}'`
    then `./scripts/setup/setup_branch_protection.sh main`. The script unions its
-   check list with whatever is already required, so a re-run can only tighten
-   the policy (#539). Required checks bind admins too (`enforce_admins`, #509).
-   The PR review gate is intentionally off while the repo has a single
-   maintainer (owner decision, #509); pass `REQUIRE_REVIEW=1` to turn it on
-   once a second reviewer exists.
+   check list with whatever is already required (live checks keep their
+   app pin, new ones are pinned to GitHub Actions), carries forward push
+   restrictions and the linear-history / conversation-resolution /
+   lock-branch settings, preserves a live review gate, reads the policy back
+   and refuses to report success if a required check is missing — so a
+   re-run can only tighten the policy (#539). Required checks bind admins
+   too (`enforce_admins`, #509). The PR review gate is intentionally off
+   while the repo has a single maintainer (owner decision, #509): pass
+   `REQUIRE_REVIEW=1` to turn it on once a second reviewer exists; removing
+   a gate that is already live needs an explicit `ALLOW_REVIEW_DOWNGRADE=1`.
+   Each successful run appends a row to `docs/deploy-changelog.md`.
 2. Ensure `.github/CODEOWNERS` is intact.
 3. Deploy the reverted state via `deploy_detections.sh` (or appropriate script), which will automatically log the recovery deploy.
 

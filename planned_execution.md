@@ -24,16 +24,16 @@ added since — see the last three rows):
 
 | Milestone | Issues | Theme |
 |---|---|---|
-| [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left) | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
+| [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left in this environment) — #265's doc-only half landed 2026-09-03 via PR #537 (operator docs now disclose the `tls: certificate required` gap); the cert-minting code still needs live Docker. The PR's squash message auto-closed #265 (GitHub parsed a negated closing phrase as a close); reopened the same day | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏸️ 31/34 closed (updated 2026-09-03) — 12 issues closed 2026-08-29 via PRs #494–#502; #283 fixed and closed 2026-09-03 (PR #535, hedged per its own acceptance criteria rather than deferred); #333/#415/#421 remain, all needing a live Docker+Zeek+ES stack this sandbox doesn't have | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 16/18 closed (updated 2026-09-03) — #389 (PR #529), #403 (PR #530), #390 (PR #531), and #396 (PR #532) fixed and closed this session; #326 externally blocked (needs real Windows/PowerShell telemetry accumulating over time); #405 needs either a live-pipeline perf benchmark or a dedicated multi-session Sigma-corpus field-resolution design effort (assessed and commented, deliberately not attempted this session — see issue #405) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 15/18 closed (updated 2026-09-03) — #403 (PR #530), #390 (PR #531) and #396 (PR #532) shipped and closed 2026-09-03; #389 got an interim Logstash visibility tag via PR #529 (`pipeline.dns_answer_truncated_by_zeek`, fires on an answer element of exactly 4096 chars) but stays open — the real Zeek-side fix and SLO-dashboard wiring need a live Zeek/Docker environment; #326 externally blocked (needs real Windows/PowerShell telemetry accumulating over time); #405 needs either a live-pipeline perf benchmark or a dedicated multi-session Sigma-corpus field-resolution design effort (assessed and commented, deliberately not attempted this session — see issue #405) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
-| [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 1/4 closed (updated 2026-09-01). PR #506 (Stage 1, #443/#444) and PR #507 (Stage 2+3, #445/#446) are both merged to `main`. #445 closed outright. #443/#444 are structurally complete but stay open — their own "done when" needs a live capture host + real traffic this sandbox doesn't have (same blocker class as M17's #415/#421). #446 (100-rule starter set) landed disabled with real remaining scope: per-rule pcap fixtures, placeholder-IOC resolution, threshold tuning, DLP owner sign-off | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
+| [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 1/4 closed (updated 2026-09-01). PR #506 (Stage 1, #443/#444) and PR #507 (Stage 2+3, #445/#446) are both merged to `main`. #445 closed outright. #443/#444 are structurally complete but stay open — their own "done when" needs a live capture host + real traffic this sandbox doesn't have (same blocker class as M17's #415/#421). #446 (100-rule starter set) stands at 80/100 rules enabled with TP/TN pcap fixtures replayed through the real `suricata` binary as of PR #534 (2026-09-03, SID 9000003 root-caused as a deterministic one-segment loss in pcap replay); the remaining 20: 14 need `detection_filter` tuning against real traffic, 2 unresolved placeholders (9000013/9000099), 2 DLP rules need owner sign-off (9000065/9000066), 2 dead-as-configured (9000063/9000064) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
 | [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ✅ 5/5 closed — **CLOSED** (#449/#453/#463/#442/#441 all merged via PR #505, 2026-08-30) | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
-| [M25 — Repo Audit Remediation](https://github.com/voltron-1/Suburban_SOC/milestone/30) | ⏳ 13/16 closed (created 2026-08-31, repo-audit round 2, #508–#523) — #514/#523 closed via the owner-provided wiki refresh (wiki commit `25ab241`) and its companion PR #526; #508/#511-#513/#515-#521 closed 2026-09-02 via PR #525 (cert org-name fix, README/planned_execution/CLAUDE.md status corrections, missing troubleshooting + playbook entries, dead workflow removal, UIW branding cleanup). Remaining open: #509 (branch-protection enforce_admins drift) and #510 (Projects v2 board confirmation), both need a human with real GitHub admin/browser access this session's tool surface can't reach; #522 (wiki Watcher-era pages) in progress, 5/6 done, Commit-Approach outstanding | Repo-audit follow-ups: stale wiki pages (Watcher-era architecture, SOP-number collisions), UIW branding contamination, stale CLAUDE.md/README/planned_execution status lines, missing troubleshooting + playbook entries, branch-protection and cert-org fixes |
+| [M25 — Repo Audit Remediation](https://github.com/voltron-1/Suburban_SOC/milestone/30) | ⏳ 13/16 closed (created 2026-08-31, repo-audit round 2, #508–#523) — #514/#523 closed via the owner-provided wiki refresh (wiki commit `25ab241`) and its companion PR #526; #508/#511-#513/#515-#521 closed 2026-09-02 via PR #525 (cert org-name fix, README/planned_execution/CLAUDE.md status corrections, missing troubleshooting + playbook entries, dead workflow removal, UIW branding cleanup). #510 (Projects v2 board confirmation) and #522 (wiki Watcher-era pages) closed 2026-09-03 from a local WSL session whose `gh` is authenticated with `project` scope: the board at `users/voltron-1/projects/17` verified as the repo-linked board and re-synced (44 never-added issues added, #283 moved to Done, 282 items, every closed issue in Done), and the last #522 page, Commit-Approach, rewritten to the real PR-only CI-gated workflow (wiki commit `e6d7cd5`). Remaining open: #509 (branch-protection settings drifted from `setup_branch_protection.sh`'s intent — needs a repo admin, or the owner running that script from a local `gh`) | Repo-audit follow-ups: stale wiki pages (Watcher-era architecture, SOP-number collisions), UIW branding contamination, stale CLAUDE.md/README/planned_execution status lines, missing troubleshooting + playbook entries, branch-protection and cert-org fixes |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -4261,6 +4261,53 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-09-03
+
+Status-refresh session (docs, board and wiki only — no code, config or
+detection changes). Prior sessions the same day had merged PRs #527–#537
+without a companion doc/board/wiki pass, so this one reconciled all three.
+
+- **Tracker corrections.** #265 (M16) had been auto-closed by PR #537's
+  squash message — GitHub parsed a *negated* closing phrase as a close —
+  even though the PR body states the cert-minting code is still undone;
+  reopened with an explanatory comment. M18 was recorded as 16/18 but #389
+  was deliberately left open by PR #529 (interim tag only), so the true
+  count is 15/18; README, this doc, CLAUDE.md and the wiki all corrected.
+- **Project board (#510, closed).** First session since the 2026-08-31 audit
+  able to read Projects v2: `users/voltron-1/projects/17` is real, public,
+  and the repo-linked board (the only other repo-linked project is a
+  closed untitled one). Found 44 issues never added — all 16 of M25's
+  #508–#523 plus 28 older closed ones (#154–#201 runbook/ECS fixes,
+  #286–#328 M14/M15 items, #410–#439 review follow-ups) — and #283 still
+  "In progress" after its 2026-09-03 close. Added/moved every one (#192's
+  item is attached per the issue's own `projectItems` but the project's
+  list endpoint still reported 281 at check time). End state 282 items:
+  every closed issue in Done, the 11 open issues in Backlog (10) or In
+  progress (#522 → then closed). Nine GitHub milestone *objects* whose
+  issues are all closed (M11–M14, M19–M22, M24) are still `open` on
+  GitHub — the milestone-close API call was blocked by this session's
+  permission classifier, so that's left for the owner (one `gh api -X
+  PATCH repos/voltron-1/Suburban_SOC/milestones/<n> -f state=closed` each).
+- **Wiki (#522, closed).** Commit-Approach — the last of the six
+  Watcher-era pages — rewritten from the capstone "Delegated Commits /
+  merge-to-main / single Project Lead" model to the real workflow: PR-only
+  `main`, the 9 required status checks mapped to their workflows,
+  squash merges, manual issue closing, auto branch deletion, and the three
+  tracking surfaces that must agree. Home.md refreshed (M16/M17/M18/M23/M24
+  lines, new M25 line, summary paragraph, board link annotated, a new SOP
+  index linking the 13 SOP pages that had no inbound link from Home, and
+  2026-09-01 + 2026-09-03 session notes). Pushed directly (wiki commit
+  `e6d7cd5`); this PR is the repo-side companion.
+- **#509 stays open** (P0). Not acted on — a live branch-protection change
+  is outside a docs/board refresh — but note for whoever picks it up: this
+  local `gh` is authenticated as the owner with `repo` scope, so
+  `scripts/setup/setup_branch_protection.sh main` is runnable from here.
+  Live state read 2026-09-03: `enforce_admins: false`, no required
+  reviews, 9 required checks, strict, no force-push/deletion. The script
+  also requests 1 approving review with stale-dismissal — enabling that
+  would block the current self-merge workflow, so the decision is the
+  owner's.
 
 ## LAST SESSION — 2026-08-18
 

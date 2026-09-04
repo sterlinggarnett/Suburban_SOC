@@ -33,7 +33,7 @@ added since — see the last three rows):
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 | [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 1/4 closed (updated 2026-09-01). PR #506 (Stage 1, #443/#444) and PR #507 (Stage 2+3, #445/#446) are both merged to `main`. #445 closed outright. #443/#444 are structurally complete but stay open — their own "done when" needs a live capture host + real traffic this sandbox doesn't have (same blocker class as M17's #415/#421). #446 (100-rule starter set) stands at 80/100 rules enabled with TP/TN pcap fixtures replayed through the real `suricata` binary as of PR #534 (2026-09-03, SID 9000003 root-caused as a deterministic one-segment loss in pcap replay); the remaining 20: 14 need `detection_filter` tuning against real traffic, 2 unresolved placeholders (9000013/9000099), 2 DLP rules need owner sign-off (9000065/9000066), 2 dead-as-configured (9000063/9000064) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
 | [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ✅ 5/5 closed — **CLOSED** (#449/#453/#463/#442/#441 all merged via PR #505, 2026-08-30) | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
-| [M25 — Repo Audit Remediation](https://github.com/voltron-1/Suburban_SOC/milestone/30) | ⏳ 13/16 closed (created 2026-08-31, repo-audit round 2, #508–#523) — #514/#523 closed via the owner-provided wiki refresh (wiki commit `25ab241`) and its companion PR #526; #508/#511-#513/#515-#521 closed 2026-09-02 via PR #525 (cert org-name fix, README/planned_execution/CLAUDE.md status corrections, missing troubleshooting + playbook entries, dead workflow removal, UIW branding cleanup). #510 (Projects v2 board confirmation) and #522 (wiki Watcher-era pages) closed 2026-09-03 from a local WSL session whose `gh` is authenticated with `project` scope: the board at `users/voltron-1/projects/17` verified as the repo-linked board and re-synced (44 never-added issues added, #283 moved to Done, 282 items, every closed issue in Done), and the last #522 page, Commit-Approach, rewritten to the real PR-only CI-gated workflow (wiki commit `e6d7cd5`). Remaining open: #509 (branch-protection settings drifted from `setup_branch_protection.sh`'s intent — needs a repo admin, or the owner running that script from a local `gh`) | Repo-audit follow-ups: stale wiki pages (Watcher-era architecture, SOP-number collisions), UIW branding contamination, stale CLAUDE.md/README/planned_execution status lines, missing troubleshooting + playbook entries, branch-protection and cert-org fixes |
+| [M25 — Repo Audit Remediation](https://github.com/voltron-1/Suburban_SOC/milestone/30) | ⏳ 16/17 closed (created 2026-08-31, repo-audit round 2, #508–#523; #539 filed 2026-09-03) — #514/#523 closed via the owner-provided wiki refresh (wiki commit `25ab241`) and its companion PR #526; #508/#511-#513/#515-#521 closed 2026-09-02 via PR #525 (cert org-name fix, README/planned_execution/CLAUDE.md status corrections, missing troubleshooting + playbook entries, dead workflow removal, UIW branding cleanup). #510 (Projects v2 board confirmation) and #522 (wiki Watcher-era pages) closed 2026-09-03 from a local WSL session whose `gh` is authenticated with `project` scope: the board at `users/voltron-1/projects/17` verified as the repo-linked board and re-synced (44 never-added issues added, #283 moved to Done, 282 items, every closed issue in Done), and the last #522 page, Commit-Approach, rewritten to the real PR-only CI-gated workflow (wiki commit `e6d7cd5`). #509 done 2026-09-03 by owner decision (enforce admins only): `enforce_admins` enabled on `main` via the dedicated endpoint from the local `gh`, verified 9 checks / strict / no review gate unchanged. Remaining open: #539 (`setup_branch_protection.sh` + SOP-007 drifted from the live policy — the script's full PUT would replace the 9 required checks with its 5 and enable the declined review gate; reconcile, don't re-run) | Repo-audit follow-ups: stale wiki pages (Watcher-era architecture, SOP-number collisions), UIW branding contamination, stale CLAUDE.md/README/planned_execution status lines, missing troubleshooting + playbook entries, branch-protection and cert-org fixes |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -4299,15 +4299,15 @@ without a companion doc/board/wiki pass, so this one reconciled all three.
   index linking the 13 SOP pages that had no inbound link from Home, and
   2026-09-01 + 2026-09-03 session notes). Pushed directly (wiki commit
   `e6d7cd5`); this PR is the repo-side companion.
-- **#509 stays open** (P0). Not acted on — a live branch-protection change
-  is outside a docs/board refresh — but note for whoever picks it up: this
-  local `gh` is authenticated as the owner with `repo` scope, so
-  `scripts/setup/setup_branch_protection.sh main` is runnable from here.
-  Live state read 2026-09-03: `enforce_admins: false`, no required
-  reviews, 9 required checks, strict, no force-push/deletion. The script
-  also requests 1 approving review with stale-dismissal — enabling that
-  would block the current self-merge workflow, so the decision is the
-  owner's.
+- **#509 done (later the same session, owner decision: enforce admins
+  only).** `enforce_admins` enabled on `main` via the dedicated
+  `POST .../protection/enforce_admins` endpoint from this local `gh`;
+  verified afterwards: 9 required checks, strict, no force-push/deletion,
+  no review gate — the script's 1-approval requirement was deliberately
+  not applied (single maintainer). Reading the script against the live
+  policy found it stale in the weakening direction (5 named checks vs. 9
+  live, plus the declined review gate; SOP-007 still says re-run it) —
+  filed as #539 (M25, P2) rather than fixed inline. M25 → 16/17.
 
 ## LAST SESSION — 2026-08-18
 

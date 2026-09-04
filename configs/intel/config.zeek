@@ -52,3 +52,46 @@ event Input::end_of_data(name: string, source: string) {
         continue_processing();
     }
 }
+
+# #389: Zeek 8.1.0 introduced Log::default_max_field_string_bytes - a per-
+# string BYTE cap the log writer applies to EVERY logged string field,
+# container elements included, silently cutting the value and recording the
+# cut only as a connection-less weird (log_string_field_truncated, addl =
+# the stream name, no uid) plus a telemetry counter. Upstream default 4096 -
+# the "no marker anywhere in dns.log" #389 live-observed on the pinned 8.2.1
+# image. Raised here to 8191: EXACTLY dns.answers' ignore_above in
+# configs/elasticsearch/logstash-security-template.json, deliberately not
+# higher. Security-auditor review of a 16384 first draft found that any cap
+# ABOVE the indexing ceiling opens a detection blind window - a Zeek-logged
+# TXT answer in (8191, cap] is stored but never indexed, so
+# net_zeek_dns_txt_answer_abuse.yml's answers|re can no longer match it -
+# whereas the old 4096 cut, for all its silence, kept every answer
+# indexable. Pinned to the ceiling, retained content doubles and every
+# Zeek-logged answer stays rule-matchable; a Zeek-truncated answer lands at
+# exactly 8191 bytes, is still indexed, and is the number
+# configs/logstash.conf's pipeline.dns_answer_truncated_by_zeek check keys
+# on (metered with a target of 0 by slo_metrics.py, alongside the weird
+# count). Raising both ceilings together past 8191 needs the array-aware
+# byte clamp the template's own _meta WARNING names - #545, not done here.
+# Global rather than DNS::LOG-only: the Stream record carries per-stream
+# limits but only at create_stream time, so a per-stream override means
+# tearing down and recreating a base stream from here - more fragile than
+# one documented redef, and every other stream's long strings already meet
+# the same ignore_above/byte-clamp ceilings downstream (#367's CI gate).
+# The per-record total, Log::default_max_total_string_bytes, stays at its
+# 256000-byte upstream default (pinned on the real image by
+# tests/detections/test_zeek_log_field_string_cap_live.py, which also pins
+# the upstream 4096 default and this redef's exact effect);
+# tests/pipeline/test_zeek_log_field_string_cap.py pins this value, the
+# template ceiling, logstash.conf's literal and test_field_truncation.py's
+# mirror constant to each other.
+# Version-guarded: a pre-8.1 Zeek has no such identifier and rejects the
+# whole file - `"redef" used but not previously defined
+# (Log::default_max_field_string_bytes)`, live-confirmed on a host-native
+# 8.0.5 - which would take every @load above down with it. All four real
+# capture paths' post-copy staleness guards (#288) grep for this exact
+# redef line, value included, so a stale or hand-edited copy of this file
+# refuses to start rather than running at a different cap unnoticed.
+@if ( Version::number >= 80100 )
+redef Log::default_max_field_string_bytes = 8191;
+@endif

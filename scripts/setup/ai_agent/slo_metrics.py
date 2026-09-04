@@ -53,6 +53,25 @@ if any SLO is breached. Run on a schedule (cron) alongside refresh_intel.sh.
                                                   ignore_above ceiling; for dns.answers this
                                                   possibly evades net_zeek_dns_txt_
                                                   answer_abuse.yml's length-heuristic rule
+  Zeek log field truncation count  measured    — zeek.weird log_string_field_truncated /
+                                                  log_container_field_truncated over the
+                                                  window (#389) — Zeek's own log writer cut
+                                                  a string field at Log::default_max_field_
+                                                  string_bytes (8191 here, 4096 upstream)
+                                                  or a container at 100 elements; no target
+                                                  (weird sampling makes it a floor, not a
+                                                  rate) — a nonzero count means real telemetry
+                                                  was discarded before Logstash saw it
+  DNS answer truncated-by-Zeek     == 0        — pipeline.dns_answer_truncated_by_zeek over
+                                                  the window (#389) — a dns.answers element
+                                                  landing at EXACTLY Zeek's 8191-byte cap, the
+                                                  unsampled per-record pointer to a Zeek cut;
+                                                  no organic TXT answer is that long, so a
+                                                  single hit is itself the anomaly (and a
+                                                  possible net_zeek_dns_txt_answer_abuse
+                                                  payload larger than the sensor can keep);
+                                                  own SLO_DNS_ANSWER_TRUNCATED_WINDOW (now-1h,
+                                                  not the shared WINDOW) so one hit self-clears
   Zeek path-grok nomatch count     == 0        — pipeline.zeek_path_nomatch over the
                                                   window (#349) — a nonzero count means a
                                                   zeek-shaped document failed Category 0's
@@ -169,6 +188,14 @@ TARGETS = {
     # (#291) - a detection blackout, not a data-quality baseline. Target
     # is 0, same as the three claim-integrity metrics above.
     "zeek_path_nomatch_count": float(os.environ.get("SLO_ZEEK_PATH_NOMATCH_MAX", "0")),
+    # #389: a dns.answers element at EXACTLY Zeek's 8191-byte log-writer cap
+    # is the unsampled per-record pointer to a Zeek-side cut (the sampled
+    # weird count, zeek_log_field_truncation_count, is NO_TARGET). No organic
+    # TXT answer approaches 8191 bytes (DKIM/SPF/verification records are a
+    # few hundred), so one hit is the anomaly - target 0, same posture as
+    # zeek_path_nomatch_count. Security-auditor #389 review: the tag had no
+    # consumer at all before this.
+    "dns_answer_truncated_by_zeek_count": float(os.environ.get("SLO_DNS_ANSWER_TRUNCATED_MAX", "0")),
     # #288: no target was calibrated against real traffic in this environment
     # (same caveat as field_truncation_count/field_byte_clamp_count below) —
     # 5% is a conservative, overridable starting point, not an
@@ -204,6 +231,7 @@ LOWER_BETTER = {
     "orphaned_claims": True, "vanished_claims": True, "capture_loss_max_pct": True,
     "intel_feed_stale_heartbeats": False, "intel_indicator_count_drop_pct": True,
     "zeek_path_nomatch_count": True, "broker_response_tampering_count": True,
+    "dns_answer_truncated_by_zeek_count": True,
     "zeek_ingest_lag_seconds": True, "suricata_ingest_lag_seconds": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
@@ -226,7 +254,7 @@ BREACH_IF_NA = {"ingest_lag_seconds", "zeek_ingest_lag_seconds", "suricata_inges
 # worse than no threshold at all. Still participates in the errors/exit-3 path
 # below like every other metric — an unmeasurable value is never silently benign.
 NO_TARGET = {"raw_alert_volume", "field_truncation_count", "field_byte_clamp_count",
-             "oversized_field_count"}
+             "oversized_field_count", "zeek_log_field_truncation_count"}
 
 
 # FAIL CLOSED (audit P1-2): verify TLS against the stack CA instead of verify=False.
@@ -1270,27 +1298,32 @@ def metric_oversized_field_count():
     only, same as field_truncation_count's own precedent for its lower-
     ceiling fields.
 
-    HONEST DISCLOSURE (tester-debugger, #352 review): a >8191-char
-    dns.answers value has been live-verified as structurally unreachable
-    for real TXT-record traffic today — Zeek's own DNS analyzer
-    independently truncates a TXT record's joined answers[] string at
-    ~4096 chars, with no marker, before Elasticsearch's ignore_above ever
-    gets a chance to matter (filed as #389, needs a Zeek-side fix, out of
-    scope for this pipeline). This metric should read 0 in production
-    right now for that field; that is expected, not evidence the tag/
-    metric are dead — they remain defense-in-depth against a non-Zeek
-    dns.answers producer — NOT hypothetical, the unauthenticated :5514
-    HTTP input this pipeline exposes on soc-mesh-net can write an
-    arbitrary [dns][answers] shape today (configs/logstash.conf's own
-    Category 0 comment) — as well as a future Zeek version without this
-    cap, or #389 being fixed in a way that raises real answer lengths
-    past 8191. threat.feed.name's own producer (Category 0/1's Zeek
-    intel.log rename) is live today, though real feed names are short in
-    practice (theoretical exposure, not observed). See the ruby filter's
-    own comment in configs/logstash.conf (right above the
-    `array_fields = {` block) for the paired half of this disclosure -
-    the two are meant to be read together, not each a complete account
-    on its own.
+    HONEST DISCLOSURE (tester-debugger, #352 review; updated by #389's
+    fix): a >8191-char dns.answers value was live-verified as structurally
+    unreachable for real TXT-record traffic — Zeek's own LOG WRITER (not
+    its DNS analyzer, as #389 first suspected) cut every logged string at
+    Log::default_max_field_string_bytes' 4096-byte upstream default (Zeek
+    >= 8.1), marking it only in weird.log, before Elasticsearch's
+    ignore_above ever got a chance to matter. configs/intel/config.zeek
+    now pins that cap to EXACTLY 8191 — the same number as this ceiling,
+    deliberately: security-auditor review of a higher first draft showed a
+    cap above the ceiling leaves Zeek-logged answers in (8191, cap] stored
+    but unindexed and invisible to net_zeek_dns_txt_answer_abuse.yml
+    (raising both together is #545). So for Zeek traffic this tag stays
+    unreachable BY DESIGN and should read 0; a Zeek-cut answer lands at
+    exactly 8191, indexed, and is metered by dns_answer_truncated_by_zeek_
+    count below (target 0) with the weird itself counted by
+    zeek_log_field_truncation_count. The tag/metric remain defense-in-depth
+    against a non-Zeek dns.answers producer — NOT hypothetical, the
+    unauthenticated :5514 HTTP input this pipeline exposes on soc-mesh-net
+    can write an arbitrary [dns][answers] shape today (configs/
+    logstash.conf's own Category 0 comment). threat.feed.name's own
+    producer (Category 0/1's Zeek intel.log rename) is live today, though
+    real feed names are short in practice (theoretical exposure, not
+    observed). See the ruby filter's own comment in configs/logstash.conf
+    (right above the `array_fields = {` block) for the paired half of this
+    disclosure - the two are meant to be read together, not each a
+    complete account on its own.
 
     NO_TARGET (see below), matching field_truncation_count/
     field_byte_clamp_count's own precedent: no real DNS/threat-feed
@@ -1301,6 +1334,99 @@ def metric_oversized_field_count():
     win = {"range": {"@timestamp": {"gte": WINDOW}}}
     return _count("logstash-security-*",
                   {"bool": {"filter": [win, {"term": {"pipeline.oversized": "true"}}]}})
+
+
+def metric_zeek_log_field_truncation_count():
+    """Count of zeek.weird docs in the window whose name is one of Zeek's
+    two log-writer truncation weirds (#389).
+
+    Zeek >= 8.1's logging framework caps every logged string field at
+    Log::default_max_field_string_bytes (4096 upstream; configs/intel/
+    config.zeek pins it to 8191 = dns.answers' ignore_above) and every container at Log::default_
+    max_field_container_elements (100 upstream), cutting the value
+    silently and recording the cut ONLY as a connection-less weird —
+    log_string_field_truncated / log_container_field_truncated, addl = the
+    stream name (e.g. "DNS::LOG"), no uid — plus a telemetry counter this
+    pipeline does not scrape. weird.log is shipped like every other
+    zeek_logs/*.log and stamped event.dataset:zeek.weird by Category 0's
+    filename grok, with Zeek's bare `name`/`addl` fields landing as-is
+    (strings_as_keyword), so this is a plain filtered count. Both names
+    are counted: a container cut drops whole answers[] ELEMENTS the same
+    silent way the string cap drops bytes, and neither is visible to any
+    downstream ceiling check because the data is gone before Logstash.
+
+    A nonzero count is the authoritative "Zeek discarded real telemetry"
+    signal — the pipeline-side tags (pipeline.oversized, pipeline.dns_
+    answer_truncated_by_zeek) are heuristics on what survived; this is
+    Zeek's own admission. It is a FLOOR, not a rate: Weird::sampling_
+    threshold/sampling_rate (25 then 1-in-1000 per weird name per 10 min)
+    throttle a flood, so 25 in a window may mean 25 or 25,000 — and that
+    throttling is also a deliberate-suppression lever (security-auditor,
+    #389 review): an attacker can first flood cheap oversized strings to
+    push the weird name into sampled mode, then send the answer of
+    interest with a ~99.9% chance of no weird at all. The unsampled,
+    per-record dns_answer_truncated_by_zeek_count below is the flood-
+    resistant half; many exact-cap records in a window against a near-zero
+    weird count is the signature of exactly that suppression. The addl
+    stream name is the analyst's first pivot (which log lost data), then
+    the exact-length tag for dns.answers records specifically.
+
+    Deliberately ONE metric rather than one per weird name or per stream —
+    the same metric-explosion caution #390 recorded for oversized_field_
+    count; weird.log's own addl field carries the per-stream breakdown.
+
+    NO_TARGET (see below): no real long-TXT / oversized-container traffic
+    has been measured through this pipeline to threshold against, and the
+    sampling floor above makes any threshold a guess about a count that
+    cannot be trusted as a rate. Any nonzero value is worth a manual look.
+    """
+    win = {"range": {"@timestamp": {"gte": WINDOW}}}
+    return _count("logstash-security-*",
+                  {"bool": {"filter": [
+                      win,
+                      {"term": {"event.dataset": "zeek.weird"}},
+                      {"terms": {"name": ["log_string_field_truncated",
+                                          "log_container_field_truncated"]}}]}})
+
+
+def metric_dns_answer_truncated_by_zeek_count():
+    """Count of docs tagged pipeline.dns_answer_truncated_by_zeek:"true" in
+    the window (#389) — a dns.answers element whose UTF-8 length is EXACTLY
+    Zeek's Log::default_max_field_string_bytes cap (8191 here; see
+    configs/intel/config.zeek), configs/logstash.conf's per-record pointer
+    to a Zeek-side cut.
+
+    Companion to zeek_log_field_truncation_count above, and the more
+    trustworthy of the two: the weird is sampled (a floor, and
+    suppressible by flooding — see that docstring), this tag is emitted on
+    every record Logstash sees, unsampled. It is a heuristic (a genuinely
+    8191-byte answer is possible, if unlikely) rather than Zeek's own
+    admission, which is why both exist. Forgeable by the same
+    unauthenticated :5514 producer every dns.answers-shaped check here
+    inherits — a pre-existing exposure class, not one this metric adds.
+
+    Target 0 (TARGETS above), same posture as zeek_path_nomatch_count: no
+    organic TXT answer reaches 8191 bytes (DKIM keys ~400 chars, SPF
+    <512), so a single hit means either an oversized payload the sensor
+    could not keep — the exact evasion shape net_zeek_dns_txt_answer_abuse
+    exists to catch — or a non-Zeek producer writing that shape. Either is
+    worth a page. Security-auditor #389 review: before this metric the tag
+    had no consumer anywhere (no rule, metric or panel).
+
+    Deliberately NOT the shared module-level WINDOW (security-auditor
+    re-check of the #389 redesign): a tagged document is immutable, so
+    under WINDOW's 7-day default and the 15-min poll ONE forged exact-cap
+    [dns][answers] element via the unauthenticated :5514 input would pin
+    this target-0 metric in breach for ~672 consecutive runs — a week of
+    repeated ntfy pages drowning every other metric — the exact trap
+    metric_zeek_path_nomatch_count's own short window exists to avoid,
+    and cheaper to forge than a nomatch doc (no log.file.path shaping
+    needed). Same fix: its own short, separately-overridable window, so
+    a single hit pages once and self-clears as the document ages out.
+    """
+    win = {"range": {"@timestamp": {"gte": os.environ.get("SLO_DNS_ANSWER_TRUNCATED_WINDOW", "now-1h")}}}
+    return _count("logstash-security-*",
+                  {"bool": {"filter": [win, {"term": {"pipeline.dns_answer_truncated_by_zeek": "true"}}]}})
 
 
 def metric_zeek_path_nomatch_count():
@@ -1688,6 +1814,8 @@ def main():
         "field_truncation_count": metric_field_truncation_count,
         "field_byte_clamp_count": metric_field_byte_clamp_count,
         "oversized_field_count": metric_oversized_field_count,
+        "zeek_log_field_truncation_count": metric_zeek_log_field_truncation_count,
+        "dns_answer_truncated_by_zeek_count": metric_dns_answer_truncated_by_zeek_count,
         "zeek_path_nomatch_count": metric_zeek_path_nomatch_count,
         "capture_loss_max_pct": metric_capture_loss_percent,
         "intel_feed_stale_heartbeats": metric_intel_feed_stale_heartbeats,

@@ -17,6 +17,12 @@ description: |
     carry +/= but a TXT answer's raw string content is not label-constrained
     — real TXT-C2 payload chunks are typically base64, which uses that
     charset.
+    Coverage envelope: the Zeek sensor caps each logged answer string at
+    8191 bytes (#389; its upstream default is 4096, and 8191 is also the
+    index ceiling, so every logged answer stays searchable). A longer TXT
+    answer reaches this rule cut at exactly that length; the cut is marked
+    only by a zeek.weird log_string_field_truncated record and the
+    pipeline.dns_answer_truncated_by_zeek tag, never inside dns.log itself.
 references:
     - https://attack.mitre.org/techniques/T1071/004/
 author: Suburban-SOC

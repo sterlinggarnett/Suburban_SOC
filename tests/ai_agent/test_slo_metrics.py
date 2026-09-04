@@ -1006,6 +1006,81 @@ class MetricFunctionTests(unittest.TestCase):
         self.assertIn("logstash-security-*", index)
         self.assertIn({"term": {"pipeline.oversized": "true"}}, query["bool"]["filter"])
 
+    # --- #389: Zeek log-writer string-field truncation count -----------------
+    def test_zeek_log_field_truncation_count_raises_on_es_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_zeek_log_field_truncation_count()
+
+    def test_zeek_log_field_truncation_count_returns_count_on_success(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 2})):
+            self.assertEqual(slo_metrics.metric_zeek_log_field_truncation_count(), 2)
+
+    def test_zeek_log_field_truncation_count_returns_zero_when_none_seen(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 0})):
+            self.assertEqual(slo_metrics.metric_zeek_log_field_truncation_count(), 0)
+
+    def test_zeek_log_field_truncation_count_queries_zeek_weird_truncation_names(self):
+        # Zeek marks a log-writer cut ONLY as a weird (Manager.cc:
+        # reporter->Weird("log_string_field_truncated" / "log_container_
+        # field_truncated", <stream name>)), shipped like every other
+        # zeek_logs/*.log and stamped event.dataset:zeek.weird by Category
+        # 0's filename grok. Both names count: a container cut (Log::
+        # default_max_field_container_elements, 100 upstream) drops
+        # answers[] ELEMENTS the same silent way the string cap drops bytes.
+        with mock.patch.object(slo_metrics, "_count", return_value=0) as mock_count:
+            slo_metrics.metric_zeek_log_field_truncation_count()
+        index, query = mock_count.call_args[0]
+        self.assertIn("logstash-security-*", index)
+        filters = query["bool"]["filter"]
+        self.assertIn({"term": {"event.dataset": "zeek.weird"}}, filters)
+        names = [f["terms"]["name"] for f in filters if "terms" in f and "name" in f["terms"]]
+        self.assertEqual(len(names), 1, f"expected one terms filter on `name`, got {filters!r}")
+        self.assertCountEqual(names[0], ["log_string_field_truncated", "log_container_field_truncated"])
+
+    # --- #389: per-record exact-cap tag count (unsampled sibling of the weird) --
+    def test_dns_answer_truncated_by_zeek_count_raises_on_es_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_dns_answer_truncated_by_zeek_count()
+
+    def test_dns_answer_truncated_by_zeek_count_returns_count_on_success(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 1})):
+            self.assertEqual(slo_metrics.metric_dns_answer_truncated_by_zeek_count(), 1)
+
+    def test_dns_answer_truncated_by_zeek_count_returns_zero_when_none_seen(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"count": 0})):
+            self.assertEqual(slo_metrics.metric_dns_answer_truncated_by_zeek_count(), 0)
+
+    def test_dns_answer_truncated_by_zeek_count_queries_the_exact_cap_tag(self):
+        with mock.patch.object(slo_metrics, "_count", return_value=0) as mock_count:
+            slo_metrics.metric_dns_answer_truncated_by_zeek_count()
+        index, query = mock_count.call_args[0]
+        self.assertIn("logstash-security-*", index)
+        self.assertIn({"term": {"pipeline.dns_answer_truncated_by_zeek": "true"}},
+                      query["bool"]["filter"])
+
+    def test_dns_answer_truncated_by_zeek_count_uses_own_window_not_shared_window(self):
+        # security-auditor re-check (#389): a TARGET-0 metric must NOT inherit
+        # the shared module-level WINDOW (default now-7d) — one immutable doc
+        # (a single forged exact-cap [dns][answers] via :5514 is enough) plus
+        # the 15-min poll would pin it in breach for ~672 consecutive runs,
+        # the exact trap metric_zeek_path_nomatch_count's own short window
+        # exists to avoid. Assert the DECOUPLING and the override, not the
+        # literal default (same reasoning as the capture_loss sibling test).
+        with mock.patch.object(slo_metrics, "_count", return_value=0) as mock_count, \
+             mock.patch.object(slo_metrics, "WINDOW", "now-7d"), \
+             mock.patch.dict(os.environ, {"SLO_DNS_ANSWER_TRUNCATED_WINDOW": "now-45m"}):
+            slo_metrics.metric_dns_answer_truncated_by_zeek_count()
+        _index, query = mock_count.call_args[0]
+        gte = query["bool"]["filter"][0]["range"]["@timestamp"]["gte"]
+        self.assertNotEqual(gte, "now-7d")
+        self.assertEqual(gte, "now-45m")
+
     # --- #349: zeek path-grok nomatch count --------------------------------
     def test_zeek_path_nomatch_count_raises_on_es_failure(self):
         with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
@@ -1427,7 +1502,9 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                        capture_loss_max_pct=0.0, intel_feed_stale_heartbeats=1.0,
                        intel_indicator_count_drop_pct=0.0,
                        broker_response_tampering_count=0.0,
-                       zeek_ingest_lag=10.0, suricata_ingest_lag=10.0):
+                       zeek_ingest_lag=10.0, suricata_ingest_lag=10.0,
+                       zeek_log_field_truncation_count=0,
+                       dns_answer_truncated_by_zeek_count=0):
     # Module-level, not a TestCase method: shared verbatim by MainExitCodeTests
     # and PrivilegeSelfCheckMainIntegrationTests below. A TestCase-method
     # version can't be shared across sibling classes without either
@@ -1459,6 +1536,10 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                            return_value=oversized_field_count),
         mock.patch.object(slo_metrics, "metric_zeek_path_nomatch_count",
                            return_value=zeek_path_nomatch_count),
+        mock.patch.object(slo_metrics, "metric_zeek_log_field_truncation_count",
+                           return_value=zeek_log_field_truncation_count),
+        mock.patch.object(slo_metrics, "metric_dns_answer_truncated_by_zeek_count",
+                           return_value=dns_answer_truncated_by_zeek_count),
         mock.patch.object(slo_metrics, "metric_capture_loss_percent",
                            return_value=capture_loss_max_pct),
         mock.patch.object(slo_metrics, "metric_intel_feed_stale_heartbeats",
@@ -1552,6 +1633,33 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 2)
         ntfy_post.assert_called_once()
         self.assertIn("vanished_claims", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_dns_answer_truncated_by_zeek_count_zero_does_not_breach(self):
+        # #389: target 0 (security-auditor: the per-record tag is the
+        # unsampled half of the truncation signal and had no consumer).
+        # coverage pinned to the real env's SLO_COVERAGE_MIN, same
+        # pre-existing reason as the sibling tests above.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
+            for p in _mock_all_metrics(dns_answer_truncated_by_zeek_count=0, coverage=105.0):
+                stack.enter_context(p)
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 0)
+
+    def test_dns_answer_truncated_by_zeek_count_breach_exits_2_and_sends_ntfy(self):
+        # Regression guard: metric_dns_answer_truncated_by_zeek_count must be
+        # wired into main()'s metric_fns dict AND carry a real target — a
+        # single Zeek-cut TXT answer is itself the anomaly (no organic TXT
+        # answer reaches 8191 bytes), same posture as zeek_path_nomatch_count.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in _mock_all_metrics(dns_answer_truncated_by_zeek_count=1, coverage=105.0):
+                stack.enter_context(p)
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        ntfy_post.assert_called_once()
+        self.assertIn("dns_answer_truncated_by_zeek_count", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_zeek_path_nomatch_count_breach_exits_2_and_sends_ntfy(self):
         # Regression guard for #349: metric_zeek_path_nomatch_count must
@@ -1802,6 +1910,35 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 3)
         ntfy_post.assert_called_once()
         self.assertIn("field_byte_clamp_count", ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_zeek_log_field_truncation_count_never_breaches_regardless_of_value(self):
+        # #389: NO_TARGET, same reasoning as field_truncation_count/
+        # oversized_field_count — Zeek weird.log sampling (25 then 1-in-
+        # 1000 per name per 10 min) means the count is a floor, not a rate,
+        # and no real long-TXT traffic has been measured to threshold
+        # against. Any nonzero count is still worth a manual look.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
+            for p in _mock_all_metrics(zeek_log_field_truncation_count=500, coverage=105.0):
+                stack.enter_context(p)
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 0)
+
+    def test_zeek_log_field_truncation_count_unmeasurable_is_never_silent(self):
+        # Regression guard: metric_zeek_log_field_truncation_count must
+        # actually be wired into main()'s metric_fns dict, not just defined.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in _mock_all_metrics():
+                stack.enter_context(p)
+            stack.enter_context(mock.patch.object(
+                slo_metrics, "metric_zeek_log_field_truncation_count",
+                side_effect=slo_metrics.MetricUnavailable("es down")))
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 3)
+        ntfy_post.assert_called_once()
+        self.assertIn("zeek_log_field_truncation_count", ntfy_post.call_args.kwargs["data"].decode())
 
     def test_oversized_field_count_never_breaches_regardless_of_value(self):
         # #352, generalized #390: NO_TARGET, same reasoning as field_

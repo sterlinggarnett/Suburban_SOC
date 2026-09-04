@@ -60,8 +60,8 @@ sudo cp --remove-destination "${SCRIPT_DIR}/../../configs/intel/data/intel.dat" 
 # grep) so a real permission problem surfaces distinctly from "file is
 # genuinely stale" instead of both collapsing into the same FATAL message
 # (security-auditor review).
-if ! sudo grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek; then
-  echo "[FATAL] /storage/PCAP/intel/config.zeek is missing an expected @load -- the intel config copy above may have failed silently. Refusing to analyze against a config that might not match the repo." >&2
+if ! sudo grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek || ! sudo grep -q "^redef Log::default_max_field_string_bytes = 8191;" /storage/PCAP/intel/config.zeek; then
+  echo "[FATAL] /storage/PCAP/intel/config.zeek is missing an expected @load or the #389 Log redef -- the intel config copy above may have failed silently. Refusing to analyze against a config that might not match the repo." >&2
   exit 1
 fi
 

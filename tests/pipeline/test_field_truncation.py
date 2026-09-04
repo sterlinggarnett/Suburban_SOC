@@ -243,30 +243,38 @@ def tag_oversized_fields(event: dict) -> list:
     return oversized_hit
 
 
-ZEEK_TXT_TRUNCATION_LENGTH = 4096
+# #389: the per-string BYTE cap this pipeline runs Zeek's logging framework
+# at (configs/intel/config.zeek's `redef Log::default_max_field_string_bytes`,
+# Zeek >= 8.1). Zeek cuts at exactly this many bytes, so a truncated
+# answer lands at exactly this length — tests/pipeline/
+# test_zeek_log_field_string_cap.py pins this constant, config.zeek's redef
+# and configs/logstash.conf's literal to each other.
+ZEEK_MAX_FIELD_STRING_BYTES = 8191
 
 
 def tag_dns_answer_truncated_by_zeek(event: dict) -> bool:
     """Mirrors configs/logstash.conf's #389 ruby filter block (same ruby
     filter block as #390's tag_oversized_fields, added directly below the
     array_fields loop; dns.answers-specific, not generalized — see #390's
-    own comment on why). #389 live-verified that Zeek's own DNS analyzer
-    independently hard-truncates a joined TXT-answer answers[] string at
-    exactly 4096 UTF-16 code units, with no marker anywhere in dns.log —
-    tag_oversized_fields' own >8191 check can never catch this,
-    since Zeek discards the excess before Logstash ever sees it. An
-    element landing at EXACTLY 4096 is the interim, cheap detection
-    signal #389's own review round proposed: not proof of truncation (a
-    genuinely 4096-code-unit answer is possible, if unlikely), but
-    high-fidelity enough to page an analyst toward the source record's
-    true wire length. Shares elements-flattening/scalar-handling with
-    tag_oversized_fields above — same shapes, same call site."""
+    own comment on why). #389 root-caused Zeek's silent TXT-answer cut to
+    the logging framework's Log::default_max_field_string_bytes (a BYTE
+    limit on every logged string, container elements included, Zeek >= 8.1;
+    4096 upstream, raised to ZEEK_MAX_FIELD_STRING_BYTES in config.zeek).
+    Zeek itself marks the cut only in weird.log (log_string_field_truncated,
+    no uid), so an answers[] element landing at EXACTLY the cap is the
+    per-record pointer: not proof of truncation (a genuinely cap-length
+    answer is possible, if unlikely), but high-fidelity enough to page an
+    analyst toward the source record's true wire length. Compares UTF-8
+    BYTES (what Zeek actually cuts), not UTF-16 code units like the
+    ignore_above mirrors above — different ceiling, different unit. Shares
+    elements-flattening/scalar-handling with tag_oversized_fields above —
+    same shapes, same call site."""
     answers = _nested_get(event, ["dns", "answers"])
     if answers is None:
         return False
     elements = _flatten(answers) if isinstance(answers, list) else [answers]
     return any(
-        isinstance(a, str) and _utf16_length(a) == ZEEK_TXT_TRUNCATION_LENGTH
+        isinstance(a, str) and len(a.encode("utf-8")) == ZEEK_MAX_FIELD_STRING_BYTES
         for a in elements
     )
 
@@ -603,17 +611,21 @@ class OversizedFieldsTaggingTests(unittest.TestCase):
     the second-element-only case — #390's generalization reuses the exact
     same per-element loop body for the other three fields, not a
     reimplementation, so that verification still applies to their shape.
-    HONEST DISCLOSURE (tester-debugger, #352 review): the >8191 threshold
-    these tests pin for dns.answers is live-verified as structurally
-    unreachable for real TXT-record traffic today — Zeek's own DNS
-    analyzer independently truncates a TXT record's joined answers[]
-    string at ~4096 chars, with no marker, before Elasticsearch's
-    ignore_above ever gets a chance to matter (filed as #389, needs a
-    Zeek-side fix). These tests still prove the FILTER LOGIC is correct
-    for any value that does reach 8191+ chars (defense-in-depth against a
-    future non-Zeek producer, a future Zeek version without this cap, or
-    #389 being fixed) - they do not claim TXT records reach this ceiling
-    in production right now."""
+    HONEST DISCLOSURE (tester-debugger, #352 review; updated by #389's
+    fix): the >8191 threshold these tests pin for dns.answers is
+    structurally unreachable for real TXT-record traffic BY DESIGN now, not
+    by accident: Zeek's log writer cuts every logged string at Log::
+    default_max_field_string_bytes (4096 upstream, Zeek >= 8.1 — #389
+    root-caused the cut there, not in the DNS analyzer), and configs/intel/
+    config.zeek pins that cap to exactly 8191 so every Zeek-logged answer
+    stays indexed and rule-matchable (a cap above the ceiling would make
+    answers in (8191, cap] silently unindexed — security-auditor, #389
+    review; raising both together is #545). A Zeek-cut answer lands at
+    exactly 8191, which is what tag_dns_answer_truncated_by_zeek below keys
+    on. These tests prove the FILTER LOGIC is correct for any value that
+    does reach 8191+ chars — a non-Zeek producer such as the :5514 input —
+    and tests/detections/test_zeek_log_field_string_cap_live.py proves the
+    Zeek end on the real pinned image."""
 
     def test_short_array_not_tagged(self):
         event = {"dns": {"answers": ["v=spf1 include:_spf.example.com ~all", "short"]}}
@@ -760,39 +772,45 @@ class OversizedFieldsTaggingTests(unittest.TestCase):
 
 
 class DnsAnswerTruncatedByZeekTaggingTests(unittest.TestCase):
-    """#389: the interim exactly-4096-code-unit detection signal for
-    Zeek's own silent TXT-answer truncation — see tag_dns_answer_
-    truncated_by_zeek's docstring."""
+    """#389: the exactly-at-the-cap detection signal for Zeek's own silent
+    TXT-answer truncation — see tag_dns_answer_truncated_by_zeek's docstring."""
 
-    def test_exactly_4096_tagged(self):
-        event = {"dns": {"answers": ["A" * ZEEK_TXT_TRUNCATION_LENGTH]}}
+    def test_exactly_at_cap_tagged(self):
+        event = {"dns": {"answers": ["A" * ZEEK_MAX_FIELD_STRING_BYTES]}}
         self.assertTrue(tag_dns_answer_truncated_by_zeek(event))
 
-    def test_4095_not_tagged(self):
-        event = {"dns": {"answers": ["A" * (ZEEK_TXT_TRUNCATION_LENGTH - 1)]}}
+    def test_one_byte_under_cap_not_tagged(self):
+        event = {"dns": {"answers": ["A" * (ZEEK_MAX_FIELD_STRING_BYTES - 1)]}}
         self.assertFalse(tag_dns_answer_truncated_by_zeek(event))
 
-    def test_4097_not_tagged(self):
+    def test_one_byte_over_cap_not_tagged(self):
         # Not "over a ceiling" — an exact-length signal, so one past the
-        # target length is not a match either, unlike tag_oversized_dns_
-        # answer's >ceiling check.
-        event = {"dns": {"answers": ["A" * (ZEEK_TXT_TRUNCATION_LENGTH + 1)]}}
+        # cap is not a match either, unlike tag_oversized_fields' >ceiling
+        # check. (Zeek cannot emit a longer string than its own cap; a
+        # longer value can only come from a non-Zeek producer.)
+        event = {"dns": {"answers": ["A" * (ZEEK_MAX_FIELD_STRING_BYTES + 1)]}}
+        self.assertFalse(tag_dns_answer_truncated_by_zeek(event))
+
+    def test_old_upstream_default_4096_not_tagged(self):
+        # The pre-#389 literal. With config.zeek raising the cap, a 4096-
+        # byte answer is just an ordinary (if long) answer.
+        event = {"dns": {"answers": ["A" * 4096]}}
         self.assertFalse(tag_dns_answer_truncated_by_zeek(event))
 
     def test_short_array_not_tagged(self):
         event = {"dns": {"answers": ["v=spf1 include:_spf.example.com ~all", "short"]}}
         self.assertFalse(tag_dns_answer_truncated_by_zeek(event))
 
-    def test_second_element_at_length_still_tagged(self):
-        event = {"dns": {"answers": ["short-one", "B" * ZEEK_TXT_TRUNCATION_LENGTH]}}
+    def test_second_element_at_cap_still_tagged(self):
+        event = {"dns": {"answers": ["short-one", "B" * ZEEK_MAX_FIELD_STRING_BYTES]}}
         self.assertTrue(tag_dns_answer_truncated_by_zeek(event))
 
-    def test_nested_array_at_length_tagged(self):
-        event = {"dns": {"answers": [["A" * ZEEK_TXT_TRUNCATION_LENGTH]]}}
+    def test_nested_array_at_cap_tagged(self):
+        event = {"dns": {"answers": [["A" * ZEEK_MAX_FIELD_STRING_BYTES]]}}
         self.assertTrue(tag_dns_answer_truncated_by_zeek(event))
 
-    def test_scalar_answers_at_length_tagged(self):
-        event = {"dns": {"answers": "C" * ZEEK_TXT_TRUNCATION_LENGTH}}
+    def test_scalar_answers_at_cap_tagged(self):
+        event = {"dns": {"answers": "C" * ZEEK_MAX_FIELD_STRING_BYTES}}
         self.assertTrue(tag_dns_answer_truncated_by_zeek(event))
 
     def test_no_dns_field_no_crash_no_tag(self):
@@ -805,15 +823,19 @@ class DnsAnswerTruncatedByZeekTaggingTests(unittest.TestCase):
         event = {"dns": {"answers": 12345}}
         self.assertFalse(tag_dns_answer_truncated_by_zeek(event))
 
-    def test_astral_char_boundary_utf16_units_not_code_points(self):
-        # Same UTF-16-code-unit-vs-code-point divergence as
-        # OversizedDnsAnswerTaggingTests' equivalent test: 2048 astral
-        # (surrogate-pair) chars = 4096 UTF-16 units (tagged); 2048 BMP
-        # chars = 2048 units (not tagged).
-        astral = {"dns": {"answers": ["\U0001F600" * 2048]}}
-        bmp = {"dns": {"answers": ["A" * 2048]}}
-        self.assertTrue(tag_dns_answer_truncated_by_zeek(astral))
-        self.assertFalse(tag_dns_answer_truncated_by_zeek(bmp))
+    def test_multibyte_content_measured_in_utf8_bytes_not_characters(self):
+        # Zeek's cap is a BYTE limit (Manager.cc: calculate_allowed on
+        # String::Len()): 4095 two-byte chars + 1 ASCII char = 8191 bytes
+        # IS at the cap even though it is only 4096 characters / UTF-16
+        # units, and 8191 two-byte chars (16382 bytes) is NOT.
+        two_byte = "\u00e9"
+        self.assertEqual(len(two_byte.encode("utf-8")), 2)
+        at_cap_value = two_byte * ((ZEEK_MAX_FIELD_STRING_BYTES - 1) // 2) + "A"
+        self.assertEqual(len(at_cap_value.encode("utf-8")), ZEEK_MAX_FIELD_STRING_BYTES)
+        at_cap = {"dns": {"answers": [at_cap_value]}}
+        char_count_at_cap = {"dns": {"answers": [two_byte * ZEEK_MAX_FIELD_STRING_BYTES]}}
+        self.assertTrue(tag_dns_answer_truncated_by_zeek(at_cap))
+        self.assertFalse(tag_dns_answer_truncated_by_zeek(char_count_at_cap))
 
 
 class CeilingConsistencyTests(unittest.TestCase):
@@ -889,6 +911,18 @@ class CeilingConsistencyTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(self._logstash_array_field_ceiling(bracket_path), expected_ceiling)
 
+    def test_zeek_cap_literal_matches_this_modules_constant(self):
+        # #389: the exact-length comparison in configs/logstash.conf must
+        # equal ZEEK_MAX_FIELD_STRING_BYTES here (and, via tests/pipeline/
+        # test_zeek_log_field_string_cap.py, config.zeek's redef) — an
+        # exact-match signal is silently, permanently dark if either side
+        # drifts by one.
+        block = self._logstash_array_fields_block_text()
+        literals = re.findall(r"a\.bytesize == (\d+)", block)
+        self.assertEqual(len(literals), 1,
+                         "expected exactly one `a.bytesize == <cap>` comparison in the #389 block")
+        self.assertEqual(int(literals[0]), ZEEK_MAX_FIELD_STRING_BYTES)
+
     def test_logstash_array_fields_block_field_and_tag_names_not_typoed(self):
         # security-auditor round 2 MEDIUM (#352), generalized by #390:
         # this repo has hit the "a nested-field-path or output-name typo
@@ -912,12 +946,13 @@ class CeilingConsistencyTests(unittest.TestCase):
                 'event.set("[pipeline][oversized]", "true")',
                 'event.set("[pipeline][oversized_fields]", oversized_hit)',
                 'event.tag("pipeline_oversized")',
-                # #389: the interim exactly-4096-code-unit signal for
-                # Zeek's own silent TXT-answer truncation - unchanged by
-                # #390 (still dns.answers-specific), same
-                # renamed-or-removed-silently risk as the literals above.
+                # #389: the exactly-at-the-cap signal for Zeek's own silent
+                # TXT-answer truncation - unchanged by #390 (still
+                # dns.answers-specific), same renamed-or-removed-silently
+                # risk as the literals above. The numeric literal itself is
+                # pinned by test_zeek_cap_literal_matches_this_modules_constant.
                 'dns_answers = event.get("[dns][answers]")',
-                '(a.encode("UTF-16LE").bytesize / 2) == 4096',
+                'a.bytesize == ',
                 'event.set("[pipeline][dns_answer_truncated_by_zeek]", "true")',
                 'event.tag("pipeline_dns_answer_truncated_by_zeek")'):
             with self.subTest(literal=literal):

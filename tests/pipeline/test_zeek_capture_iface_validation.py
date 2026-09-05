@@ -91,14 +91,21 @@ def _fake_ip_script(diag_fails=False):
     `diag_fails=True` additionally makes the two commands used only by the
     failure DIAGNOSTIC (`link show up`, `route show default`) exit non-zero,
     which is how a missing/erroring `ip` behaves in production.
+
+    Built by concatenation rather than f-strings on purpose: escape
+    sequences inside f-string expressions are PEP 701 syntax, valid on
+    Python 3.12 but a SyntaxError on the 3.11 that CI runs.
     """
-    diag = "exit 7" if diag_fails else None
+    up_cmd = 'echo "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536"'
+    route_cmd = 'echo "default via 192.168.1.1 dev eth4"'
+    if diag_fails:
+        up_cmd = route_cmd = "exit 7"
     return (
         '#!/bin/bash\n'
         'case "$*" in\n'
         '  *"link show dev"*) printf "%s\\n" "$FAKE_IP_LINE" ;;\n'
-        f'  *"link show up"*) {diag or "echo \"1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536\""} ;;\n'
-        f'  *"route show default"*) {diag or "echo \"default via 192.168.1.1 dev eth4\""} ;;\n'
+        '  *"link show up"*) ' + up_cmd + ' ;;\n'
+        '  *"route show default"*) ' + route_cmd + ' ;;\n'
         '  *) exit 1 ;;\n'
         'esac\n')
 

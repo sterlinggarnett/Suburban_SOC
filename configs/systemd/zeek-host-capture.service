@@ -62,6 +62,14 @@
 #      logs' key sets and the specific values rule logic depends on. `zeek -e 'print
 #      SSH::Password_Guessing; print Intel::ADDR'` (loading the relevant policy first)
 #      is a fast spot-check for enum-shaped dependencies specifically.
+#      #389: also version-dependent, and NOT visible in any log's key set — the log
+#      writer's own Log::default_max_field_string_bytes cap (8.1.0+, 4096 upstream,
+#      redef'd to 8191 = dns.answers' ignore_above in config.zeek) and its
+#      log_string_field_truncated weird.
+#      tests/detections/test_zeek_log_field_string_cap_live.py pins both the
+#      upstream default and the redef's effect on the real image — run it as part
+#      of this diff too (a moved default or renamed weird silently blinds
+#      configs/logstash.conf's exact-length tag and slo_metrics' weird count).
 #      #411: the fixture PCAP(s) here must include an SMTP-carried attachment, not
 #      just an HTTP download — files.log's mime_type/source pair is verified
 #      separately for each transport (net_zeek_executable_download.yml vs.
@@ -293,7 +301,7 @@ ExecStartPre=/bin/mkdir -p /storage/PCAP/zeek_logs /storage/PCAP/intel
 # (`2>/dev/null || true`) individually, same posture the combined line had —
 # the trailing capture-loss grep below is still what actually catches a
 # genuinely bad config.zeek loudly, not either cp's own exit status.
-ExecStartPre=/bin/bash -c 'set -e; cp --remove-destination ${SOC_REPO}/configs/intel/config.zeek /storage/PCAP/intel/config.zeek 2>/dev/null || true; cp --remove-destination ${SOC_REPO}/configs/intel/data/intel.dat /storage/PCAP/intel/intel.dat 2>/dev/null || true; [ -s /storage/PCAP/intel/intel.dat ] || cp --remove-destination ${SOC_REPO}/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat; grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek || { echo "FATAL: deployed config.zeek is missing an expected at-load line - stale copy" >&2; exit 1; }'
+ExecStartPre=/bin/bash -c 'set -e; cp --remove-destination ${SOC_REPO}/configs/intel/config.zeek /storage/PCAP/intel/config.zeek 2>/dev/null || true; cp --remove-destination ${SOC_REPO}/configs/intel/data/intel.dat /storage/PCAP/intel/intel.dat 2>/dev/null || true; [ -s /storage/PCAP/intel/intel.dat ] || cp --remove-destination ${SOC_REPO}/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat; { grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek && grep -q "^redef Log::default_max_field_string_bytes = 8191;" /storage/PCAP/intel/config.zeek; } || { echo "FATAL: deployed config.zeek is missing an expected at-load line or the #389 Log redef - stale copy" >&2; exit 1; }'
 # intel-refresh.service (configs/systemd/intel-refresh.service) runs as the
 # unprivileged repo-owner user and needs to WRITE intel.dat into this same
 # directory on every scheduled refresh, not just at Zeek's own startup — but

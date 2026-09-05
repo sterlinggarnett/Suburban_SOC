@@ -466,21 +466,23 @@ class NetworkLiveFireTests(LiveFireTestCase):
         #
         # HONEST DISCLOSURE (tester-debugger, #352 review, live-verified
         # against the real pinned zeek/zeek:8.2.1 image via a hand-crafted
-        # 40-chunk/10000-byte TXT resource record): Zeek's own DNS analyzer
-        # independently truncates a TXT record's joined answers[] string at
-        # ~4096 characters — well under 8191 — with NO truncation marker
-        # anywhere in dns.log, JSON or TSV. That means real TXT-sourced
-        # dns.answers values can never actually reach 8191 chars in
-        # practice; #352's Logstash-side check is structurally unreachable
-        # for its stated primary use case, not a live gap today. This test
-        # still has real value: it proves ES's ignore_above mechanics work
-        # exactly as assumed for ANY producer of dns.answers over 8191
-        # chars, which is what #352's tag is defense-in-depth against (a
-        # future non-Zeek producer, or a future Zeek version without this
-        # internal cap) — it does not claim TXT records can reach this
-        # ceiling today. Filed as #389 (Zeek's own silent, unmarked
-        # ~4096-char truncation — a more directly exploitable blind spot
-        # than the one #352 addressed, needing a Zeek-side fix).
+        # 40-chunk/10000-byte TXT resource record; updated by #389's fix):
+        # that replay came back cut at exactly 4096 with NO truncation
+        # marker anywhere in dns.log, JSON or TSV. #389 root-caused the cut
+        # to Zeek's LOG WRITER (Log::default_max_field_string_bytes, 4096
+        # bytes upstream since 8.1, marked only as a log_string_field_
+        # truncated weird), not its DNS analyzer, and configs/intel/
+        # config.zeek now pins that cap to exactly 8191 — the SAME number as
+        # dns.answers' ignore_above, deliberately, so every Zeek-logged
+        # answer stays indexed and rule-matchable (a higher cap would leave
+        # answers in (8191, cap] unindexed and invisible to this rule —
+        # security-auditor, #389 review; raising both together is #545).
+        # So real TXT-sourced dns.answers values still never EXCEED 8191
+        # chars; #352's Logstash-side >8191 check stays defense-in-depth for
+        # non-Zeek producers only, by design. This test proves ES's
+        # ignore_above mechanics work exactly as assumed for ANY producer of
+        # dns.answers over 8191 chars; tests/detections/test_zeek_log_field_
+        # string_cap_live.py proves the Zeek end on the real pinned image.
         rule_path = SIGMA_DIR / "net_zeek_dns_txt_answer_abuse.yml"
         rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
         logsource = rule.get("logsource", {})

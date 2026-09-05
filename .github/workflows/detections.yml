@@ -217,3 +217,19 @@ jobs:
         # docker/tcpdump/the pinned image aren't usable on this runner — see the test
         # module's own docstring.
         run: python -m pytest tests/detections/test_zeek_mime_detection.py -v
+
+      - name: Zeek log-writer string-cap live tests against the pinned image (issue #389)
+        # Same non-required placement as the mime-detection step above, and it reuses
+        # the pinned image that step already pulled. Pins the image's upstream 4096-byte
+        # Log::default_max_field_string_bytes (and 256000-byte total) defaults, proves
+        # configs/intel/config.zeek's raised cap on the real image, and checks that a
+        # Zeek-truncated dns.answers element lands at exactly the value
+        # configs/logstash.conf's pipeline.dns_answer_truncated_by_zeek check keys on.
+        # No tcpdump needed (hand-built pcaps), only docker + the image. UNLIKE the mime
+        # step, SOC_REQUIRE_LIVE_ZEEK=1 turns an unusable docker/image into an ERROR
+        # here rather than a skip: this file is the only evidence about the image's
+        # cap behavior, so a run that could not exercise it must show red in this
+        # (non-required) job, not a silent green (security-auditor, #389 review).
+        env:
+          SOC_REQUIRE_LIVE_ZEEK: "1"
+        run: python -m pytest tests/detections/test_zeek_log_field_string_cap_live.py -v

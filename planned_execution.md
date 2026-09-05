@@ -9,6 +9,43 @@ Status: `[ ]` todo · `[~]` in-progress · `[x]` done · `[!]` blocked
 
 ## NEXT UP
 
+**Status as of 2026-09-04.**
+
+**Current phase:** M18 (ECS Pipeline & Field-Mapping Integrity), 16/19 closed.
+
+**Next unstarted item:** nothing in this repo is startable without the owner
+unblocking infrastructure. All 10 open issues are environment- or human-blocked:
+
+| # | Milestone | Blocked on |
+|---|---|---|
+| #545 | M18 | Array-aware `dns.answers` byte clamp, then raise both ceilings. **The one issue that is codeable today** — needs a live Logstash/ES stack to verify the clamp, so it is Docker-blocked at the verification step, not the design step |
+| #326 | M18 | Real Windows/PowerShell telemetry accumulating over time |
+| #405 | M18 | A live-pipeline perf benchmark, or a multi-session Sigma-corpus field-resolution design effort |
+| #265 | M16 | Live `docker compose up` to verify a new cert-minting block |
+| #333, #415, #421 | M17 | A live Docker + Zeek (+ ES) stack |
+| #443, #444 | M23 | A real capture host with real traffic |
+| #446 | M23 | Real-traffic threshold tuning (14 rules), owner-supplied institutional IOCs (2), DLP owner sign-off (2), a `request-body-limit` decision (2) |
+
+**Two owner actions would unblock most of this:**
+
+1. **Start Docker Desktop.** This WSL host *is* the capture host —
+   `zeek-host-capture.service`, `suricata.service`, `filebeat.service` and
+   `intel-refresh.timer` are all installed and enabled here — but the
+   `docker-desktop` WSL distro is Stopped, so `docker` is not on PATH,
+   `zeek-host-capture.service` has been crash-looping (`activating`,
+   NRestarts 1305) and the Zeek lane has written nothing since
+   `Aug 31 20:56`. Suricata and Filebeat are still active. Starting Docker
+   Desktop restores the Zeek lane and unblocks #265, #333, #415, #421 and
+   #545's verification step.
+2. **Close the M25 milestone object** (`gh api -X PATCH
+   repos/voltron-1/Suburban_SOC/milestones/30 -f state=closed`) — 17/17
+   issues are closed but the object is still `open`; this session's
+   permission classifier blocks the call.
+
+---
+
+**History — the 2026-08-16 restructure that produced the milestone table below:**
+
 **Restructured 2026-08-16, per direct request:** the backlog had grown to
 37 open issues, 33 of them with no milestone at all (filed as review
 follow-ups across M12–M16 and never triaged), plus 4 more crammed into
@@ -26,14 +63,14 @@ added since — see the last three rows):
 |---|---|---|
 | [M16 — Endpoint Onboarding & Threat-Intel Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/20) | ⏸️ 7/8 closed, 1 deferred (no actionable work left in this environment) — #265's doc-only half landed 2026-09-03 via PR #537 (operator docs now disclose the `tls: certificate required` gap); the cert-minting code still needs live Docker. The PR's squash message auto-closed #265 (GitHub parsed a negated closing phrase as a close); reopened the same day | Minting endpoint certs before a real host onboards; threat-intel/checkpoints compactor credentials have no detection coverage |
 | [M17 — Detection Rule Coverage & Correctness](https://github.com/voltron-1/Suburban_SOC/milestone/22) | ⏸️ 31/34 closed (updated 2026-09-03) — 12 issues closed 2026-08-29 via PRs #494–#502; #283 fixed and closed 2026-09-03 (PR #535, hedged per its own acceptance criteria rather than deferred); #333/#415/#421 remain, all needing a live Docker+Zeek+ES stack this sandbox doesn't have | Sigma rule logic gaps, spoofable/evadable detections, threshold-band blind spots, coverage-metric accuracy |
-| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 15/18 closed (updated 2026-09-03) — #403 (PR #530), #390 (PR #531) and #396 (PR #532) shipped and closed 2026-09-03; #389 got an interim Logstash visibility tag via PR #529 (`pipeline.dns_answer_truncated_by_zeek`, fires on an answer element of exactly 4096 chars) but stays open — the real Zeek-side fix and SLO-dashboard wiring need a live Zeek/Docker environment; #326 externally blocked (needs real Windows/PowerShell telemetry accumulating over time); #405 needs either a live-pipeline perf benchmark or a dedicated multi-session Sigma-corpus field-resolution design effort (assessed and commented, deliberately not attempted this session — see issue #405) | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
+| [M18 — ECS Pipeline & Field-Mapping Integrity](https://github.com/voltron-1/Suburban_SOC/milestone/23) | ⏸️ 16/19 closed (updated 2026-09-04) — #403 (PR #530), #390 (PR #531) and #396 (PR #532) shipped and closed 2026-09-03. **#389 fixed and closed 2026-09-04 via PR #546**: root-caused from Zeek 8.2.1 source to the LOG WRITER, not the DNS analyzer — Zeek >= 8.1 caps every logged string field at `Log::default_max_field_string_bytes` (4096 upstream) and marks the cut only as a connection-less `log_string_field_truncated` weird, never in `dns.log`. `configs/intel/config.zeek` now pins that cap to exactly 8191 = `dns.answers`' `ignore_above` (a higher cap would leave Zeek-logged answers in (8191, cap] unindexed and invisible to `net_zeek_dns_txt_answer_abuse.yml` — security-auditor finding on a 16384 first draft), the exact-length tag from PR #529 was retargeted to 8191 bytes, all four capture paths' staleness guards now require the exact redef line, and two SLO metrics landed (`zeek_log_field_truncation_count` NO_TARGET for the sampled weird, `dns_answer_truncated_by_zeek_count` target 0 with its own 1h window). Verified on the real pinned image in CI's live-fire job (5 tests, `SOC_REQUIRE_LIVE_ZEEK=1` so a skip would be red). #545 filed for raising both ceilings together (needs an array-aware `dns.answers` byte clamp). Still open: #326 (externally blocked, needs real Windows/PowerShell telemetry accumulating over time), #405 (needs a live-pipeline perf benchmark or a dedicated Sigma-corpus field-resolution design effort) and #545 | Logstash rename/copy drift vs. suburban-soc-ecs.yml's claims, dashboard fields that don't exist on the real mapping, truncation ceilings, index-template rollover |
 | [M19 — SOC Platform Credential & Secret Hygiene](https://github.com/voltron-1/Suburban_SOC/milestone/24) | ✅ 7/7 closed (corrected 2026-08-28: the restructure's "6" undercounted by one; #374 was already assigned) | Cleartext passwords in argv, ES role drift with no sync check, no live self-check on role regressions, unpinned CI toolchain, ES network exposure |
 | [M20 — SOAR Response-Path Hardening](https://github.com/voltron-1/Suburban_SOC/milestone/25) | ✅ 6/6 closed | Residual hive-mind-broker/#277 hardening, autonomous-isolation MAC-gate policy decision |
 | [M21 — Zeek Sensor Operational Resilience](https://github.com/voltron-1/Suburban_SOC/milestone/26) | ✅ 3/3 closed — **CLOSED** | Symlink/ownership primitives on zeek-host-capture.service; intel-refresh.service config/data co-location + unpinned CA trust-on-every-use |
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 | [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 1/4 closed (updated 2026-09-01). PR #506 (Stage 1, #443/#444) and PR #507 (Stage 2+3, #445/#446) are both merged to `main`. #445 closed outright. #443/#444 are structurally complete but stay open — their own "done when" needs a live capture host + real traffic this sandbox doesn't have (same blocker class as M17's #415/#421). #446 (100-rule starter set) stands at 80/100 rules enabled with TP/TN pcap fixtures replayed through the real `suricata` binary as of PR #534 (2026-09-03, SID 9000003 root-caused as a deterministic one-segment loss in pcap replay); the remaining 20: 14 need `detection_filter` tuning against real traffic, 2 unresolved placeholders (9000013/9000099), 2 DLP rules need owner sign-off (9000065/9000066), 2 dead-as-configured (9000063/9000064) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
 | [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ✅ 5/5 closed — **CLOSED** (#449/#453/#463/#442/#441 all merged via PR #505, 2026-08-30) | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
-| [M25 — Repo Audit Remediation](https://github.com/voltron-1/Suburban_SOC/milestone/30) | ✅ 17/17 closed — **CLOSED 2026-09-03** (created 2026-08-31, repo-audit round 2, #508–#523; #539 filed and closed 2026-09-03) — #514/#523 closed via the owner-provided wiki refresh (wiki commit `25ab241`) and its companion PR #526; #508/#511-#513/#515-#521 closed 2026-09-02 via PR #525 (cert org-name fix, README/planned_execution/CLAUDE.md status corrections, missing troubleshooting + playbook entries, dead workflow removal, UIW branding cleanup). #510 (Projects v2 board confirmation) and #522 (wiki Watcher-era pages) closed 2026-09-03 from a local WSL session whose `gh` is authenticated with `project` scope: the board at `users/voltron-1/projects/17` verified as the repo-linked board and re-synced (44 never-added issues added, #283 moved to Done, 282 items, every closed issue in Done), and the last #522 page, Commit-Approach, rewritten to the real PR-only CI-gated workflow (wiki commit `e6d7cd5`). #509 done 2026-09-03 by owner decision (enforce admins only): `enforce_admins` enabled on `main` via the dedicated endpoint from the local `gh`, verified 9 checks / strict / no review gate unchanged. #539 closed the same day: `setup_branch_protection.sh` now lists the live 9 checks, unions them with whatever is already required (a re-run can only tighten), keeps `enforce_admins`, puts the review gate behind `REQUIRE_REVIEW=1` per the #509 decision; SOP-007's recovery step verifies the live policy first. No open M25 issues | Repo-audit follow-ups: stale wiki pages (Watcher-era architecture, SOP-number collisions), UIW branding contamination, stale CLAUDE.md/README/planned_execution status lines, missing troubleshooting + playbook entries, branch-protection and cert-org fixes |
+| [M25 — Repo Audit Remediation](https://github.com/voltron-1/Suburban_SOC/milestone/30) | ✅ 17/17 closed — **CLOSED 2026-09-03** (created 2026-08-31, repo-audit round 2, #508–#523; #539 filed and closed 2026-09-03) — #514/#523 closed via the owner-provided wiki refresh (wiki commit `25ab241`) and its companion PR #526; #508/#511-#513/#515-#521 closed 2026-09-02 via PR #525 (cert org-name fix, README/planned_execution/CLAUDE.md status corrections, missing troubleshooting + playbook entries, dead workflow removal, UIW branding cleanup). #510 (Projects v2 board confirmation) and #522 (wiki Watcher-era pages) closed 2026-09-03 from a local WSL session whose `gh` is authenticated with `project` scope: the board at `users/voltron-1/projects/17` verified as the repo-linked board and re-synced (44 never-added issues added, #283 moved to Done, 282 items, every closed issue in Done), and the last #522 page, Commit-Approach, rewritten to the real PR-only CI-gated workflow (wiki commit `e6d7cd5`). #509 done 2026-09-03 by owner decision (enforce admins only): `enforce_admins` enabled on `main` via the dedicated endpoint from the local `gh`, verified 9 checks / strict / no review gate unchanged. #539 closed the same day: `setup_branch_protection.sh` now lists the live 9 checks, unions them with whatever is already required (a re-run can only tighten), keeps `enforce_admins`, puts the review gate behind `REQUIRE_REVIEW=1` per the #509 decision; SOP-007's recovery step verifies the live policy first. The further hardening that review recommended landed 2026-09-04 as **PR #543** (whole live policy carried through the full PUT, checks pinned to the Actions app, read-back verification, 30-case fake-`gh` test in `tests/setup`) with doc close-out **PR #544**. No open M25 issues; the GitHub milestone *object* is still `open` and needs the owner's `PATCH .../milestones/30 -f state=closed` (this session's permission classifier blocks it) | Repo-audit follow-ups: stale wiki pages (Watcher-era architecture, SOP-number collisions), UIW branding contamination, stale CLAUDE.md/README/planned_execution status lines, missing troubleshooting + playbook entries, branch-protection and cert-org fixes |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -4261,6 +4298,45 @@ are implemented in code; checked off with that one caveat noted inline.
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
 
 ---
+
+## LAST SESSION — 2026-09-04
+
+Status check, then one issue closed end-to-end.
+
+- **Tracker check.** Board (`users/voltron-1/projects/17`) and wiki were both
+  already current. README and this doc were missing PR #543/#544 (branch-
+  protection hardening, merged 2026-09-04) in their M25 rows — corrected here.
+  The M25 milestone *object* is still `open` on GitHub despite 17/17 closed;
+  the `PATCH … state=closed` call is blocked by this session's permission
+  classifier, so it is handed to the owner (see NEXT UP).
+- **Host finding.** This WSL host is the capture host, not just a checkout.
+  `docker-desktop` is Stopped → no `docker` binary → `zeek-host-capture.service`
+  crash-looping since the last Zeek write on `Aug 31 20:56`; Suricata and
+  Filebeat still active. `CLAUDE.md`'s "no live Docker" note describes *cloud*
+  sessions; locally the blocker is just Docker Desktop being off.
+- **#389 closed (M18) via PR #546.** Root-caused from Zeek 8.2.1 source
+  (`init-bare.zeek` + `logging/Manager.cc`) to the LOG WRITER, not the DNS
+  analyzer: Zeek >= 8.1 caps every logged string field at
+  `Log::default_max_field_string_bytes` (4096 upstream) and marks the cut only
+  as a connection-less `log_string_field_truncated` weird — so it was never
+  truly unmarked, just never marked in `dns.log`. `config.zeek` now pins the
+  cap to exactly 8191 (= `dns.answers`' `ignore_above`), version-guarded for
+  pre-8.1 Zeek. A 16384 first draft was rejected by security-auditor review:
+  any cap above the indexing ceiling leaves Zeek-logged answers in (8191, cap]
+  stored but unindexed and invisible to `net_zeek_dns_txt_answer_abuse.yml`,
+  a blind window the old 4096 cut did not have. Also shipped: the exact-length
+  tag retargeted to 8191 bytes, all four capture-path staleness guards now
+  requiring the exact `^redef … = 8191;` line (a comment-only or wrong-value
+  copy refuses to start), `zeek_log_field_truncation_count` (NO_TARGET) and
+  `dns_answer_truncated_by_zeek_count` (target 0, own 1h window so one forged
+  record cannot page for a week), and a pinned-image live test wired into CI's
+  live-fire job with `SOC_REQUIRE_LIVE_ZEEK=1` so a skip is red, not green —
+  **5 tests ran green there**. Reviewed in parallel by security-auditor,
+  code-reviewer and tester-debugger; every finding applied (dispositions in
+  `findings/20260904-389-review-summary.md`).
+- **#545 filed** (M18, milestoned on creation): raise `dns.answers`
+  `ignore_above` and the Zeek cap together, which needs an array-aware
+  `dns.answers` byte clamp first.
 
 ## LAST SESSION — 2026-09-03
 

@@ -415,6 +415,18 @@ ExecStart=/bin/bash ${SOC_REPO}/scripts/setup/host_capture.sh "${CAPTURE_IFACE}"
 ExecStop=-/usr/bin/docker stop -t 10 zeek-host-capture
 Restart=always
 RestartSec=5
+# host_capture.sh's interface preflight exits 78 (EX_CONFIG) when CAPTURE_IFACE
+# names an interface that is not up — a condition retrying can never fix. Without
+# this line Restart=always loops on it forever: live on 2026-09-05 a stale
+# CAPTURE_IFACE=eth6 pin (WSL2 renumbered the NICs across a reboot; the live LAN
+# interface was eth4) crash-looped 123 times and then WEDGED at `active (running)`
+# with a hung `docker run` attached to a container whose Zeek had already died —
+# five days with zero packets captured and `systemctl is-active` saying `active`
+# throughout. Parking the unit in `failed` instead is what makes that visible to
+# `systemctl is-active`, the SLO liveness metric, and any operator who looks.
+# Deliberately NARROW: only 78 is terminal, so the Docker-Desktop boot race that
+# StartLimitIntervalSec=0 above exists to survive still retries unbounded.
+RestartPreventExitStatus=78
 
 # audit #167 / NIST CM-7: a sandboxing directive block was added here and then
 # REVERTED (2026-07-09) — it broke live capture in production (crash-loop,

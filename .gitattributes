@@ -16,6 +16,18 @@
 *.env       text eol=lf
 # Cron fragments are sourced/parsed line-by-line — keep LF
 *.cron      text eol=lf
+# systemd units (#557). `git config core.autocrlf` is true on the capture host, so
+# without these two globs every unit file checks out CRLF while HEAD stores LF —
+# `configs/systemd/*.service` were all in that state when this was added. Nothing is
+# broken TODAY: verified empirically on this host with a throwaway --user unit written
+# with explicit \r\n terminators, systemd strips the \r (Environment=SOC_PROBE=value
+# came back without one, and ExecStart printed the unedited value). But unit files
+# carry absolute paths and argument lists in exactly the way the *.conf/*.cron entries
+# above were written to protect, they are `sudo cp`-ed verbatim to /etc/systemd/system,
+# and relying on a parser's leniency is a weaker guarantee than not producing the
+# problem. Two globs short of the hazard this file exists to prevent.
+*.service   text eol=lf
+*.timer     text eol=lf
 # Zeek Intel feed files — tab-separated, MUST be LF (CRLF corrupts the last field)
 *.dat       text eol=lf
 *.yml       text eol=lf

@@ -218,6 +218,52 @@ LockPersonality=true
 UMask=0077
 CapabilityBoundingSet=
 SystemCallArchitectures=native
+# #558: the directive set below was ported FROM intel-refresh.service, closing a
+# one-way drift. That unit's own comment says its set was "verified against this exact
+# directive set working for slo-metrics.service in production" — but the porting only
+# ever went the other way, so the unit the comment cites as the reference had none of
+# them. Both units run as the same User=, make the same class of outbound HTTPS calls,
+# and are Type=oneshot on a timer, so there is no property of this one that argued
+# against them; they were simply never applied here.
+#
+# Measured, not asserted: `systemd-analyze security --offline=true` scored this unit
+# 3.8 OK before and 1.6 OK after, which is exactly intel-refresh.service's score and
+# the score stack-health.service (#555) was born with.
+#
+# RestrictAddressFamilies= is enforced and AF_NETLINK is retained deliberately, but the
+# reason recorded across this unit family was WRONG and is corrected here rather than
+# copied forward again (#558). Every unit in the family stated that omitting AF_NETLINK
+# would break DNS resolution, "verified in production" -- an assertion that had never
+# actually been measured, only pasted from unit to unit. Measured on this host with
+# paired throwaway --user units:
+#
+#   with    AF_NETLINK -> AF_NETLINK socket ALLOWED, AF_PACKET BLOCKED (errno 97)
+#   without AF_NETLINK -> AF_NETLINK socket BLOCKED (errno 97), AF_PACKET BLOCKED
+#   getaddrinfo("elastic.co", 443) SUCCEEDED IN BOTH CASES
+#
+# So the directive is genuinely enforced (the AF_PACKET result proves the sandbox is
+# live, and the paired AF_NETLINK result proves the list is what changed), but glibc on
+# this host resolves fine without it. AF_NETLINK stays because it costs nothing and
+# getaddrinfo() DOES use netlink on configurations where AI_ADDRCONFIG has to enumerate
+# interfaces — dropping it would trade a free allowance for a portability failure that
+# only shows up on someone else's host. Retained as a precaution with a measured basis,
+# not as a demonstrated requirement.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+PrivateDevices=true
+ProtectProc=invisible
+ProcSubset=pid
+# Deliberately 512M rather than intel-refresh.service's 256M, and the difference is
+# reasoned rather than sloppy. That unit's cap is a real control: it reads two entire
+# third-party HTTP responses into bash variables with no size limit of their own, so a
+# misbehaving feed endpoint is the threat it bounds. This unit only issues small,
+# bounded queries against a local Elasticsearch. The failure mode of a too-tight cap
+# here is worse than the risk it buys — an OOM-killed monitoring run is a silent gap in
+# exactly the lane that is supposed to notice gaps, and #550 is the whole history of
+# this unit dying for an auxiliary reason. Matches stack-health.service (#555), so the
+# two self-monitoring lanes are bounded identically.
+MemoryMax=512M
 
 [Install]
 WantedBy=multi-user.target

@@ -199,11 +199,24 @@ LockPersonality=true
 UMask=0077
 CapabilityBoundingSet=
 SystemCallArchitectures=native
-# AF_NETLINK is required, not optional: glibc's getaddrinfo() (used by curl
-# for the two feed URLs and by the ES calls) enumerates local addresses over
-# netlink - omitting it breaks DNS resolution outright (security-auditor
-# review, verified against this exact directive set working for
-# slo-metrics.service in production).
+# RestrictAddressFamilies= is enforced and AF_NETLINK is retained deliberately, but the
+# reason recorded across this unit family was WRONG and is corrected here rather than
+# copied forward again (#558). Every unit in the family stated that omitting AF_NETLINK
+# would break DNS resolution, "verified in production" -- an assertion that had never
+# actually been measured, only pasted from unit to unit. Measured on this host with
+# paired throwaway --user units:
+#
+#   with    AF_NETLINK -> AF_NETLINK socket ALLOWED, AF_PACKET BLOCKED (errno 97)
+#   without AF_NETLINK -> AF_NETLINK socket BLOCKED (errno 97), AF_PACKET BLOCKED
+#   getaddrinfo("elastic.co", 443) SUCCEEDED IN BOTH CASES
+#
+# So the directive is genuinely enforced (the AF_PACKET result proves the sandbox is
+# live, and the paired AF_NETLINK result proves the list is what changed), but glibc on
+# this host resolves fine without it. AF_NETLINK stays because it costs nothing and
+# getaddrinfo() DOES use netlink on configurations where AI_ADDRCONFIG has to enumerate
+# interfaces — dropping it would trade a free allowance for a portability failure that
+# only shows up on someone else's host. Retained as a precaution with a measured basis,
+# not as a demonstrated requirement.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM

@@ -10,9 +10,15 @@
 # zeek-host-capture.service and suricata-host-capture.service (#443) are both
 # long-running capture processes; restarting either briefly interrupts live
 # packet capture, so this script asks before doing so, once per unit.
-# slo-metrics.service is Type=oneshot, triggered by slo-metrics.timer — no
-# restart needed, it picks up the new unit definition on its next run after
-# `daemon-reload`. This script runs it once immediately to verify.
+# slo-metrics.service and stack-health.service (#555) are Type=oneshot, triggered by
+# their timers — no restart needed, they pick up the new unit definition on their next
+# run after `daemon-reload`. This script runs slo-metrics once immediately to verify.
+#
+# stack-health.timer may not be installed yet on a given host (#555 shipped it new).
+# This script ENABLES it if it is not already enabled, but deliberately does not run
+# the service: stack_health.sh needs SOC_HEALTH_PASSWORD provisioned and the CA pin
+# seeded first — see the install sequence in docs/SOP-005-reliability.md, which must be
+# followed once before this script is useful for that unit.
 #
 # The slo_metrics ES role + user (audit #167) are a separate, already-applied
 # change on the live cluster — this script only touches systemd unit files.
@@ -29,12 +35,15 @@ cd "$REPO"
 
 echo "==> Before scores (for comparison)"
 sudo systemd-analyze security --no-pager slo-metrics.service || true
+sudo systemd-analyze security --no-pager stack-health.service || true
 sudo systemd-analyze security --no-pager zeek-host-capture.service || true
 sudo systemd-analyze security --no-pager suricata-host-capture.service || true
 
 echo
 echo "==> Installing updated unit files"
 sudo cp configs/systemd/slo-metrics.service /etc/systemd/system/slo-metrics.service
+sudo cp configs/systemd/stack-health.service /etc/systemd/system/stack-health.service
+sudo cp configs/systemd/stack-health.timer /etc/systemd/system/stack-health.timer
 sudo cp configs/systemd/zeek-host-capture.service /etc/systemd/system/zeek-host-capture.service
 sudo cp configs/systemd/suricata-host-capture.service /etc/systemd/system/suricata-host-capture.service
 sudo systemctl daemon-reload
@@ -70,8 +79,19 @@ sleep 2
 sudo journalctl -u slo-metrics -n 30 --no-pager
 
 echo
+echo "==> Enabling stack-health.timer if it is not already enabled (#555)"
+if [[ "$(systemctl is-enabled stack-health.timer 2>/dev/null || true)" == "enabled" ]]; then
+  echo "    already enabled — nothing to do"
+else
+  echo "    NOT enabled. Enable it only AFTER the one-time install sequence in"
+  echo "    docs/SOP-005-reliability.md (provision SOC_HEALTH_PASSWORD, seed the CA pin):"
+  echo "      sudo systemctl enable --now stack-health.timer"
+fi
+
+echo
 echo "==> After scores"
 sudo systemd-analyze security --no-pager slo-metrics.service || true
+sudo systemd-analyze security --no-pager stack-health.service || true
 sudo systemd-analyze security --no-pager zeek-host-capture.service || true
 sudo systemd-analyze security --no-pager suricata-host-capture.service || true
 
@@ -88,6 +108,16 @@ echo "     suricata-host-capture -n 30 --no-pager for its own startup errors."
 echo "  5. systemd-analyze security scores above should be meaningfully lower"
 echo "     than baseline (slo-metrics: was 9.2 UNSAFE; zeek-host-capture: was 9.6"
 echo "     UNSAFE — zeek-host-capture will NOT reach <=6.0, see issue #182)."
+echo "     Recorded for #558, measured with 'systemd-analyze security --offline=true'"
+echo "     against the repo unit files (this host had no live systemd copy of the"
+echo "     new definition at the time):"
+echo "       slo-metrics.service       3.8 OK  ->  1.6 OK   (this change)"
+echo "       intel-refresh.service     1.6 OK              (unchanged, the source)"
+echo "       checkpoints-compact       1.6 OK              (unchanged)"
+echo "       threat-intel-compact      1.6 OK              (unchanged)"
+echo "       stack-health.service      1.6 OK              (#555, born at parity)"
+echo "     A LIVE score from the command above may differ slightly from the offline"
+echo "     one; if it does, the live number is the one to trust and record."
 echo "     suricata-host-capture has no established baseline yet (#443's own"
 echo "     unit deliberately skips untested sandboxing directives — see its"
 echo "     header) — record its score here on first real deploy."

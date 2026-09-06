@@ -92,11 +92,31 @@ class UnitFilesExistTests(unittest.TestCase):
         self.assertTrue(TIMER_PATH.is_file(), f"expected {TIMER_PATH}")
 
     def test_exec_start_points_at_the_real_script(self):
+        """The unit hardcodes the DEPLOY host's absolute path, which is not the
+        checkout root anywhere else (CI runs under /home/runner/work/...), so
+        compare the repo-relative tail and prove the file exists separately —
+        not `str(SCRIPT_PATH)`, which only holds on the capture host."""
         execs = _directives(SERVICE, "ExecStart")
         self.assertEqual(1, len(execs), f"expected exactly one ExecStart=, got {execs}")
-        self.assertIn(str(SCRIPT_PATH), execs[0],
-                      "ExecStart must invoke scripts/setup/stack_health.sh by absolute path")
+        self.assertTrue(execs[0].endswith("/scripts/setup/stack_health.sh"),
+                        f"ExecStart must invoke scripts/setup/stack_health.sh: {execs[0]}")
         self.assertTrue(SCRIPT_PATH.is_file(), f"{SCRIPT_PATH} does not exist")
+
+    def test_absolute_paths_match_the_sibling_units(self):
+        """Every path in this unit is absolute and rooted at the same deploy
+        prefix the other units use — a unit that names a path no other unit
+        agrees on is a deployment bug nothing else would catch."""
+        prefix = "/home/tjlam/projects/Suburban-SOC"
+        sibling = (SYSTEMD / "slo-metrics.service").read_text(encoding="utf-8")
+        self.assertIn(prefix, sibling,
+                      "the reference prefix moved — update both units together")
+        repo_refs = [ln for ln in _lines(SERVICE)
+                     if ln.startswith(("ExecStart=", "ExecStartPre="))
+                     and "/scripts/setup/" in ln]
+        self.assertTrue(repo_refs, "no repo-rooted Exec* directives found")
+        for ln in repo_refs:
+            with self.subTest(line=ln):
+                self.assertIn(f"{prefix}/scripts/setup/", ln)
 
     def test_script_is_invoked_through_an_explicit_interpreter(self):
         """`#!/usr/bin/env bash` resolves through PATH, which systemd does not

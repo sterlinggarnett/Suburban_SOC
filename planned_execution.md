@@ -9,38 +9,47 @@ Status: `[ ]` todo · `[~]` in-progress · `[x]` done · `[!]` blocked
 
 ## NEXT UP
 
-**Status as of 2026-09-04.**
+**Status as of 2026-09-05.**
 
-**Current phase:** M18 (ECS Pipeline & Field-Mapping Integrity), 16/19 closed.
+**Current phase:** M26 (Sensor Liveness & Monitoring Independence), 0/2 — opened
+2026-09-05 after a five-day capture blackout went entirely unalerted.
 
-**Next unstarted item:** nothing in this repo is startable without the owner
-unblocking infrastructure. All 10 open issues are environment- or human-blocked:
+**Next unstarted item:** **#550** — `slo-metrics.service` dies `203/EXEC`
+whenever Docker Desktop is stopped, because its
+`ExecStartPre=/usr/bin/docker cp …` dangles. This is the highest-value item in
+the repo right now and it is **not** blocked: it needs no live capture, no real
+traffic and no owner action. While it is broken, the lane holding
+`metric_zeek_ingest_lag_seconds()` cannot tell anyone a sensor has gone dark —
+which is precisely why the 2026-08-31 → 09-05 Zeek outage was found by hand
+rather than by an alert.
+
+Then **#549** (output-derived liveness supervisor), which closes the wedge that
+PR #551 deliberately left open.
 
 | # | Milestone | Blocked on |
 |---|---|---|
-| #545 | M18 | Array-aware `dns.answers` byte clamp, then raise both ceilings. **The one issue that is codeable today** — needs a live Logstash/ES stack to verify the clamp, so it is Docker-blocked at the verification step, not the design step |
+| **#550** | **M26** | **Nothing — startable now** |
+| **#549** | **M26** | Nothing structural; wants #550 first so the alert path exists |
+| #545 | M18 | Array-aware `dns.answers` byte clamp. Codeable, and its verification step is **no longer blocked** — the live Logstash/ES stack is up |
 | #326 | M18 | Real Windows/PowerShell telemetry accumulating over time |
 | #405 | M18 | A live-pipeline perf benchmark, or a multi-session Sigma-corpus field-resolution design effort |
-| #265 | M16 | Live `docker compose up` to verify a new cert-minting block |
-| #333, #415, #421 | M17 | A live Docker + Zeek (+ ES) stack |
-| #443, #444 | M23 | A real capture host with real traffic |
+| #265 | M16 | Live `docker compose up` to verify a new cert-minting block — **now unblocked**, Docker Desktop is running |
+| #333, #415, #421 | M17 | A live Docker + Zeek stack — **now unblocked**, the Zeek lane is capturing again as of 2026-09-05 |
+| #443, #444 | M23 | A real capture host with real traffic. **Partially reframed:** this host *is* the capture host, but the repo's `suricata-host-capture.service` is not installed — the running Suricata is the distro unit on a `DOWN eth0` decoding **0 packets** |
 | #446 | M23 | Real-traffic threshold tuning (14 rules), owner-supplied institutional IOCs (2), DLP owner sign-off (2), a `request-body-limit` decision (2) |
 
-**Two owner actions would unblock most of this:**
+**The blocked list shrank sharply this session.** Docker Desktop is running and
+the Zeek lane is live again, so #265, #333, #415, #421 and #545's verification
+step are all startable. The remaining hard blocks are the ones needing real
+Windows telemetry (#326), real traffic (#446, #443/#444), or a dedicated design
+effort (#405).
 
-1. **Start Docker Desktop.** This WSL host *is* the capture host —
-   `zeek-host-capture.service`, `suricata.service`, `filebeat.service` and
-   `intel-refresh.timer` are all installed and enabled here — but the
-   `docker-desktop` WSL distro is Stopped, so `docker` is not on PATH,
-   `zeek-host-capture.service` has been crash-looping (`activating`,
-   NRestarts 1305) and the Zeek lane has written nothing since
-   `Aug 31 20:56`. Suricata and Filebeat are still active. Starting Docker
-   Desktop restores the Zeek lane and unblocks #265, #333, #415, #421 and
-   #545's verification step.
-2. **Close the M25 milestone object** (`gh api -X PATCH
-   repos/voltron-1/Suburban_SOC/milestones/30 -f state=closed`) — 17/17
-   issues are closed but the object is still `open`; this session's
-   permission classifier blocks the call.
+**Outstanding owner action:**
+
+1. **Close the M25 milestone object** (`gh api -X PATCH
+   repos/voltron-1/Suburban_SOC/milestones/30 -f state=closed`) — 17/17 issues
+   are closed but the object is still `open`; this session's permission
+   classifier blocks the call.
 
 ---
 
@@ -71,6 +80,7 @@ added since — see the last three rows):
 | [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 1/4 closed (updated 2026-09-01). PR #506 (Stage 1, #443/#444) and PR #507 (Stage 2+3, #445/#446) are both merged to `main`. #445 closed outright. #443/#444 are structurally complete but stay open — their own "done when" needs a live capture host + real traffic this sandbox doesn't have (same blocker class as M17's #415/#421). #446 (100-rule starter set) stands at 80/100 rules enabled with TP/TN pcap fixtures replayed through the real `suricata` binary as of PR #534 (2026-09-03, SID 9000003 root-caused as a deterministic one-segment loss in pcap replay); the remaining 20: 14 need `detection_filter` tuning against real traffic, 2 unresolved placeholders (9000013/9000099), 2 DLP rules need owner sign-off (9000065/9000066), 2 dead-as-configured (9000063/9000064) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
 | [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ✅ 5/5 closed — **CLOSED** (#449/#453/#463/#442/#441 all merged via PR #505, 2026-08-30) | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
 | [M25 — Repo Audit Remediation](https://github.com/voltron-1/Suburban_SOC/milestone/30) | ✅ 17/17 closed — **CLOSED 2026-09-03** (created 2026-08-31, repo-audit round 2, #508–#523; #539 filed and closed 2026-09-03) — #514/#523 closed via the owner-provided wiki refresh (wiki commit `25ab241`) and its companion PR #526; #508/#511-#513/#515-#521 closed 2026-09-02 via PR #525 (cert org-name fix, README/planned_execution/CLAUDE.md status corrections, missing troubleshooting + playbook entries, dead workflow removal, UIW branding cleanup). #510 (Projects v2 board confirmation) and #522 (wiki Watcher-era pages) closed 2026-09-03 from a local WSL session whose `gh` is authenticated with `project` scope: the board at `users/voltron-1/projects/17` verified as the repo-linked board and re-synced (44 never-added issues added, #283 moved to Done, 282 items, every closed issue in Done), and the last #522 page, Commit-Approach, rewritten to the real PR-only CI-gated workflow (wiki commit `e6d7cd5`). #509 done 2026-09-03 by owner decision (enforce admins only): `enforce_admins` enabled on `main` via the dedicated endpoint from the local `gh`, verified 9 checks / strict / no review gate unchanged. #539 closed the same day: `setup_branch_protection.sh` now lists the live 9 checks, unions them with whatever is already required (a re-run can only tighten), keeps `enforce_admins`, puts the review gate behind `REQUIRE_REVIEW=1` per the #509 decision; SOP-007's recovery step verifies the live policy first. The further hardening that review recommended landed 2026-09-04 as **PR #543** (whole live policy carried through the full PUT, checks pinned to the Actions app, read-back verification, 30-case fake-`gh` test in `tests/setup`) with doc close-out **PR #544**. No open M25 issues; the GitHub milestone *object* is still `open` and needs the owner's `PATCH .../milestones/30 -f state=closed` (this session's permission classifier blocks it) | Repo-audit follow-ups: stale wiki pages (Watcher-era architecture, SOP-number collisions), UIW branding contamination, stale CLAUDE.md/README/planned_execution status lines, missing troubleshooting + playbook entries, branch-protection and cert-org fixes |
+| [M26 — Sensor Liveness & Monitoring Independence](https://github.com/voltron-1/Suburban_SOC/milestone/31) | 🟡 0/2 open (created 2026-09-05). Opened after a five-day Zeek capture blackout went entirely unalerted: `zeek-host-capture.service` wedged at `active (running)` with zero packets, the distro `suricata.service` decoded **0 packets** on a `DOWN eth0`, and `slo-metrics.service` — the lane that would have flagged either — was itself dead `203/EXEC` from the same Docker Desktop outage. **#550** (slo-metrics' Docker CLI dependency, startable now) and **#549** (output-derived liveness supervisor; `WatchdogSec=` is unusable because the bash `ExecStart` cannot `sd_notify()`). PR #551 (merged 2026-09-05) closed the *trigger* — an unusable `CAPTURE_IFACE` now exits 78 and `RestartPreventExitStatus=78` parks the unit in `failed` — but deliberately not the wedge, which is #549 | Sensors and their monitoring can both be dead while reporting healthy: liveness derived from sensor OUTPUT rather than unit state, and monitoring that does not share a single point of failure with what it watches |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —
@@ -4296,6 +4306,66 @@ are implemented in code; checked off with that one caveat noted inline.
   Resolved Architecture Decisions:
   - Alert ID sourcing: uses a Semantic Deduplication Key (hash of tenant+IP+severity+5m_bucket)
   - Check-phase depth: uses Hybrid Asynchronous approach (Agent fast-returns EXECUTED, slo_metrics.py cron runs the 60s active ES verification)
+
+---
+
+## LAST SESSION — 2026-09-05
+
+Opened as "continue working the backlog docker is up". Docker *was* up — but the
+premise behind the blocked list was wrong, and the session became an incident
+response instead.
+
+- **Both sensor lanes were blind, and it was not Docker.**
+  - **Zeek dead five days.** `/etc/default/zeek-host-capture` still pinned
+    `CAPTURE_IFACE=eth6` after WSL2 renumbered the host NICs; eth6 came back
+    `DOWN` (live interface `eth4`, `192.168.1.103/24`, default route). Every
+    start died with `tcpdump: eth6: That device is not up`. `Restart=always` +
+    `StartLimitIntervalSec=0` made that an unbounded crash loop reported as
+    `active`; at restart #123 it then **wedged** at `active (running)` with
+    `docker run` hung on a container whose Zeek had already exited. Last write
+    before recovery: `conn.log`, `Aug 31 20:56`.
+  - **Suricata capturing zero packets.** The installed unit is the *distro*
+    `suricata.service` (the repo's `suricata-host-capture.service` is not
+    installed), bound to `af-packet: interface: eth0` — also `DOWN`.
+    `"kernel_packets":0`, `"decoder":{"pkts":0` verbatim from `eve.json`, whose
+    263 MB is almost pure stats events, which is why the lane looked alive.
+    Evidence for **#443**, which correctly stays open.
+  - **The monitoring died of the same cause.** `slo-metrics.service` fails
+    `203/EXEC` because its `ExecStartPre=/usr/bin/docker cp …` dangles whenever
+    Docker Desktop is stopped. So the lane holding
+    `metric_zeek_ingest_lag_seconds()` was down for the same five days —
+    coverage was **not independent**.
+- **Fixed and merged: PR #551** (`2d70095`). Capture-interface preflight
+  (`scripts/setup/capture_iface_preflight.sh`) exits 78 (`EX_CONFIG`) on an
+  unusable pin; `RestartPreventExitStatus=78` parks the unit in `failed` where
+  `systemctl is-active` reports the truth. `Restart=always` and
+  `StartLimitIntervalSec=0` deliberately preserved (the Docker Desktop boot race
+  needs them) and pinned by a test. 20 regression tests using a fake `ip` on
+  PATH, matching the fake-`gh`/fake-`curl` convention in `tests/setup/`.
+- **Review caught seven real defects before merge** (parallel `security-auditor`
+  + `code-reviewer`), the sharpest three: a greedy `.*<` in the flag extraction
+  bound to the *last* `<...>` on the line, so an interface alias containing
+  `<...,UP>` made a DOWN interface parse as **up** (reproduced with
+  `unshare -rn`); `docker run` passes the container's exit code through
+  verbatim, so a Zeek-side 78 would have parked the sensor permanently; and a
+  bare `var="$(...)"` in the diagnostic could exit before `exit 78` under
+  `set -euo pipefail`, making the whole fix inert.
+- **Two late catches of my own.** The preflight was invoked relying on the exec
+  bit, which git does not carry here (`core.fileMode=false`, all
+  `scripts/setup/` scripts tracked `100644`) — a fresh clone would have hit
+  `Permission denied`. And the first CI run went red on `ruff`/`mypy`/
+  `detections` because the test used escape sequences inside f-string
+  expressions: PEP 701 syntax, fine on the local **3.12**, a SyntaxError on the
+  **3.11 CI runs**. Both fixed; final CI **19/19 green**.
+- **Capture restored.** Owner set `CAPTURE_IFACE=eth4`, restarted, and installed
+  the updated unit. Verified `tcpdump: listening on eth4`, `NRestarts=0`,
+  `conn.log` growing again.
+- **New milestone M26** with two follow-ups: **#549** (output-derived liveness
+  supervisor — the preflight closes the *trigger*, not the wedge; `WatchdogSec=`
+  is unusable because the bash `ExecStart` cannot `sd_notify()`) and **#550**
+  (`slo-metrics.service`'s Docker CLI dependency).
+- Full narrative: `findings/20260905-sensor-lane-blindness.md`,
+  `logs/session-20260905.md`.
 
 ---
 

@@ -52,7 +52,14 @@ if [ ! -s "$CA_PATH" ]; then
   exit 0
 fi
 
-fingerprint="$(openssl x509 -in "$CA_PATH" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2)"
+# `|| true` is load-bearing (code-reviewer): `set -euo pipefail` is in effect,
+# so without it a malformed/truncated cert makes openssl fail, pipefail
+# propagates that through the pipe, and errexit aborts the whole script right
+# here -- skipping the `[ -z "$fingerprint" ]` branch below that is supposed to
+# handle exactly this case, and with it the documented `rm -f "$CA_PATH"`. The
+# script still exited non-zero, so no caller was mis-signalled, but the
+# untrusted cert was left on disk contrary to this file's own header.
+fingerprint="$(openssl x509 -in "$CA_PATH" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2 || true)"
 if [ -z "$fingerprint" ]; then
   echo "[FATAL] could not compute a SHA-256 fingerprint of $CA_PATH" >&2
   rm -f "$CA_PATH"
@@ -67,7 +74,7 @@ fi
 
 pinned="$(cat "$PIN_PATH")"
 if [ "$fingerprint" != "$pinned" ]; then
-  echo "[FATAL] ES CA fingerprint changed: expected $pinned, got $fingerprint -- refusing to trust it. If this is a deliberate cert rotation, delete $PIN_PATH to re-pin." >&2
+  echo "[FATAL] ES CA fingerprint changed: expected $pinned, got $fingerprint -- refusing to trust it. If this is a deliberate cert rotation, delete $PIN_PATH to re-pin (and delete the caller's cached CA alongside it if one exists, e.g. /var/lib/suburban-soc-slo/ca.crt -- see scripts/setup/es_ca_cache.sh)." >&2
   rm -f "$CA_PATH"
   exit 1
 fi

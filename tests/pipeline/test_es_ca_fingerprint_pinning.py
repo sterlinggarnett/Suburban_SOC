@@ -107,10 +107,12 @@ class SloMetricsServiceWiringTests(unittest.TestCase):
         self.assertIsNotNone(verify_line, "no ExecStartPre calling verify_ca_fingerprint.sh")
         self.assertFalse(
             verify_line.startswith("ExecStartPre=-"),
-            "slo-metrics.service's verify step must NOT be '-'-prefixed — "
-            "this unit's sole purpose is indexing into ES (its own docker cp "
-            "extraction step is also not '-'-prefixed), so there is no "
-            "degraded-but-useful mode to preserve if the CA can't be trusted",
+            "slo-metrics.service's verify step must NOT be '-'-prefixed: a cert "
+            "that FAILS the pin is an active trust problem, not an absent "
+            "dependency, so there is no degraded-but-useful mode to preserve. "
+            "(#550 made the docker cp itself '-'-prefixed — a CA that could not "
+            "be FETCHED degrades the run, a CA that was fetched but does not "
+            "MATCH stops it. Do not restore the old symmetry argument.)",
         )
 
     def test_verify_step_runs_after_the_docker_cp_extraction(self):

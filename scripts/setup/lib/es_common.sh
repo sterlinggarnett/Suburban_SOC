@@ -24,6 +24,14 @@
 #            FAIL CLOSED (audit #166 / NIST SC-8): if no readable CA and
 #            ES_INSECURE isn't "true", this script exits rather than
 #            silently falling back to curl -k.
+#   ES_REQUIRE_CA  default 1. Set to 0 (health monitors only, #555) to keep the
+#            SOURCING SCRIPT alive when the CA is unreadable, without ever
+#            relaxing TLS: ES_TLS still points --cacert at the missing path, so
+#            curl aborts each call with exit 77 before opening a connection —
+#            no request, no credential, no unverified handshake. This is the CA
+#            analogue of ES_REQUIRE_CREDS=0 below, and exists because a
+#            self-monitoring script that exits when Elasticsearch's CA cannot be
+#            fetched is dead in exactly the outage it was written to report.
 #   ES_CURL_TIMEOUT  default 60 (seconds). es()/es_code() now always set
 #            --max-time (audit #170 — no consumer previously had a hard
 #            ceiling on a hung/stalled ES connection). Curl honors the LAST
@@ -66,11 +74,32 @@ fi
 # first-run only), mirroring dispatcher.py's BROKER_INSECURE_SSH pattern.
 ES_AUTH=(-u "${ES_USER}:${ES_PASS}")
 ES_CA="${ES_CA:-/certs/ca/ca.crt}"
-if [[ -f "${ES_CA}" ]]; then
+# security-auditor (#555, MEDIUM 2): `-s -r`, not `-f`. `-f` tests only that a regular
+# file EXISTS — contradicting this file's own header ("if readable") and diverging from
+# configs/intel/refresh_intel.sh's `[[ -r ]]`. A 0-byte or unreadable ca.crt therefore
+# took this first branch, so the diagnostic branches below (including ES_REQUIRE_CA=0's
+# "no readable CA" warning) could never explain it and the operator got a bare TLS error
+# instead of a reason. That state is reachable here: stack-health.service wraps its
+# `docker cp` in `timeout 15`, and a cp killed mid-write leaves a truncated destination
+# that es_ca_cache.sh and verify_ca_fingerprint.sh both correctly no-op on (they gate on
+# -s), so nothing upstream removes it. Still fail-closed either way — this only changes
+# WHICH branch reports it.
+if [[ -s "${ES_CA}" && -r "${ES_CA}" ]]; then
   ES_TLS=(--cacert "${ES_CA}")
 elif [[ "${ES_INSECURE:-false}" == "true" ]]; then
   echo "WARNING: ES_INSECURE=true and no readable CA at ES_CA=${ES_CA} — TLS verification is DISABLED for ES calls (lab/first-run only; do not use in production)." >&2
   ES_TLS=(-k)
+elif [[ "${ES_REQUIRE_CA:-1}" == "0" ]]; then
+  # #555 (soft mode, health monitors only). Still fail closed on the WIRE — the
+  # --cacert path below does not exist, so curl exits 77 during SSL setup, before
+  # it connects or sends the credential. What changes is only WHO absorbs the
+  # failure: each ES call, instead of the sourcing script. Without this, a
+  # monitoring script that reaches this branch exits 1 and produces no report and
+  # no alert at all — losing the container checks and the ntfy push along with the
+  # ES ones, precisely when the stack is down. Never combine with a readable-but-
+  # wrong CA: this branch is only reachable when there is no CA file at all.
+  echo "WARNING: no readable CA at ES_CA=${ES_CA} and ES_REQUIRE_CA=0 — every ES call will FAIL (curl exit 77) instead of aborting this script. TLS verification is NOT relaxed." >&2
+  ES_TLS=(--cacert "${ES_CA}")
 else
   echo "ERROR: no readable CA at ES_CA=${ES_CA} — refusing to skip TLS verification." >&2
   echo "       Set ES_CA to the stack CA path, or ES_INSECURE=true to explicitly accept unverified TLS (lab only)." >&2

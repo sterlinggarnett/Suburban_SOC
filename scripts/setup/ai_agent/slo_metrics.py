@@ -164,6 +164,13 @@ TARGETS = {
     # reasoning as zeek_ingest_lag_seconds above — no separately-calibrated
     # Suricata-specific SLA exists yet either.
     "suricata_ingest_lag_seconds": float(os.environ.get("SLO_SURICATA_INGEST_LAG_MAX_S", "300")),
+    # #555: freshness of soc-health, the index stack_health.sh is the only
+    # writer of. 1200s = 4x stack-health.timer's 5-minute cadence — one missed
+    # or slow run is tolerated, a stopped lane is not. Mirror image of
+    # stack_health.sh's own SOC_SLO_METRICS_STALE_MAX_S (2700s = 3x the
+    # 15-minute cadence of THIS unit); the two windows differ because the two
+    # cadences do, not because the lanes are held to different standards.
+    "soc_health_stale_seconds": float(os.environ.get("SLO_SOC_HEALTH_STALE_MAX_S", "1200")),
     "parse_error_pct":     float(os.environ.get("SLO_PARSE_ERR_MAX_PCT", "1")),
     "audit_write_failures": float(os.environ.get("SLO_AUDIT_WRITE_FAIL_MAX", "2")),
     # #247: any claim still open past SLO_STUCK_CLAIM_MAX_MIN (the AGE window,
@@ -233,6 +240,7 @@ LOWER_BETTER = {
     "zeek_path_nomatch_count": True, "broker_response_tampering_count": True,
     "dns_answer_truncated_by_zeek_count": True,
     "zeek_ingest_lag_seconds": True, "suricata_ingest_lag_seconds": True,
+    "soc_health_stale_seconds": True,
 }
 # Fail closed: for these metrics an unmeasurable value (None) is itself a breach,
 # not a benign "n/a". A dead/unreachable pipeline produces no fresh docs, so
@@ -246,7 +254,19 @@ LOWER_BETTER = {
 # #443: suricata_ingest_lag_seconds joins for the identical reason — a
 # fully-dead suricata-host-capture.service produces zero event.module:
 # suricata documents.
-BREACH_IF_NA = {"ingest_lag_seconds", "zeek_ingest_lag_seconds", "suricata_ingest_lag_seconds"}
+# #555: soc_health_stale_seconds joins for the same reason once removed — an
+# uninstalled or dead stack-health.timer writes no soc-health document at all,
+# so metric_soc_health_stale_seconds() returns None exactly as a dead sensor
+# does above. The counter-argument was considered and rejected: an empty
+# soc-health index on a genuinely fresh deployment is "no data yet" rather than
+# an outage, and would breach on day one. But that is the identical objection
+# metric_zeek_ingest_lag_seconds() faced and answered — a monitoring lane that
+# has never once written is not a lane anyone should be trusting, and a
+# first-run breach that clears itself within 5 minutes of the timer being
+# enabled is a far cheaper failure than the 56-day silence this metric exists
+# to end. Fail loud, clear fast.
+BREACH_IF_NA = {"ingest_lag_seconds", "zeek_ingest_lag_seconds", "suricata_ingest_lag_seconds",
+                "soc_health_stale_seconds"}
 # #216: measured but not target-checked. There's no "correct" alert volume to set
 # a threshold against yet — that's what this metric exists to establish a baseline
 # for (the before/after signal detection tuning needs to prove it reduced noise
@@ -596,6 +616,66 @@ def metric_suricata_ingest_lag_seconds():
         raise MetricUnavailable(f"suricata ingest-lag search failed: {e}") from e
 
 
+def metric_soc_health_stale_seconds():
+    """Liveness of the SOC's OWN health lane (#555).
+
+    stack_health.sh writes exactly one soc-health document per run and is the
+    only writer of that index, so its freshness is a direct read on whether the
+    self-monitoring lane is alive. The check has to live OUT here, in the other
+    lane: a soc-health staleness check inside stack_health.sh could not fire
+    when stack_health.sh is the thing that stopped — which is precisely what
+    happened. configs/monitoring/reliability.cron was never installed on the
+    capture host (the user crontab held one unrelated line; /etc/cron.d only
+    e2scrub_all), so soc-health froze on 2026-07-12 and nothing noticed for
+    ~56 days.
+
+    The pairing is symmetric and deliberate: stack_health.sh watches
+    soc-slo-metrics (this script's output index), this metric watches
+    soc-health (that script's output index). Neither lane can go silently dead
+    without the other reporting it.
+
+    It is NOT a closed loop, and this is a stated limit rather than an
+    oversight: both halves still depend on #554 for a delivery path (no
+    OnFailure= exists on any unit in configs/systemd/, and NTFY_TOPIC is
+    unprovisioned on the capture host), and a SIMULTANEOUS outage of both lanes
+    is still silent — the shared dependency being Elasticsearch itself, which
+    is what stack_health.sh's own container checks are for.
+
+    Unlike the three ingest-lag metrics above, soc-health is a concrete index
+    rather than a wildcard pattern, so a _search against a cluster that never
+    had one returns HTTP 404 with no `hits` key. `.get("hits", {})` collapses
+    that into the same None an empty index produces, which is correct here:
+    both mean "the health lane has not written". BREACH_IF_NA is what stops
+    that None from reading as benign.
+    """
+    body = {"size": 1, "sort": [{"@timestamp": "desc"}], "_source": ["@timestamp"]}
+    try:
+        hits = es("POST", "/soc-health/_search", body).json().get("hits", {}).get("hits", [])
+        if not hits:
+            return None
+        newest = datetime.fromisoformat(hits[0]["_source"]["@timestamp"].replace("Z", "+00:00"))
+        age = round((datetime.now(timezone.utc) - newest).total_seconds(), 1)
+    except Exception as e:
+        raise MetricUnavailable(f"soc-health freshness search failed: {e}") from e
+    # security-auditor (#555, MEDIUM 1 - T1562.001): a NEGATIVE age is trivially
+    # <= any positive target under LOWER_BETTER, so a single future-dated document
+    # would pin this metric to "healthy" permanently - the exact "watchdog reads
+    # healthy while the thing it watches is dead" failure this metric exists to
+    # prevent, and reachable without touching this code at all (a soc_admin write
+    # before #555 excluded soc-health, or plain host clock skew). Raise rather
+    # than return: MetricUnavailable is already the loud path, it carries the
+    # reason into the ntfy payload, and BREACH_IF_NA already covers this metric so
+    # nothing downstream needs to change. SOC_HEALTH_FUTURE_TOLERANCE_S absorbs
+    # benign skew between this host and whichever host wrote the document;
+    # stack_health.sh applies the same tolerance to the mirror-image check.
+    if age < -SOC_HEALTH_FUTURE_TOLERANCE_S:
+        raise MetricUnavailable(
+            f"soc-health newest @timestamp is {abs(age)}s in the FUTURE - "
+            "clock skew or a forged document, not a healthy lane"
+        )
+    return age
+
+
 def metric_parse_error_pct():
     win = {"range": {"@timestamp": {"gte": WINDOW}}}
     total = _count("logstash-security-*", win)
@@ -840,6 +920,13 @@ def metric_orphaned_claims():
 # compact_agent_checkpoints.py's DEFAULT_RETENTION_DAYS=90 for RELEASED
 # claims, so a stale baseline can never reach into a doc the compactor was
 # always going to delete anyway (see metric_vanished_claims()'s docstring).
+# #555 (security-auditor MEDIUM 1): how far ahead of this host a soc-health document
+# may legitimately be dated before metric_soc_health_stale_seconds() treats it as an
+# anomaly rather than as freshness. Mirrors stack_health.sh's
+# SOC_SLO_METRICS_STALE_FUTURE_TOLERANCE_S on the other half of the pair.
+SOC_HEALTH_FUTURE_TOLERANCE_S = float(
+    os.environ.get("SLO_SOC_HEALTH_FUTURE_TOLERANCE_S", "120"))
+
 SLO_VANISHED_CLAIM_BASELINE_MAX_AGE_MIN = float(
     os.environ.get("SLO_VANISHED_CLAIM_BASELINE_MAX_AGE_MIN", str(2 * 24 * 60)))
 
@@ -1804,6 +1891,7 @@ def main():
         "ingest_lag_seconds": metric_ingest_lag_seconds,
         "zeek_ingest_lag_seconds": metric_zeek_ingest_lag_seconds,
         "suricata_ingest_lag_seconds": metric_suricata_ingest_lag_seconds,
+        "soc_health_stale_seconds": metric_soc_health_stale_seconds,
         "parse_error_pct": metric_parse_error_pct,
         "audit_write_failures": metric_audit_write_failures,
         "broker_response_tampering_count": metric_broker_response_tampering,

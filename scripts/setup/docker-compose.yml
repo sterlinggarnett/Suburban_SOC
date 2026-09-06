@@ -93,6 +93,7 @@ services:
       - THREAT_INTEL_COMPACTOR_PASSWORD=${THREAT_INTEL_COMPACTOR_PASSWORD:-}
       - LOGSTASH_ENRICH_PASSWORD=${LOGSTASH_ENRICH_PASSWORD:-}
       - SLO_METRICS_PASSWORD=${SLO_METRICS_PASSWORD:-}
+      - SOC_HEALTH_PASSWORD=${SOC_HEALTH_PASSWORD:-}
       - SOC_AGENT_KIBANA_PASSWORD=${SOC_AGENT_KIBANA_PASSWORD:-}
       - SOC_AGENT_HMAC_SECRET=${SOC_AGENT_HMAC_SECRET:-}
       - SOC_APPROVER_HMAC_SECRET=${SOC_APPROVER_HMAC_SECRET:-}
@@ -150,6 +151,7 @@ services:
         case "$${THREAT_INTEL_COMPACTOR_PASSWORD}" in changeme*) echo "ERROR: THREAT_INTEL_COMPACTOR_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
         case "$${LOGSTASH_ENRICH_PASSWORD}" in changeme*) echo "ERROR: LOGSTASH_ENRICH_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
         case "$${SLO_METRICS_PASSWORD}" in changeme*) echo "ERROR: SLO_METRICS_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
+        case "$${SOC_HEALTH_PASSWORD}" in changeme*) echo "ERROR: SOC_HEALTH_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
         case "$${SOC_AGENT_KIBANA_PASSWORD}" in changeme*) echo "ERROR: SOC_AGENT_KIBANA_PASSWORD is still the placeholder value from .env.example — set a real password, or leave it fully blank to disable that optional feature."; exit 1;; esac;
         case "$${SOC_AGENT_HMAC_SECRET}" in changeme*) echo "ERROR: SOC_AGENT_HMAC_SECRET is still the placeholder value from .env.example — anyone who has read the public repo can forge /alert. Set a real secret (openssl rand -hex 32), or leave it fully blank to fail closed instead."; exit 1;; esac;
         case "$${SOC_APPROVER_HMAC_SECRET}" in changeme*) echo "ERROR: SOC_APPROVER_HMAC_SECRET is still the placeholder value from .env.example — anyone who has read the public repo can forge /approve and trigger real isolation. Set a real secret (openssl rand -hex 32), or leave it fully blank to fail closed instead."; exit 1;; esac;
@@ -262,6 +264,7 @@ services:
       - LOGSTASH_PASSWORD=${LOGSTASH_PASSWORD}
       - SOC_AGENT_KIBANA_PASSWORD=${SOC_AGENT_KIBANA_PASSWORD:-}
       - SLO_METRICS_PASSWORD=${SLO_METRICS_PASSWORD:-}
+      - SOC_HEALTH_PASSWORD=${SOC_HEALTH_PASSWORD:-}
       - BROKER_AUDIT_PASSWORD=${BROKER_AUDIT_PASSWORD:-}
       - AGENT_CHECKPOINTS_PASSWORD=${AGENT_CHECKPOINTS_PASSWORD:-}
       - AGENT_CHECKPOINTS_COMPACTOR_PASSWORD=${AGENT_CHECKPOINTS_COMPACTOR_PASSWORD:-}
@@ -381,8 +384,36 @@ services:
           # configs/elasticsearch/roles/slo_metrics_reader.json is authoritative
           # (re-applied by apply_roles.sh), keep this inline bootstrap copy in
           # sync.
-          put "/_security/role/slo_metrics_reader" "{\"indices\":[{\"names\":[\".alerts-security.alerts-*\",\"soar-actions-*\",\"logstash-security-*\"],\"privileges\":[\"read\",\"view_index_metadata\"]},{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-agent-health-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-audit-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-slo-metrics\"],\"privileges\":[\"create_index\",\"create\",\"read\"]},{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"read\"]}],\"applications\":[{\"application\":\"kibana-.kibana\",\"privileges\":[\"feature_generalCases.read\"],\"resources\":[\"*\"]}]}";
+          put "/_security/role/slo_metrics_reader" "{\"indices\":[{\"names\":[\".alerts-security.alerts-*\",\"soar-actions-*\",\"logstash-security-*\"],\"privileges\":[\"read\",\"view_index_metadata\"]},{\"names\":[\"agent-checkpoints-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-agent-health-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-audit-*\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-health\"],\"privileges\":[\"read\"]},{\"names\":[\"soc-slo-metrics\"],\"privileges\":[\"create_index\",\"create\",\"read\"]},{\"names\":[\"threat-intel-indicators\",\"threat-intel-meta\"],\"privileges\":[\"read\"]}],\"applications\":[{\"application\":\"kibana-.kibana\",\"privileges\":[\"feature_generalCases.read\"],\"resources\":[\"*\"]}]}";
           put "/_security/user/slo_metrics" "{\"password\":\"$${SLO_METRICS_PASSWORD}\",\"roles\":[\"slo_metrics_reader\"],\"full_name\":\"SLO metrics (Suburban-SOC)\"}";
+        fi;
+        if [ x$${SOC_HEALTH_PASSWORD} != x ]; then
+          echo "Provisioning soc_health role + soc_health user (#555 — replaces the elastic superuser on the 5-minute self-health lane)";
+          # security-auditor (#555, HIGH 1): stack_health.sh previously resolved
+          # ES_USER through es_common.sh's `elastic` default, so putting it on a
+          # 5-minute timer would have authenticated as the superuser 288x a day —
+          # reversing the audit #167/#222 posture slo_metrics/intel_writer already
+          # implement. This is the missing writer identity for soc-health: nothing
+          # in configs/elasticsearch/roles/ granted that index to anyone.
+          # Least privilege, matched to what stack_health.sh actually does:
+          #   cluster monitor  -> GET /_cluster/health
+          #   soc-health       -> create_index+create ONLY (append-only; no
+          #                       delete/manage, so a compromised health credential
+          #                       cannot erase its own outage history — same
+          #                       posture as soc_audit_appender above)
+          #   soc-slo-metrics  -> read ONLY, for the cross-lane freshness check
+          # No write on soc-slo-metrics: this lane READS the SLO lane's output and
+          # must never be able to forge it (the mirror of #555's own soc_admin fix).
+          # configs/elasticsearch/roles/soc_health.json is authoritative (re-applied
+          # by apply_roles.sh) - keep this inline copy in sync.
+          put "/_security/role/soc_health" "{\"cluster\":[\"monitor\"],\"indices\":[{\"names\":[\"soc-health\"],\"privileges\":[\"create_index\",\"create\"]},{\"names\":[\"soc-slo-metrics\"],\"privileges\":[\"read\"]}]}";
+          # monitoring_user (built-in) is granted alongside for the Kibana
+          # GET /api/status probe. NOT verified against a live Kibana in the
+          # environment this was authored in (no reachable stack — Docker Desktop
+          # was stopped), so stack_health.sh distinguishes HTTP 401/403 on that
+          # probe from an outage and says so in the report rather than logging a
+          # false "kibana DOWN". If the grant turns out to be unnecessary, drop it.
+          put "/_security/user/soc_health" "{\"password\":\"$${SOC_HEALTH_PASSWORD}\",\"roles\":[\"soc_health\",\"monitoring_user\"],\"full_name\":\"SOC stack health monitor (Suburban-SOC, #555)\"}";
         fi;
         if [ x$${BROKER_AUDIT_PASSWORD} != x ]; then
           echo "Provisioning hive_mind_broker user (audit #171 — persisted denial records via the existing append-only soc_audit_appender role)";

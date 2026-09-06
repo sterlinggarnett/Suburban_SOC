@@ -1,0 +1,172 @@
+# Suburban-SOC — run stack_health.sh (the SOC's self-monitoring check) on a schedule and
+# index the result to soc-health. Triggered by stack-health.timer every 5 min.
+#
+# #555: configs/monitoring/reliability.cron has scheduled this script every 5 minutes since
+# WS2.5, but that crontab was never installed on the capture host — the user crontab holds
+# one unrelated line and /etc/cron.d only e2scrub_all. The result: `soc-health` froze on
+# 2026-07-12 and nothing noticed for ~56 days. The repo has already moved this class of job
+# from cron to systemd (configs/slo/slo-metrics.cron is explicitly marked non-preferred in
+# favour of slo-metrics.timer, #222); this unit finishes that migration for the health lane.
+#
+# Install:
+#   sudo cp configs/systemd/stack-health.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now stack-health.timer
+# Run once now / check:  sudo systemctl start stack-health.service ; journalctl -u stack-health -n 40
+[Unit]
+Description=Suburban-SOC stack health check -> soc-health (SOC self-monitoring)
+Documentation=https://github.com/voltron-1/Suburban_SOC
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as the repo owner so it can read scripts/setup/.env (stack_health.sh sources it
+# itself, exactly as a manual run does) and use the user's Docker Desktop context for the
+# CA extraction below.
+User=tjlam
+# Deliberately NO EnvironmentFile= scratch-file extraction of the kind slo-metrics.service
+# and intel-refresh.service perform. Those two run a Python/bash program that needs ONE
+# named service credential injected by systemd; stack_health.sh instead does its own
+# `set -a; . .env; set +a` at line 17, so systemd injecting anything from .env would be
+# redundant. The two Environment= lines below are values .env does NOT define
+# (verified against this host's .env: no ES_CA or ES_URL key exists), so sourcing .env
+# cannot silently overwrite them — which is the failure mode that would otherwise make
+# ES_CA point back at the container-only default path.
+#
+# security-auditor (#555, HIGH 1 — T1078): the first draft of this unit pinned neither
+# ES_USER nor ES_PASS, so es_common.sh's `elastic` default applied and this lane would
+# have authenticated to Elasticsearch as the SUPERUSER on a 5-minute timer: 288 times a
+# day, with the password in curl's argv on every call, readable by any process running
+# as tjlam. That reverses the audit #167/#222 posture slo-metrics.service (slo_metrics)
+# and intel-refresh.service (intel_writer) already implement. Fixed at the root: a
+# dedicated least-privilege `soc_health` user (configs/elasticsearch/roles/soc_health.json
+# — cluster monitor, append-only create on soc-health, read-only on soc-slo-metrics).
+#
+# The credential is extracted the same way slo-metrics.service:58 does, and for the same
+# reasons documented there: EnvironmentFile= on the raw .env would inject EVERY variable
+# in it, comment suffixes included. `sh -c` (not a bare pipeline) so grep's exit status
+# is not masked by sed's, and the trailing `grep -Eq "^ES_PASS=.{8,}"` (not `test -s`)
+# rejects a present-but-empty value rather than writing a silently blank scratch file.
+ExecStartPre=/bin/sh -c 'grep "^SOC_HEALTH_PASSWORD=" /home/tjlam/projects/Suburban-SOC/scripts/setup/.env | sed -E "s/^SOC_HEALTH_PASSWORD=/ES_PASS=/; s/[ \t]+#.*//" | tail -n 1 > /run/suburban-soc-health/soc_health_password.env; grep -Eq "^ES_PASS=.{8,}" /run/suburban-soc-health/soc_health_password.env'
+# "-" is REQUIRED, not polish: EnvironmentFile= is applied to every Exec* command in the
+# unit INCLUDING the ExecStartPre above that creates this file. Without it systemd
+# demands the file exist before that first command, which can never be satisfied —
+# RuntimeDirectory= is torn down between every Type=oneshot run, so it would fail
+# identically forever. "-" makes a missing file a no-op for parsing only; the grep -Eq
+# above is what still fails the unit loudly on a genuinely missing credential.
+EnvironmentFile=-/run/suburban-soc-health/soc_health_password.env
+Environment=ES_USER=soc_health
+Environment=ES_URL=https://localhost:9200
+Environment=ES_CA=/run/suburban-soc-health/ca.crt
+# security-auditor (#555, LOW 3): `date -u -d` controls OUTPUT formatting, not the
+# interpretation of a naive input string. A timestamp with no offset would be read as
+# host-local and skew the computed age by the UTC offset — enough to make a dead lane
+# read fresh against a 2700s threshold. stack_health.sh rejects offset-less timestamps
+# outright; pinning TZ removes the ambiguity for everything else in the run.
+Environment=TZ=UTC
+# /run/suburban-soc-health, owned by the service user; auto-removed when the unit stops.
+# Mode 0700 (systemd's default is 0755): this directory holds the extracted stack CA — a
+# trust anchor should not sit in a world-traversable directory. Same structural-over-
+# incidental reasoning as slo-metrics.service.
+RuntimeDirectory=suburban-soc-health
+RuntimeDirectoryMode=0700
+# The stack CA lives only in a docker volume (no stable host path under Docker Desktop/WSL),
+# so pull it from the ES container each run. Idempotent.
+#
+# "-" prefix and the `timeout` wrapper are both load-bearing, carried over from #550 rather
+# than rediscovered: /usr/bin/docker on this host is a symlink into the docker-desktop WSL
+# distro and DANGLES whenever Docker Desktop is stopped, which systemd reports as 203/EXEC
+# and — unprefixed — kills the unit before ExecStart. A health monitor that dies whenever
+# the thing it monitors is down is not a monitor. `-` alone is not enough either: it
+# suppresses a FAILED exit status and does nothing for a cp that BLOCKS (the Docker Desktop
+# half-up state: socket present, daemon not answering), which would eat the whole start
+# job's timeout and get the unit killed anyway. /usr/bin/timeout is coreutils and cannot
+# dangle the way the Docker Desktop symlink does, so it is safe as the exec target here.
+ExecStartPre=-/usr/bin/timeout 15 /usr/bin/docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt /run/suburban-soc-health/ca.crt
+# #270: the docker cp above re-fetches the ES CA from the `elasticsearch` container on every
+# run with no verification — whatever sits at that container path becomes the sole trust
+# anchor for a request carrying this host's ES credential. verify_ca_fingerprint.sh pins the
+# fingerprint seen on the FIRST run this host ever makes and hard-fails + deletes ca.crt on
+# any later mismatch. StateDirectory= (NOT RuntimeDirectory=, torn down between every
+# Type=oneshot run) persists that pin across runs so a LATER swap is still caught.
+# 0700 for the same reason as RuntimeDirectoryMode above — as of #550's cache design this
+# directory holds the cached CA itself, not just its fingerprint.
+StateDirectory=suburban-soc-health
+StateDirectoryMode=0700
+# #550: RuntimeDirectory= is torn down between every Type=oneshot run, so a "-"-prefixed cp
+# that no-ops leaves NO ca.crt at all. es_ca_cache.sh keeps a copy of the last pin-verified
+# CA under StateDirectory= and reinstates it when the extraction could not run, so a run
+# during a Docker outage still verifies TLS properly instead of losing the anchor entirely.
+# `restore` runs BEFORE the pin check, so anything it reinstates is still verified against
+# the pin; `save` runs AFTER it, so a cert that failed the pin — which
+# verify_ca_fingerprint.sh deletes — can never enter the cache.
+ExecStartPre=/usr/bin/bash /home/tjlam/projects/Suburban-SOC/scripts/setup/es_ca_cache.sh restore /run/suburban-soc-health/ca.crt /var/lib/suburban-soc-health/ca.crt /var/lib/suburban-soc-health/ca_fingerprint.sha256
+# SuccessExitStatus= below applies to ExecStartPre CONTROL processes, not just the main
+# process (confirmed empirically on this host under #550). Since `bash` itself exits 2 on a
+# script syntax error, an unwrapped trust check would fail OPEN — unit proceeds, unverified
+# ca.crt in place. `|| exit 1` normalises every non-zero status to 1, which
+# SuccessExitStatus=0 2 does not forgive. Deliberately NOT "-"-prefixed, unlike the cp
+# above: a cert that FAILS the pin is an active trust problem, not an absent dependency.
+ExecStartPre=/bin/sh -c '/usr/bin/bash /home/tjlam/projects/Suburban-SOC/scripts/setup/verify_ca_fingerprint.sh /run/suburban-soc-health/ca.crt /var/lib/suburban-soc-health/ca_fingerprint.sha256 || exit 1'
+ExecStartPre=/usr/bin/bash /home/tjlam/projects/Suburban-SOC/scripts/setup/es_ca_cache.sh save /run/suburban-soc-health/ca.crt /var/lib/suburban-soc-health/ca.crt /var/lib/suburban-soc-health/ca_fingerprint.sha256
+ExecStart=/usr/bin/bash /home/tjlam/projects/Suburban-SOC/scripts/setup/stack_health.sh
+# stack_health.sh exits 2 when a component is DOWN — that is a successful run REPORTING
+# degradation, not a job failure. Treat 0 and 2 as success so the timer isn't marked failed
+# (and so `systemctl is-failed` stays meaningful for genuine job breakage). Same shape as
+# slo-metrics.service's exit-2-on-breach contract.
+SuccessExitStatus=0 2
+# Bound the whole start job explicitly rather than inheriting DefaultTimeoutStartSec (90s):
+# above the 15s the docker cp can consume plus the script's own per-call curl ceilings, and
+# well above a normal run. intel-refresh.service and slo-metrics.service set their own for
+# the same reason.
+TimeoutStartSec=120
+
+# --- Sandboxing (audit #167 / NIST CM-7) ---------------------------------------
+# Outbound HTTPS to Elasticsearch/Kibana/ntfy, a local `docker ps`, reads the repo and .env,
+# writes nothing outside its own Runtime/State directories — no special Linux capabilities,
+# kernel access, or namespace privileges needed. #558's parity list is applied here from the
+# start rather than retrofitted later.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+# Deliberately NOT RemoveIPC=true: that directive removes ALL System V/POSIX IPC objects
+# owned by the unit's UID when the unit stops. User=tjlam is the interactive login account
+# and Type=oneshot on a 5-minute timer means 288 teardowns a day, each eligible to destroy
+# IPC belonging to other tjlam-owned processes (desktop session, Docker Desktop helpers)
+# that have nothing to do with this service. stack_health.sh uses no IPC of any kind.
+# intel-refresh.service:191-198 and slo-metrics.service:208-217 reached this same
+# conclusion; it is applied here on the first pass.
+UMask=0077
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+# AF_NETLINK is required, not optional: glibc's getaddrinfo() (used by every curl call in
+# stack_health.sh) enumerates local addresses over netlink — omitting it breaks DNS
+# resolution outright. AF_UNIX carries the `docker ps` call to the daemon socket.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+PrivateDevices=true
+ProtectProc=invisible
+ProcSubset=pid
+# Bounded, but deliberately looser than intel-refresh.service's 256M. That unit reads two
+# entire third-party HTTP responses into bash variables with no size limit of their own, so
+# its cap is a real control against a misbehaving feed. This unit only reads small local API
+# responses, and the failure mode of a too-tight cap here is worse than the risk it guards:
+# an OOM-killed `docker ps` would manufacture a false "containers DOWN" alert from the very
+# lane whose job is to be trustworthy about outages.
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

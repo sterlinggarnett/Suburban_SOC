@@ -107,14 +107,32 @@ class SocAdminWildcardCarveOutTests(unittest.TestCase):
             "admin identity did (#453)",
         )
 
-    def test_does_not_exclude_anything_beyond_374_and_453(self):
+    def test_excludes_soc_health(self):
+        self.assertIn(
+            "-soc-health",
+            self.entry["names"],
+            "soc_admin must not hold 'all' on soc-health -- #555 promoted that "
+            "index from ordinary dashboard data to a monitoring-integrity "
+            "signal (metric_soc_health_stale_seconds() is the only thing that "
+            "notices the health lane dying), so an analyst-tier role able to "
+            "POST one document with a current @timestamp could stop the timer "
+            "and keep the SLO lane reporting the health lane as alive "
+            "indefinitely. Index DELETION was already caught via BREACH_IF_NA; "
+            "forgery was not caught at all (security-auditor, #555 HIGH 2)",
+        )
+
+    def test_does_not_exclude_anything_beyond_374_453_and_555(self):
         # Deliberately scoped: every other soc-* index is untouched --
         # expanding this carve-out further is a separate decision, not a
-        # side effect of this fix.
+        # side effect of a fix. -soc-health joined in #555 as its own
+        # deliberate decision, for the reason on the test directly above:
+        # the two self-monitoring OUTPUT indices (soc-slo-metrics, soc-health)
+        # are now both here, which is the invariant to preserve -- if a third
+        # lane is ever added, its output index belongs in this set too.
         excluded = {name for name in self.entry["names"] if name.startswith("-")}
         self.assertEqual(
             excluded,
-            {"-soc-slo-metrics", "-soc-agent-health-*", "-soc-audit-*"},
+            {"-soc-slo-metrics", "-soc-health", "-soc-agent-health-*", "-soc-audit-*"},
         )
 
 

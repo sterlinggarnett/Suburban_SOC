@@ -1,6 +1,19 @@
 # =============================================================================
 # Suburban-SOC reliability schedule (WS2.5)
 #
+# PREFERRED for the health check: use the systemd timer instead —
+# configs/systemd/stack-health.{service,timer}. It is reboot-surviving, extracts and
+# pin-verifies the ES CA automatically, treats exit 2 (a component DOWN) as success,
+# and degrades rather than dies when the Docker CLI is unavailable. This cron is the
+# fallback for hosts without systemd.
+#
+# #555: this file was never installed on the capture host — the user crontab held one
+# unrelated line and /etc/cron.d only e2scrub_all — so soc-health froze on 2026-07-12
+# and nothing noticed for ~56 days. If you install this file instead of the timer,
+# verify afterwards with `crontab -l` that the entries are actually present, and note
+# that ES_CA must point to a HOST-readable copy of the stack CA (it defaults to the
+# container-only /certs/ca/ca.crt); the systemd unit handles that for you.
+#
 # Install on the SOC host (adjust the repo path):
 #   crontab -l 2>/dev/null | cat - configs/monitoring/reliability.cron | crontab -
 # Env (ES creds, NTFY_TOPIC) is read from scripts/setup/.env by each script.

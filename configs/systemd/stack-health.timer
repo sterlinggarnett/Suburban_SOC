@@ -1,0 +1,35 @@
+# Fires stack-health.service every 5 minutes — the same cadence
+# configs/monitoring/reliability.cron has specified since WS2.5, now on the scheduler the
+# repo actually installs (#555).
+#
+# security-auditor (#555, LOW 5): the first draft used OnBootSec=/OnUnitActiveSec= alone
+# and still claimed Persistent=true would catch up a missed run. Per systemd.timer(5),
+# Persistent= stores the last trigger time and replays a missed run only for timers
+# configured with OnCalendar= — on a purely monotonic timer it is inert, so both the
+# comment and its test asserted a property the configuration could not deliver. The
+# uncovered case is a timer stopped and later re-enabled without a reboot: exactly the
+# "nobody noticed the health lane was off" scenario #555 exists to close. OnCalendar
+# makes Persistent= meaningful AND aligns the cadence to wall-clock, which is what an
+# operator reading `systemctl list-timers` expects of a 5-minute health check.
+#
+# slo-metrics.timer carries the same monotonic-plus-Persistent shape and is deliberately
+# NOT changed here — it is outside #555's scope and altering the SLO cadence is its own
+# decision. The divergence is intentional and recorded rather than silently introduced.
+[Unit]
+Description=Run the Suburban-SOC stack health check every 5 minutes
+Documentation=https://github.com/voltron-1/Suburban_SOC
+
+[Timer]
+# Wall-clock aligned: :00, :05, :10 ... Persistent= is meaningful against this.
+OnCalendar=*:0/5
+# Still fire shortly after boot rather than waiting for the next 5-minute boundary —
+# give the stack a moment to come healthy first, so the first report is not a false
+# "everything DOWN" while containers are still starting.
+OnBootSec=2min
+Persistent=true
+# Without this, every host running this unit fires on the exact same second. Harmless
+# for one host, but the cp/curl burst is bursty enough to be worth smearing.
+RandomizedDelaySec=15
+
+[Install]
+WantedBy=timers.target

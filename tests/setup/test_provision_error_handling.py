@@ -91,6 +91,9 @@ _FAKE_SLEEP = "#!/bin/bash\nexit 0\n"
 _REQUIRED_ENV = {"ELASTIC_PASSWORD": "e", "KIBANA_PASSWORD": "k", "LOGSTASH_PASSWORD": "l"}
 _OPTIONAL_ENV = {
     "SOC_AGENT_KIBANA_PASSWORD": "", "SLO_METRICS_PASSWORD": "",
+    # #555: the self-health lane's own least-privilege identity, so
+    # stack-health.service does not authenticate as the elastic superuser.
+    "SOC_HEALTH_PASSWORD": "",
     "BROKER_AUDIT_PASSWORD": "", "AGENT_CHECKPOINTS_PASSWORD": "",
     "AGENT_CHECKPOINTS_COMPACTOR_PASSWORD": "", "INTEL_WRITER_PASSWORD": "",
     "THREAT_INTEL_COMPACTOR_PASSWORD": "", "LOGSTASH_ENRICH_PASSWORD": "",
@@ -121,6 +124,39 @@ def _real_provision_script() -> str:
     script_lines = [line[8:] if line.startswith(" " * 8) else line for line in lines]
     script = "\n".join(script_lines)
     return script.replace("$$", "$")
+
+
+class ProvisionEnvFixtureMatchesComposeTests(unittest.TestCase):
+    """_REQUIRED_ENV/_OPTIONAL_ENV above are a hand-maintained mirror of the
+    provision service's own `environment:` block, and the two silently drifted
+    when #555 added SOC_HEALTH_PASSWORD: every test in this file then ran
+    provision.sh under `set -u` without that variable, and the resulting
+    "unbound variable" failure looked like a bug in the compose change rather
+    than a stale fixture. Derive the real list and compare, so the next
+    credential added to provision fails HERE with a clear message."""
+
+    def test_fixture_covers_every_variable_provision_actually_receives(self):
+        service = _provision_service_block(COMPOSE_TEXT)
+        names = set()
+        collecting = False
+        for line in service.splitlines():
+            if line.strip() == "environment:":
+                collecting = True
+                continue
+            if not collecting:
+                continue
+            stripped = line.strip()
+            if not stripped.startswith("- "):
+                break
+            names.add(stripped[2:].split("=", 1)[0].strip())
+        self.assertTrue(names, "could not parse provision's environment: block")
+        missing = names - set(_REQUIRED_ENV) - set(_OPTIONAL_ENV)
+        self.assertEqual(
+            set(), missing,
+            f"provision's environment: block passes {sorted(missing)}, which this "
+            "file's _REQUIRED_ENV/_OPTIONAL_ENV fixture does not supply — every "
+            "test here would run provision.sh under `set -u` without it"
+        )
 
 
 class ProvisionUsesLiteralBlockScalarTests(unittest.TestCase):

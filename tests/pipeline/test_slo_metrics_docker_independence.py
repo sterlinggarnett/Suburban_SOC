@@ -46,9 +46,13 @@ VERIFY_SCRIPT = ROOT / "scripts" / "setup" / "verify_ca_fingerprint.sh"
 SLO_METRICS_SERVICE = (ROOT / "configs" / "systemd" / "slo-metrics.service").read_text(encoding="utf-8")
 
 # Every unit that extracts the ES CA out of the `elasticsearch` container the
-# same way. All four must degrade rather than die when the Docker CLI is gone.
+# same way. All of them must degrade rather than die when the Docker CLI is gone.
+# stack-health.service joined the family in #555 — it is the other half of the
+# self-health lane, so the same 203/EXEC exposure would take out both monitors at
+# once, which is precisely the coupling #550 was about.
 CA_EXTRACTING_UNITS = [
     "slo-metrics.service",
+    "stack-health.service",
     "intel-refresh.service",
     "checkpoints-compact.service",
     "threat-intel-compact.service",

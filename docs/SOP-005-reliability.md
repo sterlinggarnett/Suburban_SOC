@@ -27,7 +27,117 @@ A production SOC requires guaranteed uptime and data recoverability. The default
 The reliability pillars are validated through regular drills, including node-kill exercises, automated canary restore tests, and continuous health checks.
 
 ## Monitoring and Notifications
-The `stack_health.sh` script runs via cron every 5 minutes and pushes alerts to `ntfy` if any core component (Elasticsearch, Kibana, Logstash, broker, or agent) is down.
+The `stack_health.sh` script runs every 5 minutes via `stack-health.timer` and pushes alerts to `ntfy` if any core component (Elasticsearch, Kibana, Logstash, broker, or agent) is down.
+
+### Installing the self-health lane (#555)
+
+The order below matters — steps 1 and 2 must both happen **before** the first
+`systemctl start`, or the unit fails on a missing credential and re-pins its trust
+anchor from whatever the container is serving at that moment.
+
+**1. Provision the least-privilege credential.** The lane runs as a dedicated
+`soc_health` ES user (cluster `monitor`, append-only `create` on `soc-health`,
+read-only on `soc-slo-metrics`) rather than the `elastic` superuser — a 5-minute
+timer authenticating as superuser is 288 superuser logins a day, and there is no
+reason for a health probe to hold more than this.
+
+```bash
+# 1a. Set a real password (openssl rand -base64 24) in scripts/setup/.env:
+#     SOC_HEALTH_PASSWORD=...
+# 1b. Create the role + user:
+docker compose -f scripts/setup/docker-compose.yml up setup      # bootstrap path
+# or, on a running cluster:
+./scripts/setup/apply_roles.sh                                   # applies soc_health.json
+```
+
+If `SOC_HEALTH_PASSWORD` is blank the user is never created and the unit fails its
+own credential check loudly. That is deliberate: the alternative is a silent
+fallback to `elastic`.
+
+**2. Seed the CA fingerprint pin from the lane that already has one.** This unit
+keeps its own TOFU pin under `/var/lib/suburban-soc-health/`, separate from
+`slo-metrics.service`'s. On a host where a trusted anchor has existed for weeks,
+starting the unit cold creates a *new* first-use pin — so a CA that the existing
+pin would reject gets accepted and permanently pinned here instead. Copy the
+established pin across first:
+
+```bash
+sudo install -m 0600 -D \
+  /var/lib/suburban-soc-slo/ca_fingerprint.sha256 \
+  /var/lib/suburban-soc-health/ca_fingerprint.sha256
+```
+
+Skip this only on a host that has never run `slo-metrics.service`.
+
+**3. Install and enable.**
+
+```bash
+sudo cp configs/systemd/stack-health.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now stack-health.timer
+# Verify:
+systemctl list-timers stack-health.timer
+sudo systemctl start stack-health.service && journalctl -u stack-health -n 40
+sudo systemd-analyze security stack-health.service   # expect ~1.6 OK
+```
+
+Expect `journalctl` to show `soc_health` (not `elastic`) authenticating. A
+`kibana ... HTTP 401/403` line means this credential lacks Kibana access — a
+permissions problem, not an outage; the report says so rather than paging you for
+a downed Kibana.
+
+`configs/monitoring/reliability.cron` remains the fallback for hosts without systemd; the
+timer is preferred because it survives reboot, extracts and pin-verifies the ES CA itself,
+and treats `exit 2` (a component DOWN) as a successful run reporting degradation.
+
+**Why this matters:** the cron file was never actually installed on the capture host, so
+`soc-health` stopped being written on 2026-07-12 and nothing detected it for ~56 days. After
+installing either path, confirm the index is moving:
+
+```bash
+curl -s --cacert "$ES_CA" -u "$ES_USER:$ES_PASS" \
+  "$ES_URL/soc-health/_search?size=1&sort=@timestamp:desc&_source=@timestamp"
+```
+
+### Mutual cross-monitoring: who watches the watchers
+
+The two self-monitoring lanes watch **each other's output index**, never their own:
+
+| Lane | Schedule | Watches | Detects | Threshold |
+|---|---|---|---|---|
+| `stack_health.sh` | `stack-health.timer`, 5 min | `soc-slo-metrics` freshness | the SLO lane stopped producing | `SOC_SLO_METRICS_STALE_MAX_S`, default 2700s (3x the 15-min cadence) |
+| `slo_metrics.py` | `slo-metrics.timer`, 15 min | `soc-health` freshness | the health lane stopped producing | `SLO_SOC_HEALTH_STALE_MAX_S`, default 1200s (4x the 5-min cadence) |
+
+A staleness check on `soc-slo-metrics` placed *inside* `slo_metrics.py` could not fire when
+`slo_metrics.py` is the thing that stopped — which is exactly the condition it exists to
+detect, and exactly what happened (the index sat frozen at `2026-08-17T01:31:42Z` while the
+unit failed every 15 minutes). Splitting the checks across the two lanes means neither can
+go silently dead without the other reporting it.
+
+**Known limits, not oversights:**
+- Both halves still depend on a *delivery path*. `NTFY_TOPIC` is unprovisioned on the
+  capture host and no unit in `configs/systemd/` sets `OnFailure=`, so both alert
+  transports are currently no-ops (tracked as #554).
+- A **simultaneous** outage of both lanes is still silent. The shared dependency is
+  Elasticsearch itself, which is what `stack_health.sh`'s own component checks cover.
+- `metric_soc_health_stale_seconds()` is in `BREACH_IF_NA`, so an empty `soc-health` index
+  breaches rather than reading as "no data yet". On a genuinely fresh deployment that
+  breaches once and clears within 5 minutes of enabling the timer.
+- A **future-dated** `@timestamp` is treated as an anomaly, not as freshness, in both
+  lanes (tolerance 120s for benign clock skew). Without that, a single forged or
+  clock-skewed document pins either check to "healthy" forever — the failure the whole
+  pair exists to prevent. `soc-health` and `soc-slo-metrics` are both excluded from
+  `soc_admin`'s `all` grant so an analyst-tier role cannot write that document.
+- The remaining shared exposure is `curl` argv: `es_common.sh` passes credentials via
+  `-u`, readable from `/proc/<pid>/cmdline` by any same-UID process. The least-privilege
+  `soc_health` identity bounds the damage; moving auth off argv entirely is a change to a
+  shared library with 10+ consumers and is tracked separately.
+
+`slo_metrics_reader` needs `read` on `soc-health` for its half. The grant is in
+`configs/elasticsearch/roles/slo_metrics_reader.json`; apply it with
+`./scripts/setup/apply_roles.sh`. `slo_metrics.py` self-checks its own privileges against
+that file on every run, so a grant present in the repo but never applied to the cluster
+fails **every** metric, not just this one.
 
 ## Playbook Verification
 To verify the stack's reliability:
@@ -162,6 +272,9 @@ metric rather than trusting the case-closed state.
 - `scripts/setup/docker-compose.ha.yml`
 - `scripts/setup/restore_test.sh`
 - `scripts/setup/stack_health.sh`
-- `configs/monitoring/reliability.cron`
+- `configs/systemd/stack-health.service` / `configs/systemd/stack-health.timer` (#555)
+- `configs/monitoring/reliability.cron` (fallback for hosts without systemd)
+- `configs/elasticsearch/roles/slo_metrics_reader.json` (the `soc-health` read grant)
+- `configs/elasticsearch/roles/soc_health.json` (the self-health lane's own identity, #555)
 - `scripts/setup/ai_agent/manage_stuck_claims.py` (#276)
 - `scripts/hive-mind-broker/dispatcher.py` (#278)

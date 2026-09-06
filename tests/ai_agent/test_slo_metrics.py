@@ -251,6 +251,96 @@ class MetricFunctionTests(unittest.TestCase):
         query = mock_es.call_args[0][2]["query"]
         self.assertEqual(query, {"term": {"event.module": "suricata"}})
 
+    # --- #555: liveness of the SOC's own health lane -------------------------
+    def test_soc_health_stale_raises_on_request_failure(self):
+        with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
+            with self.assertRaises(slo_metrics.MetricUnavailable):
+                slo_metrics.metric_soc_health_stale_seconds()
+
+    def test_soc_health_stale_returns_none_when_the_lane_never_wrote(self):
+        # The exact blind spot #555 fixes: stack_health.sh was never installed
+        # on the capture host, so soc-health froze on 2026-07-12 and no metric
+        # anywhere could see it. None here + BREACH_IF_NA is what makes that
+        # loud instead of absent.
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})):
+            self.assertIsNone(slo_metrics.metric_soc_health_stale_seconds())
+
+    def test_soc_health_stale_returns_none_when_the_index_does_not_exist(self):
+        # soc-health is a concrete index, not a wildcard pattern, so a cluster
+        # that never had one answers 404 with no `hits` key at all — a
+        # different response shape from the empty-hits case above, and one
+        # that must not raise or read as healthy.
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(404, {"error": {
+                                   "type": "index_not_found_exception"}, "status": 404})):
+            self.assertIsNone(slo_metrics.metric_soc_health_stale_seconds())
+
+    def test_soc_health_stale_computes_age_of_newest_health_doc(self):
+        import datetime as _dt
+        stale = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=73)).isoformat().replace("+00:00", "Z")
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": [
+                                   {"_source": {"@timestamp": stale}}]}})):
+            age = slo_metrics.metric_soc_health_stale_seconds()
+        self.assertAlmostEqual(age, 73.0, delta=2.0)
+
+    def test_soc_health_stale_queries_the_soc_health_index_newest_first(self):
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})) as mock_es:
+            slo_metrics.metric_soc_health_stale_seconds()
+        method, path, body = mock_es.call_args[0][:3]
+        self.assertEqual("POST", method)
+        self.assertEqual("/soc-health/_search", path)
+        self.assertEqual([{"@timestamp": "desc"}], body["sort"])
+        self.assertEqual(1, body["size"])
+
+    def test_soc_health_stale_treats_a_future_timestamp_as_an_anomaly(self):
+        # security-auditor (#555, MEDIUM 1 - T1562.001): a NEGATIVE age is
+        # trivially <= any positive target under LOWER_BETTER, so one
+        # future-dated document would pin this metric to "healthy" permanently -
+        # the exact "watchdog reads healthy while the thing it watches is dead"
+        # failure it exists to prevent. MetricUnavailable is the loud path and
+        # BREACH_IF_NA already covers this metric.
+        import datetime as _dt
+        ahead = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=20)).isoformat().replace("+00:00", "Z")
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": [
+                                   {"_source": {"@timestamp": ahead}}]}})):
+            with self.assertRaises(slo_metrics.MetricUnavailable) as ctx:
+                slo_metrics.metric_soc_health_stale_seconds()
+        self.assertIn("FUTURE", str(ctx.exception))
+
+    def test_soc_health_stale_tolerates_small_forward_clock_skew(self):
+        # The writing host's clock being a few seconds ahead is benign and must
+        # not raise - only skew past the tolerance is the anomaly.
+        import datetime as _dt
+        ahead = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": [
+                                   {"_source": {"@timestamp": ahead}}]}})):
+            age = slo_metrics.metric_soc_health_stale_seconds()
+        self.assertLess(age, 0, "a slightly-ahead document should still report its "
+                                "negative age rather than being clamped")
+        self.assertGreater(age, -slo_metrics.SOC_HEALTH_FUTURE_TOLERANCE_S)
+
+    def test_soc_health_future_tolerance_matches_the_other_lane(self):
+        # stack_health.sh applies SOC_SLO_METRICS_STALE_FUTURE_TOLERANCE_S=120
+        # to the mirror-image check; the pair should not hold the two lanes to
+        # different standards for the same physical phenomenon.
+        self.assertEqual(120.0, slo_metrics.SOC_HEALTH_FUTURE_TOLERANCE_S)
+        script = (slo_metrics.REPO / "scripts" / "setup" / "stack_health.sh").read_text(encoding="utf-8")
+        self.assertIn('SOC_SLO_METRICS_STALE_FUTURE_TOLERANCE_S:-120', script)
+
+    def test_soc_health_stale_does_not_query_the_slo_index(self):
+        """The cross-monitoring invariant: this metric watches the OTHER lane's
+        output. Pointed at soc-slo-metrics it would be watching itself, which
+        cannot fire when this script is the thing that stopped."""
+        with mock.patch.object(slo_metrics, "es",
+                               return_value=_FakeResponse(200, {"hits": {"hits": []}})) as mock_es:
+            slo_metrics.metric_soc_health_stale_seconds()
+        self.assertNotIn("soc-slo-metrics", mock_es.call_args[0][1])
+
     def test_parse_error_pct_propagates_count_failure(self):
         with mock.patch.object(slo_metrics, "es", side_effect=ConnectionError("refused")):
             with self.assertRaises(slo_metrics.MetricUnavailable):
@@ -1503,6 +1593,7 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                        intel_indicator_count_drop_pct=0.0,
                        broker_response_tampering_count=0.0,
                        zeek_ingest_lag=10.0, suricata_ingest_lag=10.0,
+                       soc_health_stale=10.0,
                        zeek_log_field_truncation_count=0,
                        dns_answer_truncated_by_zeek_count=0):
     # Module-level, not a TestCase method: shared verbatim by MainExitCodeTests
@@ -1552,6 +1643,8 @@ def _mock_all_metrics(mttd=0.0, mttr=0.0, coverage=12.0, fp_pct=0.0,
                            return_value=zeek_ingest_lag),
         mock.patch.object(slo_metrics, "metric_suricata_ingest_lag_seconds",
                            return_value=suricata_ingest_lag),
+        mock.patch.object(slo_metrics, "metric_soc_health_stale_seconds",
+                           return_value=soc_health_stale),
         mock.patch.object(slo_metrics, "es", side_effect=_fake_es_healthy_default),
     ]
 
@@ -1578,6 +1671,12 @@ class MainExitCodeTests(unittest.TestCase):
 
         def fake_es(method, path, body=None):
             if path == "/logstash-security-*/_search":
+                return _FakeResponse(200, {"hits": {"hits": [{"_source": {"@timestamp": now_iso}}]}})
+            if path == "/soc-health/_search":
+                # #555: a "healthy, quiet SOC" now includes a self-health lane
+                # that is actually running. An empty soc-health index means
+                # stack-health.timer never wrote — the 56-day silence this
+                # metric exists to end — so it is a breach, not quiet.
                 return _FakeResponse(200, {"hits": {"hits": [{"_source": {"@timestamp": now_iso}}]}})
             if path == "/threat-intel-meta/_count":
                 return _FakeResponse(200, {"count": 1})
@@ -1761,6 +1860,47 @@ class MainExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("suricata_ingest_lag_seconds",
                        ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_soc_health_stale_none_breaches_via_breach_if_na(self):
+        # #555: same regression guard as the two above. A soc-health index that
+        # has never been written (stack-health.timer not installed — the actual
+        # state of the capture host, frozen since 2026-07-12) must reach the
+        # ntfy payload, not register as a benign n/a.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in _mock_all_metrics(soc_health_stale=None):
+                stack.enter_context(p)
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        self.assertIn("soc_health_stale_seconds",
+                       ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_soc_health_stale_past_target_breaches(self):
+        # The live condition: soc-health last written ~56 days ago.
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", "test-topic"), \
+             mock.patch.object(slo_metrics.requests, "post") as ntfy_post:
+            for p in _mock_all_metrics(soc_health_stale=56 * 24 * 3600.0):
+                stack.enter_context(p)
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 2)
+        self.assertIn("soc_health_stale_seconds",
+                       ntfy_post.call_args.kwargs["data"].decode())
+
+    def test_soc_health_within_target_does_not_breach(self):
+        # 1200s default = 4x stack-health.timer's 5-minute cadence, so a single
+        # slow or missed run must not page anyone.
+        # coverage pinned to clear the real env's SLO_COVERAGE_MIN, same
+        # pre-existing reason as every other "does not breach" test in this
+        # class — without it this asserts exit 0 while coverage_techniques
+        # breaches against this repo's own .env (SLO_COVERAGE_MIN=35).
+        with contextlib.ExitStack() as stack, \
+             mock.patch.object(slo_metrics, "NTFY_TOPIC", ""):
+            for p in _mock_all_metrics(soc_health_stale=600.0, coverage=105.0):
+                stack.enter_context(p)
+            code = _run_main_capturing_exit()
+        self.assertEqual(code, 0)
 
     def test_capture_loss_below_threshold_does_not_breach(self):
         # coverage pinned to the real env's SLO_COVERAGE_MIN, same
@@ -2221,6 +2361,20 @@ class SloMetricsReaderRoleGrantTests(unittest.TestCase):
                        "'read' — metric_vanished_claims()'s prior-sample _search "
                        "against soc-slo-metrics will 403 under the real slo_metrics "
                        "service account (#361)")
+
+    def test_role_file_grants_read_on_soc_health(self):
+        # #555: metric_soc_health_stale_seconds() _searches soc-health under
+        # the real slo_metrics service account. Same bug shape as the
+        # soc-agent-health-*/soc-audit-*/threat-intel regressions above — and
+        # with a sharper edge here, since _check_slo_metrics_reader_privileges()
+        # derives its live self-check from this very file: a grant listed here
+        # but never applied to the cluster fails EVERY metric in the run, not
+        # just this one. Re-run scripts/setup/apply_roles.sh after this lands.
+        # Note soc-agent-health-* does NOT cover soc-health — different index,
+        # different writer (the AI agent vs stack_health.sh).
+        self.assertIn("read", self._granted_privileges("soc-health"),
+                       "slo_metrics_reader.json is missing the soc-health read grant "
+                       "metric_soc_health_stale_seconds() needs (#555)")
 
     def test_role_file_grants_read_on_threat_intel_indices(self):
         # #358 security-auditor finding: threat-intel-indicators/

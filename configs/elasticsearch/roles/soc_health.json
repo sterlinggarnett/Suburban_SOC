@@ -1,0 +1,9 @@
+{
+  "cluster": ["monitor"],
+  "indices": [
+    {"names": ["soc-health"],
+     "privileges": ["create_index", "create"]},
+    {"names": ["soc-slo-metrics"],
+     "privileges": ["read"]}
+  ]
+}

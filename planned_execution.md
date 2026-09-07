@@ -9,23 +9,117 @@ Status: `[ ]` todo · `[~]` in-progress · `[x]` done · `[!]` blocked
 
 ## NEXT UP
 
-**Status as of 2026-09-07.**
+**Status as of 2026-09-07 (second session, on the capture host).**
 
-**Current phase:** M26 (Sensor Liveness & Monitoring Independence) — code for
-the milestone's last 4 open issues (#549, #554, #556, #562) landed this
-session on branch `claude/backlog-work-j9ojvi` (PR pending review/merge; see
-LAST SESSION below). None of it has been deployed to the live capture host
-yet, and #554's `NTFY_TOPIC` provisioning step specifically must not happen
-until the `slo_metrics` credential resync below is done first — that gate is
-unchanged by this session.
+**Current phase:** M26 (Sensor Liveness & Monitoring Independence) — **8/8
+issues closed.** [PR #564](https://github.com/voltron-1/Suburban_SOC/pull/564)
+merged 2026-09-07 22:06Z, closing #549/#554/#556/#562. Every milestone in the
+tracker now has either zero open issues (M26, M25) or only environment-/
+human-blocked ones (M16, M17, M18, M23). The M25 and M26 milestone *objects*
+were closed 2026-09-07 (see LAST SESSION below); every milestone object in the
+repo is now consistent with its issue state.
 
-**Next unstarted item, once this session's PR merges:** deploy the merged
-units to the capture host (`bash scripts/setup/redeploy_systemd_units.sh`,
-then enable `zeek-capture-liveness.timer`), redeploy Filebeat/Logstash for
-#556's new syslog input, and run `deploy_detections.sh` for the 2 new Sigma
-rules — all environment-blocked from this session (no live host access). The
-credential-resync gate on #554's `NTFY_TOPIC` step is unchanged and still
-first in sequence; see Outstanding owner action below.
+**Next unstarted item: deploy M26 to the capture host — and this is no longer
+environment-blocked.** The 2026-09-07 cloud session had to defer every deploy
+step; this session runs *on* the capture host, with the `docker-desktop` WSL
+distro `Running` and a reachable daemon (server 29.3.1). Verified read-only
+2026-09-07 17:28 CDT:
+
+| Unit | Observed state | Meaning |
+|---|---|---|
+| `zeek-host-capture.service` | `activating (auto-restart)`, `NRestarts=814` | Restart-looping; root cause not yet investigated this session |
+| `slo-metrics.service` | `failed`, `Result=exit-code`, `ExecMainStatus=3`, `disabled` | The credential-resync failure in item 1 below, still unfixed |
+| `zeek-capture-liveness.timer` | `not-found` | #549's supervisor is merged but not installed |
+| `stack-health.timer` | `not-found` | #555's timer is merged but not installed |
+| `soc-alert-on-failure@.service` | `not-found` | #554's dispatcher is merged but not installed |
+
+Newest write anywhere in `/storage/PCAP/zeek_logs/` is `conn.log` at
+`2026-09-06 15:38` — **roughly 26 hours with no Zeek output**, while
+`filebeat.service`, `suricata.service` and `intel-refresh.timer` all remain
+`active`. This is M26's own failure mode reproducing live: the capture lane is
+down, the lane holding the metric that would have caught it (`slo-metrics`) is
+itself dead, and all three units built to detect and report exactly this
+condition are merged but undeployed.
+
+Deploy order, once started: fix the `slo_metrics` credential (item 1 below),
+then `bash scripts/setup/redeploy_systemd_units.sh`, then restart
+Filebeat/Logstash for #556's syslog input and run
+`bash scripts/setup/deploy_detections.sh` for its 2 new Sigma rules, then
+enable `stack-health.timer` and `zeek-capture-liveness.timer`. `NTFY_TOPIC`
+provisioning (#554) stays last and stays gated on item 1.
+
+## LAST SESSION — 2026-09-07 (later)
+
+Doc + tracker reconciliation on the capture host; no code changed.
+
+- **Fast-forwarded `main` to `ca7f513`** (PR #564). A local uncommitted
+  `planned_execution.md` close-out from the 2026-09-06 second session was
+  superseded by that merge and stashed rather than merged in.
+- **README M26 row corrected** — it still read `🟡 In progress (4/8)` with
+  "PR pending merge". Now `✅ Complete (8/8)`, with PR #564's structural-only
+  validation and the outstanding live-host deploy stated explicitly, plus the
+  open milestone object. The Sigma count (122) and ATT&CK coverage (86
+  techniques across 12 tactics) were already correct — PR #564 regenerated
+  them.
+- **Projects v2 board (project 17) re-synced.** 9 closed issues had never been
+  added: all 8 of M26 (#549, #550, #554, #555, #556, #557, #558, #562) plus
+  #192. All 9 added and set to `Done`; all 10 open issues were already present
+  and correctly in `Backlog`; no status mismatches remained. Note for future
+  audits: `gh project item-list` did not return the freshly added #192 item
+  even on a repeat call, while both `node(id:)` and the issue's own
+  `projectItems` confirmed it present, unarchived, `Status=Done` — trust the
+  per-item GraphQL over the list command right after a write.
+- **Live host state captured** (the table under NEXT UP above) — this is the
+  first session since PR #564 with capture-host access, and it found M26's
+  fix merged but entirely undeployed while the failure it addresses is active.
+- **M25 and M26 milestone objects closed** via
+  `gh api -X PATCH repos/voltron-1/Suburban_SOC/milestones/{30,31} -f state=closed`,
+  read back as `state=closed, open=0`. **This corrects a standing note:**
+  `CLAUDE.md` recorded that closing a milestone object from a local session was
+  blocked by the permission classifier and had to be handed to the owner (which
+  is how M11–M14/M19–M22/M24 were closed on 2026-09-03). It was not blocked
+  this time — the call succeeded directly. The note has been corrected rather
+  than left to send future sessions down a needless hand-off.
+
+## LAST SESSION — 2026-09-07 (cloud session, earlier)
+
+Cloud session, backlog sweep. Code for M26's 4 remaining open issues landed on
+branch `claude/backlog-work-j9ojvi` (opened as PR #564, since merged
+2026-09-07 22:06Z; all 4 issues closed with it) —
+structurally validated only (no live Docker/systemd/Elasticsearch in this
+environment, same disclosed limit as every other cloud-session fix in this
+log):
+
+- **#562** — `.gitattributes` now covers the 4 extensionless text files it
+  didn't govern itself (`.gitattributes`, `.gitignore`, `.dockerignore`,
+  `LICENSE`), plus `git check-attr` regression coverage.
+- **#554** — `soc-alert-on-failure@.service` (a Docker/ES-independent
+  OnFailure= dispatcher) wired onto `slo-metrics.service` and
+  `zeek-host-capture.service`; `slo_metrics.py` warns on every run while
+  `NTFY_TOPIC` is unset. `NTFY_TOPIC` itself deliberately NOT provisioned —
+  the credential-resync gate below still applies.
+- **#556** — `configs/network/filebeat.yml` ships `/var/log/syslog`;
+  `configs/logstash.conf` stamps `event.dataset:syslog`; 2 new Sigma rules
+  (`system_lnx_self_health_unit_failed.yml`, `system_lnx_ca_fingerprint_mismatch.yml`)
+  with fixtures, verified via a real `sigma convert` against the pinned
+  toolchain (3.1.0/1.5.0/2.1.1) — compiles to valid Lucene, not yet fired
+  against a live index. `docs/detections/attack-coverage.{md,json}`
+  regenerated — both rules map to the *existing* `T1562.001`, so the technique
+  count stays **86 across 12 tactics** while the detection count goes 141 ->
+  143; T1562.001 now carries a Linux-side pair alongside its 2 pre-existing
+  Windows rules. (The PR description's "88 techniques" was wrong; corrected
+  here 2026-09-07 against `docs/detections/attack-coverage.{md,json}`.)
+- **#549** — `zeek_capture_liveness.sh` + `zeek-capture-liveness.{service,timer}`:
+  restarts `zeek-host-capture.service` and alerts only when it is `active`
+  AND `conn.log` has gone stale, never when `failed`. Validated against the
+  same non-numeric-arithmetic-injection bug class #555's security review
+  found in `stack_health.sh`.
+
+Next: the live-host deploy steps (redeploy_systemd_units.sh,
+Filebeat/Logstash restart, deploy_detections.sh) and the credential resync
+below, in that order — none of that was possible from that environment. PR
+#564 has since merged; the deploy is still outstanding, and is what NEXT UP
+above now tracks.
 
 ## LAST SESSION — 2026-09-06
 
@@ -58,44 +152,9 @@ first in sequence; see Outstanding owner action below.
   `intel-refresh.service`).
 - #555, #557, #558 closed in prior sessions (PRs #560/#561/#563).
 
-## LAST SESSION — 2026-09-07
-
-Cloud session, backlog sweep. Code for M26's 4 remaining open issues landed on
-branch `claude/backlog-work-j9ojvi` (draft PR opened, not yet merged) —
-structurally validated only (no live Docker/systemd/Elasticsearch in this
-environment, same disclosed limit as every other cloud-session fix in this
-log):
-
-- **#562** — `.gitattributes` now covers the 4 extensionless text files it
-  didn't govern itself (`.gitattributes`, `.gitignore`, `.dockerignore`,
-  `LICENSE`), plus `git check-attr` regression coverage.
-- **#554** — `soc-alert-on-failure@.service` (a Docker/ES-independent
-  OnFailure= dispatcher) wired onto `slo-metrics.service` and
-  `zeek-host-capture.service`; `slo_metrics.py` warns on every run while
-  `NTFY_TOPIC` is unset. `NTFY_TOPIC` itself deliberately NOT provisioned —
-  the credential-resync gate below still applies.
-- **#556** — `configs/network/filebeat.yml` ships `/var/log/syslog`;
-  `configs/logstash.conf` stamps `event.dataset:syslog`; 2 new Sigma rules
-  (`system_lnx_self_health_unit_failed.yml`, `system_lnx_ca_fingerprint_mismatch.yml`)
-  with fixtures, verified via a real `sigma convert` against the pinned
-  toolchain (3.1.0/1.5.0/2.1.1) — compiles to valid Lucene, not yet fired
-  against a live index. `docs/detections/attack-coverage.{md,json}`
-  regenerated (88 techniques now carry a Linux-side T1562.001 rule alongside
-  the 2 pre-existing Windows ones).
-- **#549** — `zeek_capture_liveness.sh` + `zeek-capture-liveness.{service,timer}`:
-  restarts `zeek-host-capture.service` and alerts only when it is `active`
-  AND `conn.log` has gone stale, never when `failed`. Validated against the
-  same non-numeric-arithmetic-injection bug class #555's security review
-  found in `stack_health.sh`.
-
-Next: get the PR reviewed and merged, then work the live-host deploy steps
-(redeploy_systemd_units.sh, Filebeat/Logstash restart, deploy_detections.sh)
-and the credential resync below, in that order — none of that is possible
-from this environment.
-
 | # | Milestone | Blocked on |
 |---|---|---|
-| #549, #554, #556, #562 | M26 | Code merged this session (branch `claude/backlog-work-j9ojvi`, PR pending) — live-host deploy is the remaining step, gated on the credential resync below for #554's `NTFY_TOPIC` step specifically |
+| — (M26 has no open issues) | M26 | 8/8 closed; PR #564 merged 2026-09-07. Nothing is tracker-blocked — the remaining work is the live-host deploy, executable from a capture-host session, gated on the credential resync below for #554's `NTFY_TOPIC` step specifically |
 | #545 | M18 | Array-aware `dns.answers` byte clamp |
 | #326 | M18 | Real Windows/PowerShell telemetry accumulating over time |
 | #405 | M18 | A live-pipeline perf benchmark, or a multi-session Sigma-corpus field-resolution design effort |
@@ -126,20 +185,18 @@ from this environment.
    supplies an unpinned `ES_CA` outside a 0700 directory. Latent rather than
    live — the purple-team pass confirmed neither compact unit is installed on
    this host.
-4. **Close the M25 milestone object** (`gh api -X PATCH
-   repos/voltron-1/Suburban_SOC/milestones/30 -f state=closed`) — 17/17 issues
-   are closed but the object is still `open`; this session's permission
-   classifier blocks the call.
-5. **Review and merge the 2026-09-07 branch (`claude/backlog-work-j9ojvi`),
-   then deploy it.** Code for #549/#554/#556/#562 (see LAST SESSION above) —
-   a cloud session cannot merge its own PR or reach the capture host. Once
-   merged: `git pull`, `bash scripts/setup/redeploy_systemd_units.sh`, restart
-   Filebeat/Logstash for #556's new syslog input, `bash
-   scripts/setup/deploy_detections.sh` for the 2 new Sigma rules, and enable
-   `zeek-capture-liveness.timer`. `NTFY_TOPIC` provisioning (#554) still waits
-   on item 1 above. Each issue needs its own manual close per this file's
-   standing convention (auto-close keywords are deliberately not used in PR
-   text — see CLAUDE.md).
+4. **Deploy the merged M26 units to the capture host.** PR #564 merged
+   2026-09-07 and #549/#554/#556/#562 are closed, but nothing from it is
+   installed: `zeek-capture-liveness.timer`, `stack-health.timer` and
+   `soc-alert-on-failure@.service` all report `not-found` on this host, while
+   `zeek-host-capture.service` sits at `activating (auto-restart)` with
+   `NRestarts=814` and no Zeek log write since `2026-09-06 15:38`. Sequence:
+   item 1 (credential), then `bash scripts/setup/redeploy_systemd_units.sh`
+   (needs sudo; restarts the units), then a Filebeat/Logstash restart for
+   #556's syslog input, then `bash scripts/setup/deploy_detections.sh` for its
+   2 new Sigma rules, then `systemctl enable --now stack-health.timer
+   zeek-capture-liveness.timer`. `NTFY_TOPIC` provisioning (#554) still waits
+   on item 1.
 
 ---
 
@@ -169,8 +226,8 @@ added since — see the last three rows):
 | [M22 — Compliance & Documentation Accuracy](https://github.com/voltron-1/Suburban_SOC/milestone/27) | ✅ 7/7 closed — **CLOSED** (#439/#380 merged via external contributor PR #440) | Docs/compliance matrix citing dead code as a live control; a tagging mandate never implemented; analyst-facing rule text leaking implementation detail |
 | [M23 — Suricata Signature Lane: Sensor, Ingest, CI & Ruleset](https://github.com/voltron-1/Suburban_SOC/milestone/28) | ⏸️ 1/4 closed (updated 2026-09-01). PR #506 (Stage 1, #443/#444) and PR #507 (Stage 2+3, #445/#446) are both merged to `main`. #445 closed outright. #443/#444 are structurally complete but stay open — their own "done when" needs a live capture host + real traffic this sandbox doesn't have (same blocker class as M17's #415/#421). #446 (100-rule starter set) stands at 80/100 rules enabled with TP/TN pcap fixtures replayed through the real `suricata` binary as of PR #534 (2026-09-03, SID 9000003 root-caused as a deterministic one-segment loss in pcap replay); the remaining 20: 14 need `detection_filter` tuning against real traffic, 2 unresolved placeholders (9000013/9000099), 2 DLP rules need owner sign-off (9000065/9000066), 2 dead-as-configured (9000063/9000064) | Stand up the signature lane suricata-evaluation.md adopted post-WS2.1 but never built: sensor → eve.json ECS ingest → detection-as-code CI → 100-rule starter ruleset |
 | [M24 — Security Follow-ups](https://github.com/voltron-1/Suburban_SOC/milestone/29) | ✅ 5/5 closed — **CLOSED** (#449/#453/#463/#442/#441 all merged via PR #505, 2026-08-30) | Post-close security follow-ups #449/#453/#463 + Linux process-execution telemetry/rules pair #441/#442, caught unmilestoned by the 2026-08-29 board audit |
-| [M25 — Repo Audit Remediation](https://github.com/voltron-1/Suburban_SOC/milestone/30) | ✅ 17/17 closed — **CLOSED 2026-09-03** (created 2026-08-31, repo-audit round 2, #508–#523; #539 filed and closed 2026-09-03) — #514/#523 closed via the owner-provided wiki refresh (wiki commit `25ab241`) and its companion PR #526; #508/#511-#513/#515-#521 closed 2026-09-02 via PR #525 (cert org-name fix, README/planned_execution/CLAUDE.md status corrections, missing troubleshooting + playbook entries, dead workflow removal, UIW branding cleanup). #510 (Projects v2 board confirmation) and #522 (wiki Watcher-era pages) closed 2026-09-03 from a local WSL session whose `gh` is authenticated with `project` scope: the board at `users/voltron-1/projects/17` verified as the repo-linked board and re-synced (44 never-added issues added, #283 moved to Done, 282 items, every closed issue in Done), and the last #522 page, Commit-Approach, rewritten to the real PR-only CI-gated workflow (wiki commit `e6d7cd5`). #509 done 2026-09-03 by owner decision (enforce admins only): `enforce_admins` enabled on `main` via the dedicated endpoint from the local `gh`, verified 9 checks / strict / no review gate unchanged. #539 closed the same day: `setup_branch_protection.sh` now lists the live 9 checks, unions them with whatever is already required (a re-run can only tighten), keeps `enforce_admins`, puts the review gate behind `REQUIRE_REVIEW=1` per the #509 decision; SOP-007's recovery step verifies the live policy first. The further hardening that review recommended landed 2026-09-04 as **PR #543** (whole live policy carried through the full PUT, checks pinned to the Actions app, read-back verification, 30-case fake-`gh` test in `tests/setup`) with doc close-out **PR #544**. No open M25 issues; the GitHub milestone *object* is still `open` and needs the owner's `PATCH .../milestones/30 -f state=closed` (this session's permission classifier blocks it) | Repo-audit follow-ups: stale wiki pages (Watcher-era architecture, SOP-number collisions), UIW branding contamination, stale CLAUDE.md/README/planned_execution status lines, missing troubleshooting + playbook entries, branch-protection and cert-org fixes |
-| [M26 — Sensor Liveness & Monitoring Independence](https://github.com/voltron-1/Suburban_SOC/milestone/31) | 🟡 1/7 closed (created 2026-09-05; grew from 2 issues to 7 on 2026-09-06 when a purple-team coverage pass found SOC self-health detection coverage is 0% from one shared root cause — no path exists by which self-health can raise an alert: telemetry (journal not shipped), rules (0 of 145 cover self-integrity) and delivery (`NTFY_TOPIC` unset, no `OnFailure=` on any unit) are all broken. **#550 fixed 2026-09-06 via PR #553**; #554-#558 filed. Opened after a five-day Zeek capture blackout went entirely unalerted: `zeek-host-capture.service` wedged at `active (running)` with zero packets, the distro `suricata.service` decoded **0 packets** on a `DOWN eth0`, and `slo-metrics.service` — the lane that would have flagged either — was itself dead `203/EXEC` from the same Docker Desktop outage. **#550** (slo-metrics' Docker CLI dependency, startable now) and **#549** (output-derived liveness supervisor; `WatchdogSec=` is unusable because the bash `ExecStart` cannot `sd_notify()`). PR #551 (merged 2026-09-05) closed the *trigger* — an unusable `CAPTURE_IFACE` now exits 78 and `RestartPreventExitStatus=78` parks the unit in `failed` — but deliberately not the wedge, which is #549 | Sensors and their monitoring can both be dead while reporting healthy: liveness derived from sensor OUTPUT rather than unit state, and monitoring that does not share a single point of failure with what it watches |
+| [M25 — Repo Audit Remediation](https://github.com/voltron-1/Suburban_SOC/milestone/30) | ✅ 17/17 closed — **CLOSED 2026-09-03** (created 2026-08-31, repo-audit round 2, #508–#523; #539 filed and closed 2026-09-03) — #514/#523 closed via the owner-provided wiki refresh (wiki commit `25ab241`) and its companion PR #526; #508/#511-#513/#515-#521 closed 2026-09-02 via PR #525 (cert org-name fix, README/planned_execution/CLAUDE.md status corrections, missing troubleshooting + playbook entries, dead workflow removal, UIW branding cleanup). #510 (Projects v2 board confirmation) and #522 (wiki Watcher-era pages) closed 2026-09-03 from a local WSL session whose `gh` is authenticated with `project` scope: the board at `users/voltron-1/projects/17` verified as the repo-linked board and re-synced (44 never-added issues added, #283 moved to Done, 282 items, every closed issue in Done), and the last #522 page, Commit-Approach, rewritten to the real PR-only CI-gated workflow (wiki commit `e6d7cd5`). #509 done 2026-09-03 by owner decision (enforce admins only): `enforce_admins` enabled on `main` via the dedicated endpoint from the local `gh`, verified 9 checks / strict / no review gate unchanged. #539 closed the same day: `setup_branch_protection.sh` now lists the live 9 checks, unions them with whatever is already required (a re-run can only tighten), keeps `enforce_admins`, puts the review gate behind `REQUIRE_REVIEW=1` per the #509 decision; SOP-007's recovery step verifies the live policy first. The further hardening that review recommended landed 2026-09-04 as **PR #543** (whole live policy carried through the full PUT, checks pinned to the Actions app, read-back verification, 30-case fake-`gh` test in `tests/setup`) with doc close-out **PR #544**. No open M25 issues; the GitHub milestone *object* was closed 2026-09-07 from a local session (`gh api -X PATCH .../milestones/30 -f state=closed`) — the classifier block seen on 2026-09-04 did not reproduce | Repo-audit follow-ups: stale wiki pages (Watcher-era architecture, SOP-number collisions), UIW branding contamination, stale CLAUDE.md/README/planned_execution status lines, missing troubleshooting + playbook entries, branch-protection and cert-org fixes |
+| [M26 — Sensor Liveness & Monitoring Independence](https://github.com/voltron-1/Suburban_SOC/milestone/31) | ✅ **8/8 closed — milestone object CLOSED 2026-09-07** (created 2026-09-05; grew from 2 issues to 7 on 2026-09-06 when a purple-team coverage pass found SOC self-health detection coverage is 0% from one shared root cause — no path exists by which self-health can raise an alert: telemetry (journal not shipped), rules (0 of 145 cover self-integrity) and delivery (`NTFY_TOPIC` unset, no `OnFailure=` on any unit) are all broken. **#550 fixed 2026-09-06 via PR #553**; #554-#558 filed. Opened after a five-day Zeek capture blackout went entirely unalerted: `zeek-host-capture.service` wedged at `active (running)` with zero packets, the distro `suricata.service` decoded **0 packets** on a `DOWN eth0`, and `slo-metrics.service` — the lane that would have flagged either — was itself dead `203/EXEC` from the same Docker Desktop outage. **#550** (slo-metrics' Docker CLI dependency, startable now) and **#549** (output-derived liveness supervisor; `WatchdogSec=` is unusable because the bash `ExecStart` cannot `sd_notify()`). PR #551 (merged 2026-09-05) closed the *trigger* — an unusable `CAPTURE_IFACE` now exits 78 and `RestartPreventExitStatus=78` parks the unit in `failed` — but deliberately not the wedge, which is #549. **Closed out 2026-09-07:** #555/#557/#558 via PRs #560/#561/#563 (2026-09-06), then #549/#554/#556/#562 via PR #564 — the denominator grew 7 -> 8 when #562 was filed and milestoned at creation. Every M26 fix is merged and **none of it is deployed**: `zeek-capture-liveness.timer`, `stack-health.timer` and `soc-alert-on-failure@.service` all read `not-found` on the capture host as of 2026-09-07 17:28 CDT, so the milestone's own failure mode is currently live — see NEXT UP | Sensors and their monitoring can both be dead while reporting healthy: liveness derived from sensor OUTPUT rather than unit state, and monitoring that does not share a single point of failure with what it watches |
 
 **Full per-issue detail lives in each milestone's own GitHub issue list**
 (the issue tracker is the source of truth per this doc's own header) —

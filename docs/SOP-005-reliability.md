@@ -114,12 +114,62 @@ detect, and exactly what happened (the index sat frozen at `2026-08-17T01:31:42Z
 unit failed every 15 minutes). Splitting the checks across the two lanes means neither can
 go silently dead without the other reporting it.
 
+### Failure-delivery path (#554)
+
+Two independent gaps used to leave both halves above with nowhere to send an alert:
+no unit set `OnFailure=`, so a unit that failed before its own body ever ran (an
+`ExecStartPre` credential check or CA-pin mismatch) produced a journal line and
+nothing else; and `NTFY_TOPIC` was unprovisioned on the capture host, so even a
+metric-computed breach had no transport.
+
+**1. Provision `NTFY_TOPIC`.** Pick a long, unguessable value (`.env.example` already
+documents this) and set it in `scripts/setup/.env`:
+
+```bash
+# openssl rand -hex 16, or any other hard-to-guess string
+NTFY_TOPIC=subsoc-alerts-<random suffix>
+```
+
+`slo_metrics.py` prints a startup warning to stderr on every run while this is unset,
+so an unprovisioned sink is visible in `journalctl -u slo-metrics` rather than only
+discoverable by reading this doc.
+
+**2. Install the failure-alert dispatcher.** `configs/systemd/soc-alert-on-failure@.service`
+is a template unit, instantiated automatically by systemd via `OnFailure=` on
+`slo-metrics.service` and `zeek-host-capture.service` — nothing to enable or start by
+hand. It depends on neither Docker nor Elasticsearch (those are exactly what the two
+watched units themselves depend on), so it stays reachable in the outage it exists to
+report.
+
+```bash
+sudo cp configs/systemd/soc-alert-on-failure@.service /etc/systemd/system/
+sudo systemctl daemon-reload
+# scripts/setup/redeploy_systemd_units.sh does this + the two OnFailure= updates above
+# together.
+
+# Test without waiting for a real failure:
+sudo systemctl start soc-alert-on-failure@test.service
+journalctl -u 'soc-alert-on-failure@*' -n 10 --no-pager
+```
+
+**Sequencing matters.** Do not provision `NTFY_TOPIC` before the `slo_metrics`/
+`soc_health` credentials are healthy. While either credential is broken, every run
+reports ~15 unmeasurable metrics; turning on delivery first produces dozens of
+high-priority pushes a day, the topic gets muted, and the silence returns with a false
+belief that alerting works.
+
 **Known limits, not oversights:**
-- Both halves still depend on a *delivery path*. `NTFY_TOPIC` is unprovisioned on the
-  capture host and no unit in `configs/systemd/` sets `OnFailure=`, so both alert
-  transports are currently no-ops (tracked as #554).
-- A **simultaneous** outage of both lanes is still silent. The shared dependency is
-  Elasticsearch itself, which is what `stack_health.sh`'s own component checks cover.
+- `OnFailure=` is wired on `slo-metrics.service` and `zeek-host-capture.service` only —
+  the two units #554 named as the minimum. A unit added later needs its own
+  `OnFailure=soc-alert-on-failure@%n.service` line.
+- `zeek-host-capture.service` has `Restart=always` with `StartLimitIntervalSec=0`: most
+  crash loops never reach the `failed` state `OnFailure=` requires, by design (a flapping
+  capture process should keep retrying). Only a *terminal* condition — currently just the
+  `RestartPreventExitStatus=78` CAPTURE_IFACE preflight failure (#549/#551) — parks the
+  unit in `failed` and fires the dispatcher.
+- A **simultaneous** outage of both self-monitoring lanes is still silent. The shared
+  dependency is Elasticsearch itself, which is what `stack_health.sh`'s own component
+  checks cover.
 - `metric_soc_health_stale_seconds()` is in `BREACH_IF_NA`, so an empty `soc-health` index
   breaches rather than reading as "no data yet". On a genuinely fresh deployment that
   breaches once and clears within 5 minutes of enabling the timer.

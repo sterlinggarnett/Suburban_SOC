@@ -43,6 +43,18 @@
 # Windows PowerShell scripts — CRLF is correct on Windows
 *.ps1       text eol=crlf
 
+# Extensionless repo-governance files (#562). The globs above only match by
+# extension, so the file that governs every other file's line endings never
+# governed itself — `git config core.autocrlf true` on the capture host meant
+# `.gitattributes` checked out CRLF while HEAD stored LF, the same weaker-guarantee
+# gap #557 closed for systemd units. Scoped to the four files actually tracked in
+# this repo at the time of the fix; a future extensionless text file needs its own
+# line added here, the same as any new extension would.
+.gitattributes  text eol=lf
+.gitignore      text eol=lf
+.dockerignore   text eol=lf
+LICENSE         text eol=lf
+
 # Binary files — no line ending conversion
 *.png       binary
 *.jpg       binary

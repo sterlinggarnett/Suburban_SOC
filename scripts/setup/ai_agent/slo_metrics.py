@@ -1883,6 +1883,18 @@ def main():
         print("ERROR: ES_PASS / ELASTIC_PASSWORD required", file=sys.stderr)
         sys.exit(1)
 
+    # #554: NTFY_TOPIC empty means the breach-alert block below (and
+    # soc-alert-on-failure@.service's OnFailure= dispatcher) is a silent,
+    # permanently-successful no-op — every SLO breach gets measured and
+    # persisted to soc-slo-metrics, but nothing leaves the host. Not fatal:
+    # this run must still measure and persist, same posture as every other
+    # degraded-but-useful path in this script. A warning here, not just in
+    # docs/.env.example, means an unset sink shows up on every single run
+    # instead of only being discoverable by someone who goes looking.
+    if not NTFY_TOPIC:
+        print("WARNING: NTFY_TOPIC is unset -- SLO breach alerts will not be "
+              "delivered (see docs/SOP-005-reliability.md)", file=sys.stderr)
+
     metric_fns = {
         "mttd_minutes": metric_mttd,
         "mttr_minutes": metric_mttr,

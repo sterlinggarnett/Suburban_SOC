@@ -1,0 +1,55 @@
+title: Suburban-SOC Self-Health systemd Unit Failed
+id: 96f4daae-2983-4657-9e5d-7cd70aeb333f
+status: experimental
+description: |
+    Detects systemd's own "Failed with result" lifecycle line for one of the
+    units that make up the SOC's own capture and self-monitoring lanes
+    (#554/#549/#555). Before #556 shipped the capture host's own syslog to
+    Elasticsearch, this class of failure was a journal line nobody queried:
+    a five-day Zeek capture blackout (#549) and a five-day gap in the SLO
+    metrics lane (#550) both went entirely unalerted this way, and none of
+    the 145 rules in rules/ covers SOC self-integrity — the six existing
+    T1562.001 rules are all `product: windows`. This is the Linux
+    counterpart.
+    Scoped to a fixed allow-list of this repo's own SOC units, not every
+    systemd unit on the host: an unrelated third-party service failing is
+    out of scope for a SOC self-integrity rule by design (no false-positive
+    risk from them, since they never match at all) — but a unit added to
+    configs/systemd/ later needs its own entry here, same maintenance
+    burden as OnFailure=soc-alert-on-failure@%n.service being wired
+    per-unit rather than globally (see docs/SOP-005-reliability.md).
+    Fires once per "Failed with result" line, not on a persistence
+    threshold — Restart=always with RestartPreventExitStatus= (#549/#551)
+    means most units only ever reach this systemd-emitted line after
+    exhausting their own retry budget or hitting a terminal exit status, so
+    a single occurrence is already the meaningful signal, not noise.
+references:
+    - https://attack.mitre.org/techniques/T1562/001/
+author: Suburban-SOC
+date: 2026-09-06
+tags:
+    - attack.defense_evasion
+    - attack.t1562.001
+logsource:
+    product: linux
+    service: syslog
+detection:
+    selection_module:
+        event.module: 'system'
+        event.dataset: 'syslog'
+    selection_failed:
+        message|contains: 'Failed with result'
+    selection_unit:
+        message|contains:
+            - 'slo-metrics.service'
+            - 'stack-health.service'
+            - 'zeek-host-capture.service'
+            - 'suricata-host-capture.service'
+            - 'intel-refresh.service'
+            - 'checkpoints-compact.service'
+            - 'threat-intel-compact.service'
+            - 'soc-alert-on-failure@'
+    condition: selection_module and selection_failed and selection_unit
+falsepositives:
+    - A one-off failure from a transient, self-correcting condition (e.g. a slow Docker Desktop start racing slo-metrics.service's TimeoutStartSec=) reaching the "Failed with result" line before StartLimitIntervalSec=0/Restart=always has a chance to recover it — expect occasional single hits around host boot; sustained or repeated hits for the SAME unit is the higher-confidence signal.
+level: medium

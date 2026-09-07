@@ -96,6 +96,35 @@ filebeat.inputs:
     prospector.scanner.fingerprint.length: 64
     file_identity.fingerprint: ~
 
+  # #556: the capture host's own syslog — systemd unit-lifecycle lines
+  # (`<unit>.service: Failed with result '...'`) and script-emitted FATAL
+  # lines (verify_ca_fingerprint.sh) are already on disk here (rsyslog
+  # already captures them; a 30-day event.dataset aggregation over the live
+  # indices was 100% zeek.* before this input existed — no syslog, no
+  # journal, so no unit-level failure was ever observable in the SIEM). This
+  # is what makes SOC self-integrity detectable at all: without it, a unit
+  # in `failed` state or a CA-pin mismatch produces a journal line nobody
+  # queries. Deliberately added HERE (this host's own deployed config, not
+  # configs/endpoint/filebeat_endpoint.yml, which already ships /var/log/
+  # syslog for OTHER hosts but is not what actually runs on the capture
+  # host) rather than asking operators to also stand up a second Filebeat
+  # instance for one file.
+  - type: filestream
+    id: capture-host-syslog
+    enabled: true
+    paths:
+      - /var/log/syslog
+    # Same fingerprint-identity reasoning as the two inputs above: a small,
+    # append-only-but-rotatable text file, where a content-blind native
+    # (inode/offset) identity risks the same same-size-rewrite blind spot
+    # documented there (logrotate's copytruncate mode in particular). No
+    # syslog line has been measured small enough to need the 64 B floor the
+    # Zeek input uses, but there's no reason to expect otherwise, so the
+    # same floor is applied defensively.
+    prospector.scanner.fingerprint.enabled: true
+    prospector.scanner.fingerprint.length: 64
+    file_identity.fingerprint: ~
+
 # ============================== Tenant attribution ===========================
 # Edge-stamping (WS0.3): each deployment sets TENANT_ID so every shipped event
 # carries [tenant][id]. Storage routing, ES role isolation, and tenant-scoped

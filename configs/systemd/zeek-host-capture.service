@@ -151,6 +151,14 @@ After=network-online.target
 Wants=network-online.target
 # Don't let the restart rate-limiter give up while waiting for the Docker engine.
 StartLimitIntervalSec=0
+# #554: this is the SOC's only network sensor. RestartPreventExitStatus=78 below
+# (the #549/#551 CAPTURE_IFACE preflight) already parks a genuinely unfixable
+# config in `failed` instead of hiding it behind `active` -- OnFailure= is what
+# gets that fact off the host instead of waiting for someone to run
+# `systemctl status`. soc-alert-on-failure@.service depends on neither Docker
+# nor Elasticsearch, so it stays reachable in the same outage this unit itself
+# is failing from.
+OnFailure=soc-alert-on-failure@%n.service
 
 [Service]
 Type=simple

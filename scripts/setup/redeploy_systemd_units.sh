@@ -46,6 +46,13 @@ sudo cp configs/systemd/stack-health.service /etc/systemd/system/stack-health.se
 sudo cp configs/systemd/stack-health.timer /etc/systemd/system/stack-health.timer
 sudo cp configs/systemd/zeek-host-capture.service /etc/systemd/system/zeek-host-capture.service
 sudo cp configs/systemd/suricata-host-capture.service /etc/systemd/system/suricata-host-capture.service
+# #554: the OnFailure= alert dispatcher slo-metrics.service and
+# zeek-host-capture.service now point at. Instantiated on demand by systemd --
+# nothing to enable/start here, just needs to exist before daemon-reload.
+sudo cp configs/systemd/soc-alert-on-failure@.service /etc/systemd/system/soc-alert-on-failure@.service
+# #549: output-derived liveness supervisor for zeek-host-capture.service.
+sudo cp configs/systemd/zeek-capture-liveness.service /etc/systemd/system/zeek-capture-liveness.service
+sudo cp configs/systemd/zeek-capture-liveness.timer /etc/systemd/system/zeek-capture-liveness.timer
 sudo systemctl daemon-reload
 
 echo
@@ -89,6 +96,16 @@ else
 fi
 
 echo
+echo "==> Enabling zeek-capture-liveness.timer if it is not already enabled (#549)"
+if [[ "$(systemctl is-enabled zeek-capture-liveness.timer 2>/dev/null || true)" == "enabled" ]]; then
+  echo "    already enabled — nothing to do"
+else
+  echo "    NOT enabled — no credential/CA prerequisite (unlike stack-health.timer, this"
+  echo "    unit talks only to systemctl and, optionally, ntfy):"
+  echo "      sudo systemctl enable --now zeek-capture-liveness.timer"
+fi
+
+echo
 echo "==> After scores"
 sudo systemd-analyze security --no-pager slo-metrics.service || true
 sudo systemd-analyze security --no-pager stack-health.service || true
@@ -105,6 +122,12 @@ echo "  3. docker logs zeek-host-capture --tail 30  — no permission errors."
 echo "  4. tail -f /storage/PCAP/suricata/eve.json to confirm the Suricata sensor"
 echo "     (#443) started and is writing, if you restarted it — journalctl -u"
 echo "     suricata-host-capture -n 30 --no-pager for its own startup errors."
+echo "  4a. (#554) Confirm the failure-alert dispatcher is reachable without waiting"
+echo "      for a real failure: sudo systemctl start soc-alert-on-failure@test.service"
+echo "      then journalctl -u 'soc-alert-on-failure@*' -n 10 --no-pager. If"
+echo "      NTFY_TOPIC is set in scripts/setup/.env you should also see a push"
+echo "      arrive; if it's unset, expect the 'cannot deliver alert' stderr line"
+echo "      instead — see docs/SOP-005-reliability.md for provisioning it."
 echo "  5. systemd-analyze security scores above should be meaningfully lower"
 echo "     than baseline (slo-metrics: was 9.2 UNSAFE; zeek-host-capture: was 9.6"
 echo "     UNSAFE — zeek-host-capture will NOT reach <=6.0, see issue #182)."

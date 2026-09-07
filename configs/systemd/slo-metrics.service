@@ -13,6 +13,14 @@ Description=Suburban-SOC SLO metrics -> soc-slo-metrics (SLO dashboard data)
 Documentation=https://github.com/voltron-1/Suburban_SOC
 After=network-online.target
 Wants=network-online.target
+# #554: this unit is the one that measures per-source ingest liveness
+# (metric_zeek_ingest_lag_seconds()) -- a failure here, especially an
+# ExecStartPre credential/CA-pin failure before slo_metrics.py's own body
+# ever runs, previously produced a journal line and nothing else.
+# soc-alert-on-failure@.service depends on neither Docker nor Elasticsearch
+# (the two things this unit itself depends on), so it stays reachable in
+# exactly the outage this OnFailure= exists to report.
+OnFailure=soc-alert-on-failure@%n.service
 
 [Service]
 Type=oneshot

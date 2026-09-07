@@ -99,6 +99,48 @@ curl -s --cacert "$ES_CA" -u "$ES_USER:$ES_PASS" \
   "$ES_URL/soc-health/_search?size=1&sort=@timestamp:desc&_source=@timestamp"
 ```
 
+### Zeek capture liveness: output-derived, not unit-state (#549)
+
+`systemctl is-active` on `zeek-host-capture.service` is not sufficient evidence
+the sensor is actually capturing. On 2026-09-05 a dead `tcpdump` leg left
+`docker run` attached to a container whose Zeek had already exited; the hung
+`docker run` client never returns, so systemd reported
+`ActiveState=active`/`SubState=running` for **five days** with zero packets
+captured. `Restart=always` and the pipeline's own `set -o pipefail` cannot
+catch this — both only act once a process actually *exits*, and this one
+hangs.
+
+`zeek-capture-liveness.timer` runs `scripts/setup/zeek_capture_liveness.sh`
+every 5 minutes: it compares `/storage/PCAP/zeek_logs/conn.log`'s mtime
+against now, and restarts `zeek-host-capture.service` (plus an ntfy alert)
+**only** when the unit is `active` *and* the log has gone stale for longer
+than `ZEEK_CAPTURE_STALE_MAX_S` (default 1800s). It deliberately does nothing
+when the unit is `failed` — a genuine config error (e.g. the CAPTURE_IFACE
+preflight's exit 78, #551) must stay parked and visible, not be papered over
+by an automatic restart.
+
+```bash
+sudo cp configs/systemd/zeek-capture-liveness.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now zeek-capture-liveness.timer
+# No credential/CA prerequisite, unlike stack-health.timer — this unit only
+# calls systemctl and, optionally, ntfy.
+sudo systemctl start zeek-capture-liveness.service
+journalctl -u zeek-capture-liveness -n 20 --no-pager
+```
+
+**Known limits, not oversights:**
+- No cooldown/backoff. If a restart doesn't fix the underlying cause, the
+  *next* 5-minute run sees the same staleness and restarts + alerts again —
+  repeated alerts for the same wedge is the deliberate trade-off over silence.
+- The default 1800s threshold is a starting point ("above the quietest
+  legitimate traffic gap"), not a measured value for every deployment — retune
+  `ZEEK_CAPTURE_STALE_MAX_S` per link if a genuinely quiet overnight window on
+  your network is longer than that.
+- Same observable as a deliberate sensor-disable (T1562.001): unit reports
+  `active`, the log stops advancing. `rules/sigma/system_lnx_self_health_unit_failed.yml`
+  (#556) covers the *other* half — the unit actually reaching `failed`.
+
 ### Mutual cross-monitoring: who watches the watchers
 
 The two self-monitoring lanes watch **each other's output index**, never their own:
@@ -114,12 +156,62 @@ detect, and exactly what happened (the index sat frozen at `2026-08-17T01:31:42Z
 unit failed every 15 minutes). Splitting the checks across the two lanes means neither can
 go silently dead without the other reporting it.
 
+### Failure-delivery path (#554)
+
+Two independent gaps used to leave both halves above with nowhere to send an alert:
+no unit set `OnFailure=`, so a unit that failed before its own body ever ran (an
+`ExecStartPre` credential check or CA-pin mismatch) produced a journal line and
+nothing else; and `NTFY_TOPIC` was unprovisioned on the capture host, so even a
+metric-computed breach had no transport.
+
+**1. Provision `NTFY_TOPIC`.** Pick a long, unguessable value (`.env.example` already
+documents this) and set it in `scripts/setup/.env`:
+
+```bash
+# openssl rand -hex 16, or any other hard-to-guess string
+NTFY_TOPIC=subsoc-alerts-<random suffix>
+```
+
+`slo_metrics.py` prints a startup warning to stderr on every run while this is unset,
+so an unprovisioned sink is visible in `journalctl -u slo-metrics` rather than only
+discoverable by reading this doc.
+
+**2. Install the failure-alert dispatcher.** `configs/systemd/soc-alert-on-failure@.service`
+is a template unit, instantiated automatically by systemd via `OnFailure=` on
+`slo-metrics.service` and `zeek-host-capture.service` — nothing to enable or start by
+hand. It depends on neither Docker nor Elasticsearch (those are exactly what the two
+watched units themselves depend on), so it stays reachable in the outage it exists to
+report.
+
+```bash
+sudo cp configs/systemd/soc-alert-on-failure@.service /etc/systemd/system/
+sudo systemctl daemon-reload
+# scripts/setup/redeploy_systemd_units.sh does this + the two OnFailure= updates above
+# together.
+
+# Test without waiting for a real failure:
+sudo systemctl start soc-alert-on-failure@test.service
+journalctl -u 'soc-alert-on-failure@*' -n 10 --no-pager
+```
+
+**Sequencing matters.** Do not provision `NTFY_TOPIC` before the `slo_metrics`/
+`soc_health` credentials are healthy. While either credential is broken, every run
+reports ~15 unmeasurable metrics; turning on delivery first produces dozens of
+high-priority pushes a day, the topic gets muted, and the silence returns with a false
+belief that alerting works.
+
 **Known limits, not oversights:**
-- Both halves still depend on a *delivery path*. `NTFY_TOPIC` is unprovisioned on the
-  capture host and no unit in `configs/systemd/` sets `OnFailure=`, so both alert
-  transports are currently no-ops (tracked as #554).
-- A **simultaneous** outage of both lanes is still silent. The shared dependency is
-  Elasticsearch itself, which is what `stack_health.sh`'s own component checks cover.
+- `OnFailure=` is wired on `slo-metrics.service` and `zeek-host-capture.service` only —
+  the two units #554 named as the minimum. A unit added later needs its own
+  `OnFailure=soc-alert-on-failure@%n.service` line.
+- `zeek-host-capture.service` has `Restart=always` with `StartLimitIntervalSec=0`: most
+  crash loops never reach the `failed` state `OnFailure=` requires, by design (a flapping
+  capture process should keep retrying). Only a *terminal* condition — currently just the
+  `RestartPreventExitStatus=78` CAPTURE_IFACE preflight failure (#549/#551) — parks the
+  unit in `failed` and fires the dispatcher.
+- A **simultaneous** outage of both self-monitoring lanes is still silent. The shared
+  dependency is Elasticsearch itself, which is what `stack_health.sh`'s own component
+  checks cover.
 - `metric_soc_health_stale_seconds()` is in `BREACH_IF_NA`, so an empty `soc-health` index
   breaches rather than reading as "no data yet". On a genuinely fresh deployment that
   breaches once and clears within 5 minutes of enabling the timer.

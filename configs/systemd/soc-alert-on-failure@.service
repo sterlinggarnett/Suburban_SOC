@@ -1,0 +1,72 @@
+# Suburban-SOC — OnFailure= alert dispatcher for the SOC self-health lane (#554).
+#
+# Wired as `OnFailure=soc-alert-on-failure@%n.service` on slo-metrics.service and
+# zeek-host-capture.service (at minimum) so a unit that fails before its own
+# body ever runs -- e.g. an ExecStartPre credential check or CA-pin mismatch --
+# still produces something off the host instead of a journal line nobody is
+# watching. Instantiated automatically by systemd via each watched unit's
+# OnFailure= directive; nothing to enable directly.
+#
+# Deliberately has no dependency on Docker or Elasticsearch: those are exactly
+# what the two units above report on, and a delivery path that shared their
+# dependency would go dark in the same outage it exists to report.
+#
+# %i inside this template is everything between "@" and the final ".service" in
+# the triggering OnFailure= directive -- i.e. the failed unit's own full name
+# (systemd expands %n on the SOURCE unit before building this instance name),
+# passed straight through to soc_alert_on_failure.sh as its one argument.
+#
+# Install:
+#   sudo cp configs/systemd/soc-alert-on-failure@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+# Test without waiting for a real failure:
+#   sudo systemctl start soc-alert-on-failure@test.service
+#   journalctl -u 'soc-alert-on-failure@*' -n 20
+[Unit]
+Description=Suburban-SOC failure alert dispatcher for %i
+Documentation=https://github.com/voltron-1/Suburban_SOC
+# Deliberately no After=/Requires=network-online.target: a unit that only fires
+# because something ELSE already failed should race to alert, not wait to be
+# scheduled correctly. soc_alert_on_failure.sh's own curl call carries a bounded
+# -m timeout, so a genuinely offline host still returns promptly.
+
+[Service]
+Type=oneshot
+User=tjlam
+TimeoutStartSec=30
+ExecStart=/usr/bin/bash /home/tjlam/projects/Suburban-SOC/scripts/setup/soc_alert_on_failure.sh %i
+
+# --- Sandboxing (audit #167 / NIST CM-7) ---------------------------------------
+# This unit only reads scripts/setup/.env and makes one outbound HTTPS call --
+# same class of exposure as slo-metrics.service/stack-health.service, #558's
+# parity list applied here from the start rather than retrofitted.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+# Deliberately NOT RemoveIPC=true: same reasoning as slo-metrics.service and
+# stack-health.service -- User=tjlam is the interactive login account, and this
+# unit can fire multiple times a day depending on what else is failing.
+UMask=0077
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+# AF_NETLINK retained deliberately (measured, not assumed -- see #558's note on
+# the sibling units for the methodology): costs nothing, and glibc's
+# getaddrinfo() uses netlink on some configurations to enumerate interfaces.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+PrivateDevices=true
+ProtectProc=invisible
+ProcSubset=pid
+MemoryMax=256M

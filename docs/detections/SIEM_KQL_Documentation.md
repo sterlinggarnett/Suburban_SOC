@@ -5,7 +5,7 @@
 > hand-edit — re-run the generator. Queries target **`process.args`** (this
 > stack's field), NOT the ECS-standard `process.command_line`.
 
-**120 rules.** Each query is the exact Lucene the Sigma rule compiles to.
+**122 rules.** Each query is the exact Lucene the Sigma rule compiles to.
 
 ## SSH Login Attempt for a Nonexistent User
 
@@ -909,6 +909,22 @@ process.executable:*\\wmic.exe AND (process.args:*process* AND process.args:*cal
 
 ```
 (process.executable:*\\wmic.exe OR process.pe.original_file_name:wmic.exe) AND process.args:*shadowcopy* AND process.args:*delete*
+```
+
+## SOC-Internal ES CA Fingerprint Mismatch
+
+- **Rule:** `system_lnx_ca_fingerprint_mismatch.yml` · **level:** high · **status:** experimental · **ATT&CK:** T1562.001
+
+```
+(event.module:system AND event.dataset:syslog) AND message:*\[FATAL\]\ ES\ CA\ fingerprint\ changed*
+```
+
+## Suburban-SOC Self-Health systemd Unit Failed
+
+- **Rule:** `system_lnx_self_health_unit_failed.yml` · **level:** medium · **status:** experimental · **ATT&CK:** T1562.001
+
+```
+(event.module:system AND event.dataset:syslog) AND message:*Failed\ with\ result* AND (message:(*slo\-metrics.service* OR *stack\-health.service* OR *zeek\-host\-capture.service* OR *suricata\-host\-capture.service* OR *intel\-refresh.service* OR *checkpoints\-compact.service* OR *threat\-intel\-compact.service* OR *soc\-alert\-on\-failure@*))
 ```
 
 ## Kernel or File-System Driver Service Installed

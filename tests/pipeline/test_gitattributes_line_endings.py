@@ -97,6 +97,38 @@ class UnitFilesAreDeclaredLfTests(unittest.TestCase):
 
 
 @unittest.skipUnless(_git_available(), "not inside a git work tree")
+class ExtensionlessGovernanceFilesAreDeclaredLfTests(unittest.TestCase):
+    """#562 — the file governing every other file's line endings never
+    governed itself. Extension globs can't match a file with no extension, so
+    `.gitattributes`, `.gitignore`, `.dockerignore` and `LICENSE` need
+    literal-basename rules instead."""
+
+    EXTENSIONLESS_LF_FILES = [".gitattributes", ".gitignore", ".dockerignore", "LICENSE"]
+
+    def test_extensionless_files_resolve_to_lf(self):
+        for name in self.EXTENSIONLESS_LF_FILES:
+            with self.subTest(name=name):
+                self.assertEqual("lf", _eol_attr(name),
+                                 f"{name} has no `text eol=lf` rule — on a host with "
+                                 "core.autocrlf=true it checks out CRLF while HEAD "
+                                 "stores LF (#562)")
+
+    def test_tracked_extensionless_working_copies_are_actually_lf(self):
+        """Same renormalisation check #557 required, for the files that are
+        actually tracked today (.dockerignore doesn't exist in this repo)."""
+        offenders = []
+        for name in self.EXTENSIONLESS_LF_FILES:
+            path = ROOT / name
+            if not path.is_file():
+                continue
+            if b"\r\n" in path.read_bytes():
+                offenders.append(name)
+        self.assertEqual([], offenders,
+                         f"still checked out with CRLF: {offenders}. "
+                         "Renormalise: rm them and `git checkout -- <path>`")
+
+
+@unittest.skipUnless(_git_available(), "not inside a git work tree")
 class DeclaredLineEndingsHoldTests(unittest.TestCase):
     def test_every_declared_lf_family_still_resolves_to_lf(self):
         """Each of these has a comment in .gitattributes explaining what CRLF

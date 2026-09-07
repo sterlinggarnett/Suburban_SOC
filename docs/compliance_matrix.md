@@ -42,7 +42,7 @@ This matrix comprehensively maps Suburban-SOC's Sigma rules, Zeek/Filebeat telem
 | **NIST CSF DE.CM-1** | Networks and environments are monitored | `proc_creation_win_bitsadmin_download.yml` | IR_Sigma_Playbook.md |
 | **NIST CSF DE.CM-4** | Malicious code is detected | `net_zeek_executable_download.yml`, `proc_creation_win_powershell_encoded.yml` | IR_Sigma_Playbook.md |
 | **NIST 800-53 IR-4** | Incident Handling | `proc_creation_win_mshta_remote.yml`, `proc_creation_win_regsvr32_remote_sct.yml` | IR_Sigma_Playbook.md |
-| **NIST 800-53 SI-4** | Information System Monitoring | `posh_ps_obfuscated_scriptblock.yml`, `wmi_win_event_subscription_binding.yml` | IR_Sigma_Playbook.md |
+| **NIST 800-53 SI-4** | Information System Monitoring | `posh_ps_obfuscated_scriptblock.yml`, `wmi_win_event_subscription_binding.yml`, `system_lnx_self_health_unit_failed.yml`, `system_lnx_ca_fingerprint_mismatch.yml` | IR_Sigma_Playbook.md, SOP-005-reliability.md |
 | **NIST 800-171 3.14.2**| Provide protection from malicious code | `proc_creation_win_certutil_decode.yml` | IR_Sigma_Playbook.md |
 | **CIS Control 17** | Incident Response Management | `proc_creation_win_lateral_tool_parent.yml`, `proc_creation_win_rdp_hijack_tscon.yml` | IR_Sigma_Playbook.md |
 | **CIS Control 13** | Network Monitoring and Defense | `proc_creation_win_run_key_persistence.yml`, `proc_creation_win_scheduled_task.yml` | IR_Sigma_Playbook.md |

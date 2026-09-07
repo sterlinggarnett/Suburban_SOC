@@ -9,20 +9,23 @@ Status: `[ ]` todo · `[~]` in-progress · `[x]` done · `[!]` blocked
 
 ## NEXT UP
 
-**Status as of 2026-09-06.**
+**Status as of 2026-09-07.**
 
-**Current phase:** M26 (Sensor Liveness & Monitoring Independence), 1/7 — the
-milestone grew from 2 issues to 7 this session after a purple-team coverage
-pass on #550 found that detection coverage for SOC self-health is 0%, from one
-shared root cause rather than several rule gaps.
+**Current phase:** M26 (Sensor Liveness & Monitoring Independence) — code for
+the milestone's last 4 open issues (#549, #554, #556, #562) landed this
+session on branch `claude/backlog-work-j9ojvi` (PR pending review/merge; see
+LAST SESSION below). None of it has been deployed to the live capture host
+yet, and #554's `NTFY_TOPIC` provisioning step specifically must not happen
+until the `slo_metrics` credential resync below is done first — that gate is
+unchanged by this session.
 
-**Next unstarted item:** **#554** — no failure-delivery path exists for the SOC
-self-health lane (`OnFailure=` is absent from every unit in `configs/systemd/`,
-and `NTFY_TOPIC` is unprovisioned on the capture host). **It is gated:** the
-`slo_metrics` credential must be resynced first (see Outstanding owner action
-below). Enabling delivery while ~15 metrics report unmeasurable every 15
-minutes produces 96 high-priority pushes a day, the topic gets muted, and the
-silence returns behind a false belief that alerting works.
+**Next unstarted item, once this session's PR merges:** deploy the merged
+units to the capture host (`bash scripts/setup/redeploy_systemd_units.sh`,
+then enable `zeek-capture-liveness.timer`), redeploy Filebeat/Logstash for
+#556's new syslog input, and run `deploy_detections.sh` for the 2 new Sigma
+rules — all environment-blocked from this session (no live host access). The
+credential-resync gate on #554's `NTFY_TOPIC` step is unchanged and still
+first in sequence; see Outstanding owner action below.
 
 ## LAST SESSION — 2026-09-06
 
@@ -53,15 +56,46 @@ silence returns behind a false belief that alerting works.
   staleness check), #556 (journal not shipped to ES), #557 (`.gitattributes`
   missing `*.service`/`*.timer`), #558 (sandboxing parity vs
   `intel-refresh.service`).
+- #555, #557, #558 closed in prior sessions (PRs #560/#561/#563).
+
+## LAST SESSION — 2026-09-07
+
+Cloud session, backlog sweep. Code for M26's 4 remaining open issues landed on
+branch `claude/backlog-work-j9ojvi` (draft PR opened, not yet merged) —
+structurally validated only (no live Docker/systemd/Elasticsearch in this
+environment, same disclosed limit as every other cloud-session fix in this
+log):
+
+- **#562** — `.gitattributes` now covers the 4 extensionless text files it
+  didn't govern itself (`.gitattributes`, `.gitignore`, `.dockerignore`,
+  `LICENSE`), plus `git check-attr` regression coverage.
+- **#554** — `soc-alert-on-failure@.service` (a Docker/ES-independent
+  OnFailure= dispatcher) wired onto `slo-metrics.service` and
+  `zeek-host-capture.service`; `slo_metrics.py` warns on every run while
+  `NTFY_TOPIC` is unset. `NTFY_TOPIC` itself deliberately NOT provisioned —
+  the credential-resync gate below still applies.
+- **#556** — `configs/network/filebeat.yml` ships `/var/log/syslog`;
+  `configs/logstash.conf` stamps `event.dataset:syslog`; 2 new Sigma rules
+  (`system_lnx_self_health_unit_failed.yml`, `system_lnx_ca_fingerprint_mismatch.yml`)
+  with fixtures, verified via a real `sigma convert` against the pinned
+  toolchain (3.1.0/1.5.0/2.1.1) — compiles to valid Lucene, not yet fired
+  against a live index. `docs/detections/attack-coverage.{md,json}`
+  regenerated (88 techniques now carry a Linux-side T1562.001 rule alongside
+  the 2 pre-existing Windows ones).
+- **#549** — `zeek_capture_liveness.sh` + `zeek-capture-liveness.{service,timer}`:
+  restarts `zeek-host-capture.service` and alerts only when it is `active`
+  AND `conn.log` has gone stale, never when `failed`. Validated against the
+  same non-numeric-arithmetic-injection bug class #555's security review
+  found in `stack_health.sh`.
+
+Next: get the PR reviewed and merged, then work the live-host deploy steps
+(redeploy_systemd_units.sh, Filebeat/Logstash restart, deploy_detections.sh)
+and the credential resync below, in that order — none of that is possible
+from this environment.
 
 | # | Milestone | Blocked on |
 |---|---|---|
-| **#554** | **M26** | **Gated on the credential resync below, not on the environment** |
-| #555 | M26 | Nothing — startable now |
-| #556 | M26 | Nothing — the journal data is already on disk (`/var/log/syslog`); this is a Filebeat input addition, not a new agent |
-| #557 | M26 | Nothing — two globs |
-| #558 | M26 | Nothing — port an existing, in-repo directive set |
-| #549 | M26 | Nothing structural; wants #554 first so the alert path exists |
+| #549, #554, #556, #562 | M26 | Code merged this session (branch `claude/backlog-work-j9ojvi`, PR pending) — live-host deploy is the remaining step, gated on the credential resync below for #554's `NTFY_TOPIC` step specifically |
 | #545 | M18 | Array-aware `dns.answers` byte clamp |
 | #326 | M18 | Real Windows/PowerShell telemetry accumulating over time |
 | #405 | M18 | A live-pipeline perf benchmark, or a multi-session Sigma-corpus field-resolution design effort |
@@ -96,6 +130,16 @@ silence returns behind a false belief that alerting works.
    repos/voltron-1/Suburban_SOC/milestones/30 -f state=closed`) — 17/17 issues
    are closed but the object is still `open`; this session's permission
    classifier blocks the call.
+5. **Review and merge the 2026-09-07 branch (`claude/backlog-work-j9ojvi`),
+   then deploy it.** Code for #549/#554/#556/#562 (see LAST SESSION above) —
+   a cloud session cannot merge its own PR or reach the capture host. Once
+   merged: `git pull`, `bash scripts/setup/redeploy_systemd_units.sh`, restart
+   Filebeat/Logstash for #556's new syslog input, `bash
+   scripts/setup/deploy_detections.sh` for the 2 new Sigma rules, and enable
+   `zeek-capture-liveness.timer`. `NTFY_TOPIC` provisioning (#554) still waits
+   on item 1 above. Each issue needs its own manual close per this file's
+   standing convention (auto-close keywords are deliberately not used in PR
+   text — see CLAUDE.md).
 
 ---
 

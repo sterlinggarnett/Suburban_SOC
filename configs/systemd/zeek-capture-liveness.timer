@@ -1,0 +1,28 @@
+# Fires zeek-capture-liveness.service every 5 minutes — same cadence as
+# stack-health.timer (#555), whose own reasoning for OnCalendar=+Persistent=
+# over a purely monotonic timer applies identically here: a timer stopped
+# and later re-enabled without a reboot must still catch up, and an operator
+# reading `systemctl list-timers` expects a 5-minute check to actually run
+# every 5 minutes on the wall clock.
+#
+# 5 minutes against a default 1800s (30 min) staleness threshold
+# (ZEEK_CAPTURE_STALE_MAX_S in zeek_capture_liveness.sh) gives several checks
+# of margin before a genuine wedge goes unnoticed for the length of the
+# threshold itself, without polling so often that a single slow-but-healthy
+# interval (Zeek flushing conn.log just after a check ran) reads as
+# borderline.
+[Unit]
+Description=Run the Suburban-SOC Zeek capture liveness check every 5 minutes
+Documentation=https://github.com/voltron-1/Suburban_SOC
+
+[Timer]
+OnCalendar=*:0/5
+# Give the capture pipeline a moment to actually start producing conn.log
+# after boot before the first check — otherwise a fresh boot's first
+# interval reads as a false wedge while zeek-host-capture.service is still
+# coming up.
+OnBootSec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

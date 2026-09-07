@@ -99,6 +99,48 @@ curl -s --cacert "$ES_CA" -u "$ES_USER:$ES_PASS" \
   "$ES_URL/soc-health/_search?size=1&sort=@timestamp:desc&_source=@timestamp"
 ```
 
+### Zeek capture liveness: output-derived, not unit-state (#549)
+
+`systemctl is-active` on `zeek-host-capture.service` is not sufficient evidence
+the sensor is actually capturing. On 2026-09-05 a dead `tcpdump` leg left
+`docker run` attached to a container whose Zeek had already exited; the hung
+`docker run` client never returns, so systemd reported
+`ActiveState=active`/`SubState=running` for **five days** with zero packets
+captured. `Restart=always` and the pipeline's own `set -o pipefail` cannot
+catch this — both only act once a process actually *exits*, and this one
+hangs.
+
+`zeek-capture-liveness.timer` runs `scripts/setup/zeek_capture_liveness.sh`
+every 5 minutes: it compares `/storage/PCAP/zeek_logs/conn.log`'s mtime
+against now, and restarts `zeek-host-capture.service` (plus an ntfy alert)
+**only** when the unit is `active` *and* the log has gone stale for longer
+than `ZEEK_CAPTURE_STALE_MAX_S` (default 1800s). It deliberately does nothing
+when the unit is `failed` — a genuine config error (e.g. the CAPTURE_IFACE
+preflight's exit 78, #551) must stay parked and visible, not be papered over
+by an automatic restart.
+
+```bash
+sudo cp configs/systemd/zeek-capture-liveness.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now zeek-capture-liveness.timer
+# No credential/CA prerequisite, unlike stack-health.timer — this unit only
+# calls systemctl and, optionally, ntfy.
+sudo systemctl start zeek-capture-liveness.service
+journalctl -u zeek-capture-liveness -n 20 --no-pager
+```
+
+**Known limits, not oversights:**
+- No cooldown/backoff. If a restart doesn't fix the underlying cause, the
+  *next* 5-minute run sees the same staleness and restarts + alerts again —
+  repeated alerts for the same wedge is the deliberate trade-off over silence.
+- The default 1800s threshold is a starting point ("above the quietest
+  legitimate traffic gap"), not a measured value for every deployment — retune
+  `ZEEK_CAPTURE_STALE_MAX_S` per link if a genuinely quiet overnight window on
+  your network is longer than that.
+- Same observable as a deliberate sensor-disable (T1562.001): unit reports
+  `active`, the log stops advancing. `rules/sigma/system_lnx_self_health_unit_failed.yml`
+  (#556) covers the *other* half — the unit actually reaching `failed`.
+
 ### Mutual cross-monitoring: who watches the watchers
 
 The two self-monitoring lanes watch **each other's output index**, never their own:

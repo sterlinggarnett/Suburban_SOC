@@ -50,6 +50,9 @@ sudo cp configs/systemd/suricata-host-capture.service /etc/systemd/system/surica
 # zeek-host-capture.service now point at. Instantiated on demand by systemd --
 # nothing to enable/start here, just needs to exist before daemon-reload.
 sudo cp configs/systemd/soc-alert-on-failure@.service /etc/systemd/system/soc-alert-on-failure@.service
+# #549: output-derived liveness supervisor for zeek-host-capture.service.
+sudo cp configs/systemd/zeek-capture-liveness.service /etc/systemd/system/zeek-capture-liveness.service
+sudo cp configs/systemd/zeek-capture-liveness.timer /etc/systemd/system/zeek-capture-liveness.timer
 sudo systemctl daemon-reload
 
 echo
@@ -90,6 +93,16 @@ else
   echo "    NOT enabled. Enable it only AFTER the one-time install sequence in"
   echo "    docs/SOP-005-reliability.md (provision SOC_HEALTH_PASSWORD, seed the CA pin):"
   echo "      sudo systemctl enable --now stack-health.timer"
+fi
+
+echo
+echo "==> Enabling zeek-capture-liveness.timer if it is not already enabled (#549)"
+if [[ "$(systemctl is-enabled zeek-capture-liveness.timer 2>/dev/null || true)" == "enabled" ]]; then
+  echo "    already enabled — nothing to do"
+else
+  echo "    NOT enabled — no credential/CA prerequisite (unlike stack-health.timer, this"
+  echo "    unit talks only to systemctl and, optionally, ntfy):"
+  echo "      sudo systemctl enable --now zeek-capture-liveness.timer"
 fi
 
 echo

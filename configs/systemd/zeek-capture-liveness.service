@@ -1,0 +1,103 @@
+# Suburban-SOC — output-derived liveness check for zeek-host-capture.service (#549).
+#
+# Triggered by zeek-capture-liveness.timer. Compares /storage/PCAP/zeek_logs/
+# conn.log's mtime against now: restarts + alerts ONLY when the unit is
+# `active` AND the output has gone stale, never when it is `failed` (a
+# genuine config error — e.g. the #549/#551 CAPTURE_IFACE preflight's exit
+# 78 — must stay parked, visible, not papered over by an automatic restart).
+#
+# See scripts/setup/zeek_capture_liveness.sh's own header for the full
+# incident this closes: a dead tcpdump leg left `docker run` attached to a
+# container whose Zeek had already exited, and the hung docker run process
+# kept systemd reporting ActiveState=active/SubState=running for five days
+# with zero packets captured — `Restart=always`/`set -o pipefail` cannot
+# catch a hang, only an exit.
+#
+# No Docker or Elasticsearch dependency: the check is a local file stat plus
+# `systemctl is-active`/`restart`, so this stays reachable in the same class
+# of outage #550/#554 are about.
+#
+# Install:
+#   sudo cp configs/systemd/zeek-capture-liveness.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now zeek-capture-liveness.timer
+# Run once now / check:
+#   sudo systemctl start zeek-capture-liveness.service
+#   journalctl -u zeek-capture-liveness -n 30 --no-pager
+[Unit]
+Description=Suburban-SOC Zeek capture liveness check (output-derived, #549)
+Documentation=https://github.com/voltron-1/Suburban_SOC
+After=network-online.target
+Wants=network-online.target
+# #554: reachable in the same outage class this unit itself exists to
+# report, since soc-alert-on-failure@.service depends on neither Docker nor
+# Elasticsearch. Covers this unit's OWN failure (a bug in the script itself,
+# a systemctl D-Bus error) — not the sensor wedge, which this unit's normal
+# exit-2 successful-run path already alerts on directly.
+OnFailure=soc-alert-on-failure@%n.service
+
+[Service]
+Type=oneshot
+# Needs root: `systemctl restart zeek-host-capture.service` is a privileged
+# operation. Unlike slo-metrics.service/stack-health.service (which run as a
+# dedicated least-privilege ES identity), there is no equivalent narrower
+# identity for "may restart one specific systemd unit" on this host — the
+# same reasoning zeek-host-capture.service itself documents for running as
+# root rather than dropping to an unprivileged user before exec.
+User=root
+ExecStart=/usr/bin/bash /home/tjlam/projects/Suburban-SOC/scripts/setup/zeek_capture_liveness.sh
+# A successful run that found and fixed a real problem (restarted a wedged
+# sensor) is not a job failure — same exit-2-is-success contract as
+# slo-metrics.service/stack-health.service.
+SuccessExitStatus=0 2
+TimeoutStartSec=60
+
+# --- Sandboxing (audit #167 / NIST CM-7) ---------------------------------------
+# This unit reads scripts/setup/.env, stats one local file, calls systemctl
+# (a D-Bus client — the actual restart is performed by PID 1 outside this
+# unit's own sandbox, so nothing here constrains it) and makes one outbound
+# HTTPS call. #558's parity list applied from the start. UNVERIFIED against a
+# live host (no reachable systemd/D-Bus session in this development
+# environment) — zeek-host-capture.service's own header documents a prior
+# sandboxing block that broke live capture in production despite looking
+# conservative; if this set ever breaks the systemctl restart call, follow
+# that same revert-and-file-#182-style pattern rather than assuming these
+# directives are safe by analogy alone.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+# Deliberately NOT RemoveIPC=true: User=root here is not an interactive login
+# account the way tjlam is on the sibling units, so the original argument
+# for omitting it doesn't directly apply — but root also owns system-wide
+# IPC other services could depend on, and this unit uses no IPC of its own,
+# so there is nothing to gain by setting it either. Left off rather than
+# added speculatively.
+UMask=0077
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+# AF_UNIX is load-bearing here, not just precautionary like the sibling
+# units' note on AF_NETLINK: systemctl talks to PID 1 over the D-Bus system
+# bus socket (/run/dbus/system_bus_socket), which is AF_UNIX. AF_NETLINK
+# retained for the same measured-but-not-demonstrated reasoning as #558
+# documents on the sibling units (glibc's getaddrinfo() can use it).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+PrivateDevices=true
+ProtectProc=invisible
+ProcSubset=pid
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

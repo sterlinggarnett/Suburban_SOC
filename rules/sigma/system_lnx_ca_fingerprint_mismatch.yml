@@ -1,0 +1,38 @@
+title: SOC-Internal ES CA Fingerprint Mismatch
+id: 12969ce6-7250-47c3-bd9a-aabec533eef7
+status: experimental
+description: |
+    Detects scripts/setup/verify_ca_fingerprint.sh's own `[FATAL] ES CA
+    fingerprint changed` line (verify_ca_fingerprint.sh:76) reaching the
+    capture host's syslog. This line means a later `docker cp` of the
+    Elasticsearch CA no longer matches the trust-on-first-use fingerprint
+    pinned on this host's first run (slo-metrics.service, stack-
+    health.service, and every other unit under configs/systemd/ that
+    extracts the ES CA all call this same script — see #270's own
+    reasoning for why re-pinning silently would defeat the point of TOFU
+    pinning). A real cause could be as benign as a deliberate cert
+    rotation, or as serious as something else now answering at the
+    `elasticsearch` container name / a compromise of the Docker socket —
+    this rule cannot distinguish the two, only surface that the check
+    fired, same disclosed limit as every other T1562.001 rule in this
+    corpus (defense-evasion detection, not attribution).
+references:
+    - https://attack.mitre.org/techniques/T1562/001/
+author: Suburban-SOC
+date: 2026-09-06
+tags:
+    - attack.defense_evasion
+    - attack.t1562.001
+logsource:
+    product: linux
+    service: syslog
+detection:
+    selection_module:
+        event.module: 'system'
+        event.dataset: 'syslog'
+    selection_fatal:
+        message|contains: '[FATAL] ES CA fingerprint changed'
+    condition: selection_module and selection_fatal
+falsepositives:
+    - A deliberate, planned ES CA rotation on this host — verify_ca_fingerprint.sh's own comment header documents the expected re-pin procedure; correlate against the change calendar before escalating.
+level: high

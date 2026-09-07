@@ -2124,5 +2124,47 @@
         "CommandLine": "bash -c 'echo test > /tmp/test.txt'"
       }
     ]
+  },
+  "system_lnx_self_health_unit_failed.yml": {
+    "true_positive": {
+      "event.module": "system",
+      "event.dataset": "syslog",
+      "message": "systemd[1]: slo-metrics.service: Failed with result 'exit-code'."
+    },
+    "true_negatives": [
+      {
+        "event.module": "system",
+        "event.dataset": "syslog",
+        "message": "systemd[1]: slo-metrics.service: Deactivated successfully."
+      },
+      {
+        "event.module": "system",
+        "event.dataset": "syslog",
+        "message": "systemd[1]: cron.service: Failed with result 'exit-code'."
+      },
+      {
+        "event.module": "system",
+        "message": "sshd[1234]: Failed password for alice from 203.0.113.5 port 22 ssh2"
+      }
+    ]
+  },
+  "system_lnx_ca_fingerprint_mismatch.yml": {
+    "true_positive": {
+      "event.module": "system",
+      "event.dataset": "syslog",
+      "message": "verify_ca_fingerprint.sh[9876]: [FATAL] ES CA fingerprint changed: expected abc123, got def456 -- refusing to trust it."
+    },
+    "true_negatives": [
+      {
+        "event.module": "system",
+        "event.dataset": "syslog",
+        "message": "es_ca_cache.sh[9876]: restore: reinstated pin-verified CA from state cache"
+      },
+      {
+        "event.module": "system",
+        "event.dataset": "syslog",
+        "message": "systemd[1]: slo-metrics.service: Failed with result 'exit-code'."
+      }
+    ]
   }
 }

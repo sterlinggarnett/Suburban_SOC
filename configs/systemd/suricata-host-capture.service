@@ -65,6 +65,17 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+# SupplementaryGroups: ExecStart= below reads ${SOC_REPO}/configs/suricata/suricata.yaml
+# directly, and ${SOC_REPO} sits under /home/tjlam (mode 750 tjlam:tjlam). With
+# CAP_DAC_OVERRIDE absent from the bounding set above, this root process gets
+# ordinary DAC checks and cannot traverse into the repo at all -- ExecStart would
+# fail before Suricata ever parses a rule.
+#
+# This is the identical defect that took zeek-host-capture.service down for ~26h
+# on 2026-09-07 (see that unit's SupplementaryGroups comment). It has never been
+# hit here only because this unit is not installed on the capture host -- the
+# distro suricata.service is what runs. Fixed before it is deployed, not after.
+SupplementaryGroups=tjlam
 # Default interface; override via /etc/default/suricata-host-capture (optional).
 Environment=CAPTURE_IFACE=eth0
 # Same portability convention as zeek-host-capture.service (#320) — override

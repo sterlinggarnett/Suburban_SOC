@@ -150,6 +150,20 @@ Documentation=https://github.com/voltron-1/Suburban-SOC
 After=network-online.target
 Wants=network-online.target
 # Don't let the restart rate-limiter give up while waiting for the Docker engine.
+#
+# MEASURED 2026-09-07, throwaway --user unit: RestartPreventExitStatus= below does
+# NOT cover an ExecStartPre control process, only the MAIN process. A unit whose
+# ExecStartPre exits 78 still restart-loops (NRestarts climbed, ActiveState=
+# activating/auto-restart). Two consequences, both deliberate as they stand:
+#   * The #551 CAPTURE_IFACE preflight MUST stay inside ExecStart (host_capture.sh).
+#     Moving it into an ExecStartPre= would silently break the parking it provides.
+#   * Combined with StartLimitIntervalSec=0 here, an ExecStartPre config guard that
+#     fails permanently retries FOREVER -- it can neither park via exit 78 nor
+#     exhaust a limiter. Observed live: 1181+ restarts over ~26h with no capture
+#     and no alert, because the stale-config guard below could not read ${SOC_REPO}.
+# Bounding the limiter would fix that but would also give up on a slow Docker
+# engine start, which is the exact scenario this line exists for. Left as-is
+# pending an owner decision; see plans/20260907-restore-zeek-capture-and-deploy-m26.md.
 StartLimitIntervalSec=0
 # #554: this is the SOC's only network sensor. RestartPreventExitStatus=78 below
 # (the #549/#551 CAPTURE_IFACE preflight) already parks a genuinely unfixable
@@ -197,6 +211,30 @@ Type=simple
 # (`-Z root` on the ExecStart line, disabling the drop) would leave tcpdump
 # running as root for its entire lifetime instead.
 CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID
+# SupplementaryGroups: the same "root is not enough once CapabilityBoundingSet=
+# is set" problem as CAP_CHOWN and CAP_SETUID/CAP_SETGID above, one layer out.
+# CAP_DAC_OVERRIDE is deliberately NOT in the bounding set, so this root process
+# gets ordinary DAC checks -- and ${SOC_REPO} lives under /home/tjlam, mode 750
+# tjlam:tjlam. Root is neither the owner nor in that group, so it cannot even
+# TRAVERSE into the repo, and every ExecStartPre/ExecStart below that reads from
+# ${SOC_REPO} fails with EACCES. Observed live 2026-09-07: the config refresh cp
+# below had been failing silently since at least 2026-08-09 (the deployed
+# config.zeek was frozen at that date), and once #389's guard started checking
+# the deployed copy the unit crash-looped 1181+ times with a message naming the
+# stale file rather than the unreadable source.
+#
+# Group membership rather than a capability, on purpose: group tjlam already
+# holds r-x on /home/tjlam, and config.zeek/host_capture.sh are both mode 644,
+# so this grants exactly the traversal needed. CAP_DAC_OVERRIDE would hand
+# blanket root file access (read AND write, whole filesystem) back to a unit
+# whose entire job is running tcpdump; CAP_DAC_READ_SEARCH would still be
+# filesystem-wide read. Both are far wider than the problem.
+#
+# Hardcoded rather than ${SOC_USER}: systemd expands ${VAR} only in Exec*=
+# command lines, not in SupplementaryGroups=. A deployment with a different user
+# overrides this via a drop-in (/etc/systemd/system/zeek-host-capture.service.d/)
+# alongside the SOC_USER/SOC_REPO env-file override described below.
+SupplementaryGroups=tjlam
 # Default interface; override via /etc/default/zeek-host-capture (optional).
 Environment=CAPTURE_IFACE=eth0
 # #320: default deployment user/repo path, referenced below as ${SOC_USER}/
@@ -309,7 +347,7 @@ ExecStartPre=/bin/mkdir -p /storage/PCAP/zeek_logs /storage/PCAP/intel
 # (`2>/dev/null || true`) individually, same posture the combined line had —
 # the trailing capture-loss grep below is still what actually catches a
 # genuinely bad config.zeek loudly, not either cp's own exit status.
-ExecStartPre=/bin/bash -c 'set -e; cp --remove-destination ${SOC_REPO}/configs/intel/config.zeek /storage/PCAP/intel/config.zeek 2>/dev/null || true; cp --remove-destination ${SOC_REPO}/configs/intel/data/intel.dat /storage/PCAP/intel/intel.dat 2>/dev/null || true; [ -s /storage/PCAP/intel/intel.dat ] || cp --remove-destination ${SOC_REPO}/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat; { grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek && grep -q "^redef Log::default_max_field_string_bytes = 8191;" /storage/PCAP/intel/config.zeek; } || { echo "FATAL: deployed config.zeek is missing an expected at-load line or the #389 Log redef - stale copy" >&2; exit 1; }'
+ExecStartPre=/bin/bash -c 'set -e; err="$(cp --remove-destination ${SOC_REPO}/configs/intel/config.zeek /storage/PCAP/intel/config.zeek 2>&1)" || echo "WARNING: could not refresh config.zeek from ${SOC_REPO} (${err}) - the deployed copy is whatever was there before" >&2; err="$(cp --remove-destination ${SOC_REPO}/configs/intel/data/intel.dat /storage/PCAP/intel/intel.dat 2>&1)" || echo "WARNING: could not refresh intel.dat from ${SOC_REPO} (${err}) - intel-refresh.timer remains its source" >&2; [ -s /storage/PCAP/intel/intel.dat ] || cp --remove-destination ${SOC_REPO}/configs/intel/intel.seed.dat /storage/PCAP/intel/intel.dat; { grep -q "policy/misc/capture-loss" /storage/PCAP/intel/config.zeek && grep -q "^redef Log::default_max_field_string_bytes = 8191;" /storage/PCAP/intel/config.zeek; } || { echo "FATAL: deployed /storage/PCAP/intel/config.zeek is stale (missing the capture-loss at-load line or the #389 Log redef). If a WARNING above says the refresh cp failed, THAT is the root cause and this message is only its symptom." >&2; exit 1; }'
 # intel-refresh.service (configs/systemd/intel-refresh.service) runs as the
 # unprivileged repo-owner user and needs to WRITE intel.dat into this same
 # directory on every scheduled refresh, not just at Zeek's own startup — but

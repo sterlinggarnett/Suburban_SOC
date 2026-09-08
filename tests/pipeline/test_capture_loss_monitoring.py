@@ -174,7 +174,17 @@ class DeployedConfigVerificationTests(unittest.TestCase):
         # ExecStartPre failing blocks ExecStart entirely (systemd default) —
         # the loud failure this finding asked for. If the check were only in
         # ExecStart, Zeek would already be starting by the time it ran.
-        execstartpre_pos = ZEEK_HOST_CAPTURE_SERVICE.index("ExecStartPre=/bin/bash -c 'set -e; cp --remove-destination")
+        # Anchored on the directive + the cp it performs rather than on an exact
+        # literal: the refresh line gained stderr capture in 2026-09 (a silently
+        # discarded EACCES there caused a 26h capture outage), and the old exact
+        # prefix match broke on a change that preserved this test's actual intent.
+        execstartpre_pos = next(
+            (m.start() for m in re.finditer(r"^ExecStartPre=/bin/bash -c 'set -e;.*cp --remove-destination",
+                                            ZEEK_HOST_CAPTURE_SERVICE, re.MULTILINE)),
+            None,
+        )
+        self.assertIsNotNone(execstartpre_pos,
+                             "could not find the config-refresh ExecStartPre line")
         check_pos = ZEEK_HOST_CAPTURE_SERVICE.index("policy/misc/capture-loss")
         execstart_pos = ZEEK_HOST_CAPTURE_SERVICE.index("\nExecStart=")
         self.assertLess(execstartpre_pos, check_pos)

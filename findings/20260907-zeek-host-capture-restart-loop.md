@@ -85,12 +85,25 @@ the wrong thing.**
 - `2026-09-06 15:38 -> now` — `Restart=always` / `RestartSec=5` with
   `StartLimitIntervalSec=0` (no rate limiting), so it has looped continuously.
 
-## Caveat on certainty
+## Certainty — CONFIRMED 2026-09-08
 
-Items 1-5 are directly observed. The `CAP_DAC_OVERRIDE` mechanism is strongly
-supported by all of it but is **not** directly proven: confirming the `cp`'s
-errno requires running it as root, and `sudo` needs a password here. Do not
-record it as confirmed until that check is run.
+Items 1-5 were directly observed. The `CAP_DAC_OVERRIDE` mechanism was recorded
+here as strongly supported but *not* proven, pending a root-privileged check.
+That check has now been run on the capture host, as a two-command controlled
+experiment, and the mechanism is **confirmed**:
+
+```
+$ sudo cat /home/tjlam/projects/Suburban-SOC/configs/intel/config.zeek >/dev/null && echo "READABLE (full-cap root)"
+READABLE (full-cap root)
+
+$ sudo systemd-run --quiet --wait --pipe \
+    --property='CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID' \
+    /bin/bash -c 'cat /home/tjlam/projects/Suburban-SOC/configs/intel/config.zeek >/dev/null 2>&1 && echo READABLE || echo BLOCKED'
+BLOCKED
+```
+
+Same file, same path, same root uid. The only variable is the capability set,
+and it flips the result. Nothing further is pending on this diagnosis.
 
 ## Suggested fix (NOT applied — needs sudo)
 

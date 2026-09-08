@@ -484,19 +484,41 @@ class SystemdTreatsAConfigErrorAsTerminalTests(unittest.TestCase):
             "CAPTURE_IFACE parks the unit in `failed` instead of "
             "crash-looping behind an `active` status")
 
-    def test_unit_still_retries_every_other_failure_forever(self):
+    def test_unit_retries_long_enough_to_outlast_the_docker_boot_race(self):
         # Guards the other half of the tension: the Docker-Desktop boot race
-        # this unit's header documents must keep its unbounded retry. A fix
-        # that achieved visibility by weakening Restart=always or
-        # reintroducing the start-limiter would regress that boot race.
+        # this unit's header documents must survive. This originally required
+        # StartLimitIntervalSec=0 (retry forever). Changed by owner decision
+        # 2026-09-07 after the unit spent ~26h in an unbounded loop (1181+
+        # restarts, no capture, nothing resting in `failed` to notice): the
+        # limiter is now bounded generously rather than disabled, so the boot
+        # race is still covered but the "retry forever" tail is not.
+        #
+        # The boot-race protection is now asserted by ARITHMETIC rather than by
+        # the absence of a limiter — burst x RestartSec must still exceed a
+        # slow engine start — so this keeps testing the property that mattered
+        # instead of the specific mechanism that used to provide it.
         self.assertIn("Restart=always", self._directive("Restart"),
                       "Restart=always must stay — the unit waits out the "
                       "Docker Desktop engine with it")
-        self.assertIn("StartLimitIntervalSec=0",
-                      self._directive("StartLimitIntervalSec"),
-                      "StartLimitIntervalSec=0 must stay — the unit's header "
-                      "explains the restart limiter must not give up while "
-                      "waiting for the Docker engine after boot")
+        intervals = self._directive("StartLimitIntervalSec")
+        self.assertTrue(intervals, "the unit must declare StartLimitIntervalSec")
+        self.assertNotIn("StartLimitIntervalSec=0", intervals,
+                         "StartLimitIntervalSec=0 disables the limiter, so a "
+                         "permanently failing ExecStartPre retries forever — it "
+                         "can neither park via RestartPreventExitStatus (which "
+                         "covers only the MAIN process) nor exhaust a limiter")
+        window = int(intervals[0].split("=", 1)[1])
+        burst = int(self._directive("StartLimitBurst")[0].split("=", 1)[1])
+        restart_sec = int(self._directive("RestartSec")[0].split("=", 1)[1])
+        self.assertGreaterEqual(
+            burst * restart_sec, 600,
+            f"{burst} restarts x {restart_sec}s = {burst * restart_sec}s is too "
+            "short to ride out a Docker Desktop cold start — the boot race this "
+            "test exists to protect")
+        self.assertLessEqual(
+            burst * restart_sec, window,
+            "the burst must be exhaustible inside its own StartLimitIntervalSec "
+            "window, or the limiter can never trip and nothing is bounded")
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ distro `Running` and a reachable daemon (server 29.3.1). Verified read-only
 
 | Unit | Observed state | Meaning |
 |---|---|---|
-| `zeek-host-capture.service` | `activating (auto-restart)`, `NRestarts=814` | Restart-looping; root cause not yet investigated this session |
+| `zeek-host-capture.service` | `activating (auto-restart)`, `NRestarts=814` | **Root-caused** — it cannot traverse into `${SOC_REPO}` (root, but `CapabilityBoundingSet` omits `CAP_DAC_OVERRIDE`, and `/home/tjlam` is mode 750), so the config refresh `cp` fails EACCES silently and #389's guard trips on the stale copy. Repo fix in PR #566; see `findings/20260907-zeek-host-capture-restart-loop.md` |
 | `slo-metrics.service` | `failed`, `Result=exit-code`, `ExecMainStatus=3`, `disabled` | The credential-resync failure in item 1 below, still unfixed |
 | `zeek-capture-liveness.timer` | `not-found` | #549's supervisor is merged but not installed |
 | `stack-health.timer` | `not-found` | #555's timer is merged but not installed |
@@ -40,6 +40,27 @@ Newest write anywhere in `/storage/PCAP/zeek_logs/` is `conn.log` at
 down, the lane holding the metric that would have caught it (`slo-metrics`) is
 itself dead, and all three units built to detect and report exactly this
 condition are merged but undeployed.
+
+**A second, independent fault is queued behind it:** `/etc/default/zeek-host-capture`
+pins `CAPTURE_IFACE=eth4` and this host has only `lo` and `eth0` — #551's failure
+mode recurring. It is currently *masked*: the config guard fails in `ExecStartPre`
+before `ExecStart` ever reaches the interface preflight. Fixing only the traversal
+will surface it, and the unit will then correctly park in `failed` (exit 78)
+instead of capturing. Both must be fixed together — the full sequence is in
+`plans/20260907-restore-zeek-capture-and-deploy-m26.md`.
+
+**Measured while diagnosing (affects how these units are written):**
+`RestartPreventExitStatus=` covers only the MAIN process, not an `ExecStartPre`
+control process. So the #551 preflight must stay inside `ExecStart`, and an
+`ExecStartPre` guard can neither park via exit 78 nor exhaust a disabled
+limiter — which is why this ran ~26h rather than minutes. **Decided and fixed
+2026-09-07** ("26 hours blind is worse"): both capture units are now bounded to
+`StartLimitIntervalSec=3600` / `StartLimitBurst=200` (~17 min of retrying, still
+outlasting a Docker cold start), and the two tests that asserted the old
+unbounded policy now assert the boot-race property by arithmetic instead. A
+second measurement made it urgent: `OnFailure=` fires on *every* restart cycle,
+so unbounded this would send ~17,280 ntfy pushes a day once #554's dispatcher is
+installed — and that dispatcher has no throttle of its own.
 
 Deploy order, once started: fix the `slo_metrics` credential (item 1 below),
 then `bash scripts/setup/redeploy_systemd_units.sh`, then restart

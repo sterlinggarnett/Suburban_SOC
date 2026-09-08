@@ -104,12 +104,39 @@ no pull needed.
 3. **Stop silencing the refresh.** Replace `cp … 2>/dev/null || true` with a form
    that captures stderr and names it in the FATAL text. A one-line EACCES became
    a 1181-restart mystery purely because it was discarded.
-4. **Fix the ordering (problem C).** Move the capture-iface preflight into an
-   `ExecStartPre=` ahead of the config guard, or make the config guard exit 78 as
-   well, so an unusable configuration parks rather than loops. Add a regression
-   test asserting the preflight is reachable when an earlier guard fails.
-5. Consider `StartLimitIntervalSec=`/`StartLimitBurst=` so nothing in this unit
-   can ever loop unbounded again.
+4. ~~**Fix the ordering (problem C).** Move the capture-iface preflight into an
+   `ExecStartPre=` ahead of the config guard, or make the config guard exit 78.~~
+   **BOTH OPTIONS ARE WRONG — measured 2026-09-07.** `RestartPreventExitStatus=`
+   covers only the MAIN process, not an `ExecStartPre` control process: a
+   throwaway `--user` unit whose `ExecStartPre` exits 78 kept restart-looping
+   (`NRestarts` climbing, `ActiveState=activating/auto-restart`). So an
+   `ExecStartPre` guard cannot park the unit by exit code at all, and moving the
+   #551 preflight earlier would have *broken* the parking it currently provides.
+   The preflight must stay in `ExecStart`; a test now asserts that.
+5. **Bound the restart limiter — DECIDED 2026-09-07 ("26 hours blind is worse").**
+   `StartLimitIntervalSec=3600` + `StartLimitBurst=200` on both capture units:
+   ~17 min of retrying, still outlasting a Docker Desktop cold start (the boot
+   race the disable existed for), without the infinite tail. Given item 4, this
+   limiter is the *only* mechanism that can stop a permanently failing
+   `ExecStartPre`.
+
+   A second measurement made it more urgent than a visibility fix: `OnFailure=`
+   activates on **every** restart cycle, not once at give-up (4 restarts produced
+   4 activations; a bounded unit produced `StartLimitBurst`+1, then rested in
+   `failed`). Unbounded, that is one `soc-alert-on-failure@` dispatch per
+   `RestartSec` forever — ~17,280 ntfy pushes a day at 5s — and
+   `scripts/setup/soc_alert_on_failure.sh` has no throttle of its own (45 lines,
+   no cooldown/stamp/lock). Bounding is currently the only thing stopping #554's
+   alert path from muting the topic it depends on.
+
+   The two tests that asserted the old unbounded policy
+   (`test_zeek_capture_iface_validation.py`, `test_suricata_config.py`) were
+   updated, not deleted: the boot race is now asserted by arithmetic (burst x
+   `RestartSec` must exceed a slow engine start, and be exhaustible inside its
+   own window), so the property that mattered is still tested.
+
+6. **Follow-up worth filing:** give `soc_alert_on_failure.sh` its own rate limit,
+   so alert volume stops depending on a restart-limiter setting in another file.
 
 Land as one PR against `main`. Standard gates apply (14 checks).
 

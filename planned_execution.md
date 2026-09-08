@@ -53,9 +53,14 @@ instead of capturing. Both must be fixed together — the full sequence is in
 `RestartPreventExitStatus=` covers only the MAIN process, not an `ExecStartPre`
 control process. So the #551 preflight must stay inside `ExecStart`, and an
 `ExecStartPre` guard can neither park via exit 78 nor exhaust a disabled
-limiter — which is why this ran ~26h rather than minutes. Bounding
-`StartLimitIntervalSec` would fix that but contradicts a design two existing
-tests assert; left as an open owner decision in the plan doc.
+limiter — which is why this ran ~26h rather than minutes. **Decided and fixed
+2026-09-07** ("26 hours blind is worse"): both capture units are now bounded to
+`StartLimitIntervalSec=3600` / `StartLimitBurst=200` (~17 min of retrying, still
+outlasting a Docker cold start), and the two tests that asserted the old
+unbounded policy now assert the boot-race property by arithmetic instead. A
+second measurement made it urgent: `OnFailure=` fires on *every* restart cycle,
+so unbounded this would send ~17,280 ntfy pushes a day once #554's dispatcher is
+installed — and that dispatcher has no throttle of its own.
 
 Deploy order, once started: fix the `slo_metrics` credential (item 1 below),
 then `bash scripts/setup/redeploy_systemd_units.sh`, then restart

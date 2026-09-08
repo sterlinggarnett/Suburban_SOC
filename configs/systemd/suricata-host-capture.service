@@ -60,7 +60,13 @@ Description=Suburban-SOC Suricata host live capture (IDS/EVE mode; iface from CA
 Documentation=https://github.com/voltron-1/Suburban-SOC
 After=network-online.target
 Wants=network-online.target
-StartLimitIntervalSec=0
+# Bounded by the same owner decision as zeek-host-capture.service (2026-09-07);
+# see that unit for the two measurements behind it. 200 x RestartSec=5 is ~17
+# min of retrying in a 1h window -- still outlasts a slow engine/interface
+# come-up, but a permanently broken sensor now rests in `failed` instead of
+# looping silently forever.
+StartLimitIntervalSec=3600
+StartLimitBurst=200
 
 [Service]
 Type=simple

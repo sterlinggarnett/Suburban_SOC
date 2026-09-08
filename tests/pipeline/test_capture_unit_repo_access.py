@@ -26,14 +26,22 @@ Three separate defects came out of it, one assertion group each:
    The cp's now capture stderr and warn with it, and the FATAL says explicitly
    that a preceding WARNING is the real cause.
 
-3. The unbounded loop -- DIAGNOSED, NOT FIXED HERE. StartLimitIntervalSec=0
-   disables the restart limiter outright, so a PERMANENT ExecStartPre failure
-   retries forever (~26h, 1181+ restarts, no capture and no alert). Bounding it
-   would fix that but would also give up on a slow Docker engine start, which is
-   the scenario that line exists for and which
-   test_zeek_capture_iface_validation.py / test_suricata_config.py both assert.
-   Left for an owner decision; recorded in the unit's own comments and in
-   plans/20260907-restore-zeek-capture-and-deploy-m26.md.
+3. The unbounded loop. StartLimitIntervalSec=0 disabled the restart limiter
+   outright, so a PERMANENT ExecStartPre failure retried forever (~26h, 1181+
+   restarts, no capture, nothing resting in `failed`). Bounded by owner
+   decision 2026-09-07 ("26 hours blind is worse") to 200 restarts in a 1h
+   window -- ~17 min of retrying, which still outlasts a Docker Desktop cold
+   start (the boot race the disable existed for, still asserted by arithmetic
+   in test_zeek_capture_iface_validation.py) but drops the pointless tail.
+
+   A second measurement made this more urgent than a visibility fix: OnFailure=
+   activates on EVERY restart cycle, not once at give-up (4 restarts produced 4
+   activations; a bounded unit produced StartLimitBurst+1 and then rested in
+   `failed`). With the limiter disabled that is one soc-alert-on-failure@
+   dispatch per RestartSec forever -- ~17,280 ntfy pushes a day at RestartSec=5
+   -- and scripts/setup/soc_alert_on_failure.sh has no throttle of its own.
+   Bounding here is currently the only backstop against #554's alert path
+   muting the very topic it depends on.
 
    Measured 2026-09-07 with a throwaway --user unit: RestartPreventExitStatus=
    does NOT cover an ExecStartPre control process (a unit whose ExecStartPre
@@ -148,6 +156,64 @@ class SilentRefreshFailureTests(unittest.TestCase):
             ZEEK_UNIT,
             "the refresh failure must be reported as a WARNING that the FATAL then refers to",
         )
+
+
+class RestartLoopBoundTests(unittest.TestCase):
+    """Defect 3 -- a permanent failure must eventually park in `failed`."""
+
+    def test_restart_limiter_is_bounded_not_disabled(self):
+        for name, unit in CAPTURE_UNITS:
+            with self.subTest(unit=name):
+                intervals = _directive(unit, "StartLimitIntervalSec")
+                self.assertTrue(intervals, f"{name} declares no StartLimitIntervalSec=")
+                self.assertNotIn(
+                    "0",
+                    intervals,
+                    f"{name}: StartLimitIntervalSec=0 disables the limiter, so a permanently "
+                    "failing ExecStartPre retries forever -- it can neither park via "
+                    "RestartPreventExitStatus (main process only) nor exhaust a limiter.",
+                )
+                self.assertTrue(
+                    _directive(unit, "StartLimitBurst"),
+                    f"{name}: a bounded StartLimitIntervalSec needs an explicit StartLimitBurst",
+                )
+
+    def test_burst_still_outlasts_a_slow_engine_start(self):
+        """The bound must not regress the boot race the disable existed for."""
+        for name, unit in CAPTURE_UNITS:
+            with self.subTest(unit=name):
+                burst = int(_directive(unit, "StartLimitBurst")[0])
+                restart_sec = int(_directive(unit, "RestartSec")[0])
+                window = int(_directive(unit, "StartLimitIntervalSec")[0])
+                retry_seconds = burst * restart_sec
+                self.assertGreaterEqual(
+                    retry_seconds,
+                    600,
+                    f"{name}: {burst} restarts x {restart_sec}s = {retry_seconds}s is too short "
+                    "to ride out a Docker Desktop cold start -- the scenario "
+                    "StartLimitIntervalSec=0 originally existed for.",
+                )
+                self.assertLessEqual(
+                    retry_seconds,
+                    window,
+                    f"{name}: the burst must be exhaustible inside its own "
+                    f"StartLimitIntervalSec={window}s window, or the limiter never trips",
+                )
+
+    def test_bound_also_caps_onfailure_dispatch_volume(self):
+        """OnFailure= fires per restart cycle, so the burst IS the alert count."""
+        for name, unit in CAPTURE_UNITS:
+            with self.subTest(unit=name):
+                if not _directive(unit, "OnFailure"):
+                    continue
+                burst = int(_directive(unit, "StartLimitBurst")[0])
+                self.assertLessEqual(
+                    burst,
+                    500,
+                    f"{name}: OnFailure= activates on every restart cycle (measured), and "
+                    "soc_alert_on_failure.sh has no throttle, so StartLimitBurst is also the "
+                    "number of ntfy pushes a permanent failure sends. Keep it survivable.",
+                )
 
 
 class PreflightPlacementTests(unittest.TestCase):

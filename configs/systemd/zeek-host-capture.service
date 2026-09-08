@@ -149,22 +149,34 @@ Documentation=https://github.com/voltron-1/Suburban-SOC
 # Docker engine (Docker Desktop) to become reachable after boot.
 After=network-online.target
 Wants=network-online.target
-# Don't let the restart rate-limiter give up while waiting for the Docker engine.
+# Restart rate limit. Bounded, by owner decision 2026-09-07 ("26 hours blind is
+# worse"), after this unit spent ~26h in an unbounded loop -- 1181+ restarts, no
+# capture, and nothing resting in `failed` for anyone to notice.
 #
-# MEASURED 2026-09-07, throwaway --user unit: RestartPreventExitStatus= below does
-# NOT cover an ExecStartPre control process, only the MAIN process. A unit whose
-# ExecStartPre exits 78 still restart-loops (NRestarts climbed, ActiveState=
-# activating/auto-restart). Two consequences, both deliberate as they stand:
-#   * The #551 CAPTURE_IFACE preflight MUST stay inside ExecStart (host_capture.sh).
-#     Moving it into an ExecStartPre= would silently break the parking it provides.
-#   * Combined with StartLimitIntervalSec=0 here, an ExecStartPre config guard that
-#     fails permanently retries FOREVER -- it can neither park via exit 78 nor
-#     exhaust a limiter. Observed live: 1181+ restarts over ~26h with no capture
-#     and no alert, because the stale-config guard below could not read ${SOC_REPO}.
-# Bounding the limiter would fix that but would also give up on a slow Docker
-# engine start, which is the exact scenario this line exists for. Left as-is
-# pending an owner decision; see plans/20260907-restore-zeek-capture-and-deploy-m26.md.
-StartLimitIntervalSec=0
+# 200 restarts x RestartSec=5 is ~17 minutes of continuous retrying inside a 1h
+# window. That still comfortably outlasts a Docker Desktop cold start, which is
+# the boot race StartLimitIntervalSec=0 originally existed for and which
+# tests/pipeline/test_zeek_capture_iface_validation.py still guards -- it only
+# removes the "retry forever" tail, where nothing is learned by trying again.
+#
+# MEASURED 2026-09-07 with throwaway --user units, both results are why:
+#   * RestartPreventExitStatus= covers only the MAIN process, NOT an
+#     ExecStartPre control process (a unit whose ExecStartPre exits 78 kept
+#     restarting: NRestarts climbing, ActiveState=activating/auto-restart).
+#     So the #551 CAPTURE_IFACE preflight MUST stay inside ExecStart --
+#     moving it into an ExecStartPre= would silently break its parking -- and
+#     an ExecStartPre guard cannot park the unit by exit code at all. This
+#     limiter is the ONLY thing that can stop such a failure.
+#   * OnFailure= fires on EVERY restart cycle, not once at give-up (4 restarts
+#     produced 4 activations). With StartLimitIntervalSec=0 that is one
+#     soc-alert-on-failure@ dispatch per RestartSec, forever -- at 5s, ~17,280
+#     ntfy pushes a day, which mutes the topic and buries the signal it exists
+#     to carry. scripts/setup/soc_alert_on_failure.sh has no throttle of its
+#     own (45 lines, no cooldown/stamp/lock), so bounding here is currently the
+#     only backstop. Bounded, the same failure produces StartLimitBurst+1
+#     dispatches and then rests in `failed`.
+StartLimitIntervalSec=3600
+StartLimitBurst=200
 # #554: this is the SOC's only network sensor. RestartPreventExitStatus=78 below
 # (the #549/#551 CAPTURE_IFACE preflight) already parks a genuinely unfixable
 # config in `failed` instead of hiding it behind `active` -- OnFailure= is what

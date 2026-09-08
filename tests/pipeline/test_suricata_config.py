@@ -123,14 +123,19 @@ class SystemdUnitTests(unittest.TestCase):
         self.assertIn("Environment=CAPTURE_IFACE=eth0", SYSTEMD_UNIT)
         self.assertIn("EnvironmentFile=-/etc/default/suricata-host-capture", SYSTEMD_UNIT)
 
-    def test_restart_always_no_rate_limit(self):
-        # Same crash-loop-tolerant posture as zeek-host-capture.service —
-        # required for metric_suricata_ingest_lag_seconds() (slo_metrics.py)
-        # to be the thing that actually catches a dead sensor, since
-        # Restart=always/StartLimitIntervalSec=0 means it never reaches
-        # systemd's own `failed` state.
+    def test_restart_always_with_a_bounded_rate_limit(self):
+        # Same posture as zeek-host-capture.service. This asserted
+        # StartLimitIntervalSec=0 until 2026-09-07: the note that the unit
+        # "never reaches systemd's own `failed` state" was accurate, and that
+        # turned out to be the problem rather than the design —
+        # zeek-host-capture.service spent ~26h looping with nothing resting in
+        # `failed` for slo_metrics or a human to see. Bounded by owner decision;
+        # metric_suricata_ingest_lag_seconds() remains the primary dead-sensor
+        # signal, but systemd now also parks a permanently broken unit.
         self.assertIn("Restart=always", SYSTEMD_UNIT)
-        self.assertIn("StartLimitIntervalSec=0", SYSTEMD_UNIT)
+        self.assertNotIn("StartLimitIntervalSec=0", SYSTEMD_UNIT)
+        self.assertIn("StartLimitIntervalSec=3600", SYSTEMD_UNIT)
+        self.assertIn("StartLimitBurst=200", SYSTEMD_UNIT)
 
     def test_capability_bounding_set_narrowed_not_full_root(self):
         self.assertIn("CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN", SYSTEMD_UNIT)

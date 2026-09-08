@@ -9,15 +9,23 @@ Status: `[ ]` todo · `[~]` in-progress · `[x]` done · `[!]` blocked
 
 ## NEXT UP
 
-**Status as of 2026-09-07 (second session, on the capture host).**
+**Status as of 2026-09-08 (capture host).**
 
-**Current phase:** M26 (Sensor Liveness & Monitoring Independence) — **8/8
-issues closed.** [PR #564](https://github.com/voltron-1/Suburban_SOC/pull/564)
-merged 2026-09-07 22:06Z, closing #549/#554/#556/#562. Every milestone in the
-tracker now has either zero open issues (M26, M25) or only environment-/
-human-blocked ones (M16, M17, M18, M23). The M25 and M26 milestone *objects*
-were closed 2026-09-07 (see LAST SESSION below); every milestone object in the
-repo is now consistent with its issue state.
+**Current phase:** M26 (Sensor Liveness & Monitoring Independence) — **8/9
+issues closed; the milestone was REOPENED 2026-09-08.**
+[PR #564](https://github.com/voltron-1/Suburban_SOC/pull/564) merged 2026-09-07
+22:06Z and took the milestone to 8/8, and the object was closed the same day.
+It has since been reopened by owner decision to hold **#567** — the
+`soc_alert_on_failure.sh` rate-limit gap that PR #566's measurements exposed —
+on the grounds that M26's own theme (monitoring that does not defeat itself) is
+not met while its alert path can mute its own topic. M25 stays closed. Other
+milestones (M16, M17, M18, M23) hold only environment-/human-blocked issues.
+
+**M26 is deliberately not "done" yet, and the tracker now says so.** The
+milestone previously read 8/8 complete while none of its code was installed and
+the sensor it exists to protect had been blind for ~26h — the repo's own scope
+note ("complete = implemented and merged, NOT independently validated") permits
+that state, and this is a worked example of what it costs.
 
 **Next unstarted item: deploy M26 to the capture host — and this is no longer
 environment-blocked.** The 2026-09-07 cloud session had to defer every deploy
